@@ -28,6 +28,7 @@ use crate::stash::{self, StashEntry};
 use crate::state::AppState;
 use crate::undo::{OperationSummary, UndoRedoStatus};
 use crate::watcher;
+use crate::workflow::{self, FinishOutcome, WorkflowBranchKind, WorkflowConfig};
 
 /// Runs `op` against a freshly opened `repo_path`, recording an undo/redo entry labeled
 /// `label` beforehand — the shared wrapper behind every "destructive/hard-to-reverse"
@@ -763,6 +764,62 @@ pub fn rename_tag(
         format!("Rename tag '{old_name}' to '{new_name}'"),
         |repo| branch::rename_tag(repo, &old_name, &new_name),
     )
+}
+
+/// The repo's GitFlow config (`.git/config`'s `[gitflow ...]` keys), or `None` if it hasn't
+/// been set up yet — drives `SettingsPanel`'s "Set up GitFlow" form and `WorkflowPanel`'s
+/// initialized/uninitialized state.
+#[tauri::command]
+pub fn detect_workflow(repo_path: String) -> PushGitResult<Option<WorkflowConfig>> {
+    workflow::detect_workflow(&repo::open(Path::new(&repo_path))?)
+}
+
+/// Writes `config` as this repo's GitFlow setup (equivalent to `git flow init`), creating
+/// `develop` from `main`'s tip if it doesn't already exist. Not undo-tracked, same as
+/// `set_commit_template_path`/`create_branch` individually aren't — a config write and an
+/// initial branch creation are both trivially redoable by hand, not "hard to reverse".
+#[tauri::command]
+pub fn init_workflow(repo_path: String, config: WorkflowConfig) -> PushGitResult<()> {
+    workflow::init_workflow(&repo::open(Path::new(&repo_path))?, &config)
+}
+
+/// Starts a GitFlow feature/release/hotfix branch — undo-tracked because, unlike plain
+/// `create_branch`, this also checks the new branch out (moving HEAD).
+#[tauri::command]
+pub fn start_workflow_branch(
+    repo_path: String,
+    config: WorkflowConfig,
+    kind: WorkflowBranchKind,
+    name: String,
+    state: State<'_, AppState>,
+) -> PushGitResult<()> {
+    with_undo(&state, &repo_path, format!("Start '{name}'"), |repo| {
+        workflow::start_branch(repo, &config, kind, &name)
+    })
+}
+
+/// Finishes a GitFlow feature/release/hotfix branch. Same conflict-skips-the-undo-entry rule
+/// as `merge_branch`: a paused finish (`FinishOutcome::Conflicts`) hasn't actually finished,
+/// so it doesn't get an undo entry — the caller resolves the conflict through the normal
+/// merge-conflict flow and calls this again with the same arguments to pick the remaining
+/// steps back up.
+#[tauri::command]
+pub fn finish_workflow_branch(
+    repo_path: String,
+    config: WorkflowConfig,
+    kind: WorkflowBranchKind,
+    name: String,
+    state: State<'_, AppState>,
+) -> PushGitResult<FinishOutcome> {
+    let repo = repo::open(Path::new(&repo_path))?;
+    let snapshot = state.undo_log.capture(&repo)?;
+    let outcome = workflow::finish_branch(&repo, &config, kind, &name)?;
+    if !matches!(outcome, FinishOutcome::Conflicts(_)) {
+        state
+            .undo_log
+            .push(&repo, &repo_path, format!("Finish '{name}'"), snapshot)?;
+    }
+    Ok(outcome)
 }
 
 /// Checks the system `git` binary's version against the CVE-2024-32002 patch list —

@@ -11,13 +11,16 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   // template (the latter reads/writes git's own `commit.template` key directly, not an
   // app-owned copy of it).
   import {
+    detectWorkflow,
     getCommitTemplatePath,
     getRepoConfig,
+    initWorkflow,
     setCommitTemplatePath,
     setRepoDefaultSkipHooks,
   } from "$lib/git/api";
   import { setMaxCommitsRendered, setReduceMotion, settingsState } from "./settings.svelte";
   import { notifyError } from "$lib/shell/toast.svelte";
+  import type { WorkflowConfig } from "$lib/git/types";
 
   let { repoPath = null }: { repoPath?: string | null } = $props();
 
@@ -27,6 +30,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   let defaultSkipHooks = $state(false);
   let commitTemplatePath = $state("");
   let repoSaved = $state(false);
+
+  let workflowConfig = $state<WorkflowConfig | null>(null);
+  let workflowMain = $state("main");
+  let workflowDevelop = $state("develop");
+  let workflowFeaturePrefix = $state("feature/");
+  let workflowReleasePrefix = $state("release/");
+  let workflowHotfixPrefix = $state("hotfix/");
+  let workflowVersionTagPrefix = $state("");
   // Guards `loadRepoSettings`'s async response against clobbering a user edit that lands
   // before the load resolves (checkbox click, or typing in the template field) — same
   // "don't overwrite what the user already touched" concern `StagingPanel.svelte`'s
@@ -63,6 +74,15 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     } catch {
       // Leave the defaults; this is a convenience prefill only.
     }
+
+    // Fetched independently of the settings above: a GitFlow-detection failure shouldn't
+    // block the rest of this section from showing its own (unrelated) prefilled values.
+    try {
+      const workflow = await detectWorkflow(path);
+      if (!repoSettingsDirty) workflowConfig = workflow;
+    } catch {
+      // Leave the "not configured" state; this is a convenience prefill only.
+    }
   }
 
   $effect(() => {
@@ -97,6 +117,26 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   function handleTemplateInput() {
     repoSaved = false;
     repoSettingsDirty = true;
+  }
+
+  async function handleWorkflowSubmit(event: SubmitEvent) {
+    event.preventDefault();
+    if (!repoPath) return;
+    const config: WorkflowConfig = {
+      main: workflowMain.trim() || "main",
+      develop: workflowDevelop.trim() || "develop",
+      featurePrefix: workflowFeaturePrefix.trim(),
+      releasePrefix: workflowReleasePrefix.trim(),
+      hotfixPrefix: workflowHotfixPrefix.trim(),
+      supportPrefix: null,
+      versionTagPrefix: workflowVersionTagPrefix.trim(),
+    };
+    try {
+      await initWorkflow(repoPath, config);
+      workflowConfig = config;
+    } catch (err) {
+      notifyError(String(err));
+    }
   }
 
   async function handleReduceMotionChange() {
@@ -167,6 +207,68 @@ SPDX-License-Identifier: AGPL-3.0-or-later
             : "Sets this repo's git commit.template path — clear the field to unset it."}
         </p>
       </form>
+
+      {#if workflowConfig}
+        <div class="workflow-status">
+          <label for="gitflow-status">GitFlow</label>
+          <p id="gitflow-status" class="hint">
+            Configured — main branch "{workflowConfig.main}", develop branch "{workflowConfig.develop}".
+            Start/finish feature, release, and hotfix branches from the Workflow panel.
+          </p>
+        </div>
+      {:else}
+        <form class="workflow-setup" onsubmit={handleWorkflowSubmit}>
+          <label for="gitflow-main">Set up GitFlow</label>
+          <div class="row">
+            <input
+              id="gitflow-main"
+              type="text"
+              bind:value={workflowMain}
+              placeholder="main"
+              aria-label="Main branch name"
+            />
+            <input
+              type="text"
+              bind:value={workflowDevelop}
+              placeholder="develop"
+              aria-label="Develop branch name"
+            />
+          </div>
+          <div class="row">
+            <input
+              type="text"
+              bind:value={workflowFeaturePrefix}
+              placeholder="feature/"
+              aria-label="Feature branch prefix"
+            />
+            <input
+              type="text"
+              bind:value={workflowReleasePrefix}
+              placeholder="release/"
+              aria-label="Release branch prefix"
+            />
+            <input
+              type="text"
+              bind:value={workflowHotfixPrefix}
+              placeholder="hotfix/"
+              aria-label="Hotfix branch prefix"
+            />
+          </div>
+          <div class="row">
+            <input
+              type="text"
+              bind:value={workflowVersionTagPrefix}
+              placeholder="Version tag prefix (blank for none)"
+              aria-label="Version tag prefix"
+            />
+            <button type="submit">Set up</button>
+          </div>
+          <p class="hint">
+            Reads/writes the same .git/config keys as the git-flow CLI, so a repo set up here also
+            works with git flow directly.
+          </p>
+        </form>
+      {/if}
     </section>
   {/if}
 </div>
@@ -195,6 +297,19 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   }
 
   form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .workflow-status,
+  .workflow-setup {
+    margin-top: 0.25rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .workflow-status {
     display: flex;
     flex-direction: column;
     gap: 0.25rem;

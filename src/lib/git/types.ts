@@ -154,6 +154,21 @@ export type CherryPickOutcome =
 // Whether a merge, rebase, or cherry-pick is currently paused mid-conflict.
 export type RepoState = "clean" | "merge" | "rebase" | "cherry_pick" | "other";
 
+// Mirror of `src-tauri/src/workflow/model.rs`.
+export interface WorkflowConfig {
+  main: string;
+  develop: string;
+  featurePrefix: string;
+  releasePrefix: string;
+  hotfixPrefix: string;
+  supportPrefix: string | null;
+  versionTagPrefix: string;
+}
+
+export type WorkflowBranchKind = "feature" | "release" | "hotfix";
+
+export type FinishOutcome = { kind: "finished" } | { kind: "conflicts"; conflicts: string[] };
+
 // Mirror of `src-tauri/src/stash/mod.rs`'s `StashEntry`.
 export interface StashEntry {
   index: number;

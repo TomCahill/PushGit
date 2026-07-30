@@ -24,6 +24,7 @@ mod state;
 mod test_support;
 mod undo;
 mod watcher;
+mod workflow;
 
 /// Registers the WebdriverIO E2E-testing plugins when built with
 /// `--features e2e` (see `npm run test:e2e:build`) — a no-op passthrough otherwise, so a
@@ -191,6 +192,10 @@ pub fn run() {
         commands::delete_tag,
         commands::move_tag,
         commands::rename_tag,
+        commands::detect_workflow,
+        commands::init_workflow,
+        commands::start_workflow_branch,
+        commands::finish_workflow_branch,
         commands::check_git_version,
         commands::repo_health,
         commands::run_gc,

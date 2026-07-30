@@ -211,5 +211,82 @@ describe("SettingsPanel", () => {
 
       expect(await waitFor(() => templateForm.getByText("Saved.", { exact: false }))).toBeTruthy();
     });
+
+    it("shows the GitFlow setup form and initializes it on submit", async () => {
+      const calls: unknown[] = [];
+      mockIPC((cmd, args) => {
+        switch (cmd) {
+          case "get_repo_config":
+            return { defaultSkipHooks: false };
+          case "get_commit_template_path":
+            return null;
+          case "detect_workflow":
+            return null;
+          case "init_workflow":
+            calls.push(args);
+            return null;
+          default:
+            throw new Error(`unexpected command ${cmd}`);
+        }
+      });
+
+      const { getByLabelText, findByText } = render(SettingsPanel, {
+        props: { repoPath: "/repo" },
+      });
+      const mainInput = await waitFor(() => getByLabelText("Main branch name") as HTMLInputElement);
+      const setupForm = within(mainInput.closest("form")!);
+
+      await fireEvent.input(mainInput, { target: { value: "main" } });
+      await fireEvent.input(getByLabelText("Develop branch name"), {
+        target: { value: "develop" },
+      });
+      await fireEvent.click(setupForm.getByText("Set up"));
+
+      await waitFor(() =>
+        expect(calls).toEqual([
+          {
+            repoPath: "/repo",
+            config: {
+              main: "main",
+              develop: "develop",
+              featurePrefix: "feature/",
+              releasePrefix: "release/",
+              hotfixPrefix: "hotfix/",
+              supportPrefix: null,
+              versionTagPrefix: "",
+            },
+          },
+        ]),
+      );
+      expect(await findByText("Configured", { exact: false })).toBeTruthy();
+    });
+
+    it("shows GitFlow's configured status instead of the setup form once initialized", async () => {
+      mockIPC((cmd) => {
+        switch (cmd) {
+          case "get_repo_config":
+            return { defaultSkipHooks: false };
+          case "get_commit_template_path":
+            return null;
+          case "detect_workflow":
+            return {
+              main: "main",
+              develop: "develop",
+              featurePrefix: "feature/",
+              releasePrefix: "release/",
+              hotfixPrefix: "hotfix/",
+              supportPrefix: null,
+              versionTagPrefix: "",
+            };
+          default:
+            throw new Error(`unexpected command ${cmd}`);
+        }
+      });
+
+      const { findByText, queryByText } = render(SettingsPanel, { props: { repoPath: "/repo" } });
+
+      expect(await findByText("Configured", { exact: false })).toBeTruthy();
+      expect(queryByText("Set up GitFlow")).toBeNull();
+    });
   });
 });

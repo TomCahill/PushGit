@@ -17,6 +17,7 @@ import type {
   ConflictSides,
   FileDiff,
   FileHistoryEntry,
+  FinishOutcome,
   GitVersionCheck,
   GraphFilter,
   Hunk,
@@ -32,6 +33,8 @@ import type {
   ResetMode,
   StashEntry,
   UndoRedoStatus,
+  WorkflowBranchKind,
+  WorkflowConfig,
 } from "./types";
 
 export function openRepository(path: string): Promise<string> {
@@ -363,6 +366,32 @@ export function moveTag(repoPath: string, name: string, to: string): Promise<voi
 
 export function renameTag(repoPath: string, oldName: string, newName: string): Promise<void> {
   return invoke("rename_tag", { repoPath, oldName, newName });
+}
+
+export function detectWorkflow(repoPath: string): Promise<WorkflowConfig | null> {
+  return invoke("detect_workflow", { repoPath });
+}
+
+export function initWorkflow(repoPath: string, config: WorkflowConfig): Promise<void> {
+  return invoke("init_workflow", { repoPath, config });
+}
+
+export function startWorkflowBranch(
+  repoPath: string,
+  config: WorkflowConfig,
+  kind: WorkflowBranchKind,
+  name: string,
+): Promise<void> {
+  return invoke("start_workflow_branch", { repoPath, config, kind, name });
+}
+
+export function finishWorkflowBranch(
+  repoPath: string,
+  config: WorkflowConfig,
+  kind: WorkflowBranchKind,
+  name: string,
+): Promise<FinishOutcome> {
+  return invoke("finish_workflow_branch", { repoPath, config, kind, name });
 }
 
 export function createStash(repoPath: string, message?: string): Promise<string> {

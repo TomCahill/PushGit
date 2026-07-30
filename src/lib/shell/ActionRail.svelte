@@ -17,6 +17,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import StashPanel from "$lib/stash/StashPanel.svelte";
   import TagsPanel from "$lib/tags/TagsPanel.svelte";
   import UndoRedoControls from "$lib/undo/UndoRedoControls.svelte";
+  import WorkflowPanel from "$lib/workflow/WorkflowPanel.svelte";
   import Icon from "./Icon.svelte";
   import Popover from "./Popover.svelte";
   import type { RebaseCommitSummary } from "$lib/git/types";
@@ -107,6 +108,17 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     {/snippet}
     {#snippet children()}
       <MaintenancePanel {repoPath} {refreshKey} />
+    {/snippet}
+  </Popover>
+
+  <Popover>
+    {#snippet trigger()}
+      <Icon name="refresh-cw" size={13} />
+      <span class="trigger-label">Workflow</span>
+      <Icon name="chevron-down" size={12} />
+    {/snippet}
+    {#snippet children()}
+      <WorkflowPanel {repoPath} {refreshKey} {onChanged} {onConflicts} />
     {/snippet}
   </Popover>
 
