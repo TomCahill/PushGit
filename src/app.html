@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="%sveltekit.assets%/favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PushGit</title>
+    <style>
+      /* Parsed before body paint, independent of the app's own CSS/JS bundle — kills the
+         white flash between window creation and Svelte mounting (`ssr = false`, so this
+         shipped index.html has an empty body until then). Colors match the M3 dark tokens
+         `+page.svelte` defines once the app itself has mounted. */
+      html,
+      body {
+        background: #141218;
+      }
+
+      #app-splash {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1rem;
+        background: #141218;
+        z-index: 9999;
+        transition: opacity 0.2s ease;
+      }
+
+      #app-splash.fade-out {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      #app-splash .mark {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 112px;
+        height: 112px;
+        border-radius: 28px;
+        background: #4f378b;
+        animation: app-splash-pulse 1.6s ease-in-out infinite;
+      }
+
+      #app-splash .wordmark {
+        font-family:
+          Roboto,
+          system-ui,
+          sans-serif;
+        font-weight: 500;
+        font-size: 2rem;
+        letter-spacing: -0.01em;
+        color: #e6e0e9;
+      }
+
+      #app-splash .wordmark .accent {
+        color: #d0bcff;
+      }
+
+      #app-splash .quote {
+        min-height: 1.4em;
+        max-width: 26rem;
+        padding: 0 var(--space-4, 1rem);
+        font-family: Roboto, system-ui, sans-serif;
+        font-size: 0.9rem;
+        color: #cac4d0;
+        text-align: center;
+        opacity: 1;
+        transition: opacity 0.25s ease;
+      }
+
+      #app-splash .quote.quote-hidden {
+        opacity: 0;
+      }
+
+      @keyframes app-splash-pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.6;
+        }
+      }
+    </style>
+    %sveltekit.head%
+  </head>
+  <body data-sveltekit-preload-data="hover">
+    <div id="app-splash" aria-hidden="true">
+      <div class="mark">
+        <svg width="64" height="64" viewBox="0 0 52 52" fill="none">
+          <path
+            d="M12 34 L20 26 L12 18"
+            stroke="#d0bcff"
+            stroke-width="4"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <path
+            d="M22 34 L30 26 L22 18"
+            stroke="#d0bcff"
+            stroke-width="4"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            opacity="0.55"
+          />
+          <circle cx="38" cy="26" r="5" fill="#d0bcff" />
+        </svg>
+      </div>
+      <div class="wordmark">Push<span class="accent">Git</span></div>
+      <div class="quote" id="app-splash-quote"></div>
+    </div>
+    <div style="display: contents">%sveltekit.body%</div>
+    <script>
+      // Plain script, not a Svelte component — runs before the app bundle so the splash has
+      // something to show from first paint. `window.__hideAppSplash` (called once from
+      // `+page.svelte`'s `onMount`) stops the
+      // cycle and fades/removes the overlay; defined as a no-op fallback in case that call
+      // ever races ahead of this script.
+      (function () {
+        var quotes = [
+          "Committing to a great start…",
+          "Fetching your best work…",
+          "Branching out in style…",
+          "Rebasing your expectations…",
+          "Merging pixels and code…",
+          "Staging a comeback…",
+          "Pushing the envelope…",
+          "Pulling out all the stops…",
+          "Cherry-picking the good bits…",
+          "Stashing away the chaos…",
+          "Cloning excellence…",
+          "Resolving conflicts, one commit at a time…",
+          "Tagging along for the ride…",
+          "Checking out something great…",
+          "Squashing bugs, not dreams…",
+          "Force-pushing good vibes…",
+          "Diffing between good and great…",
+          "Origin story loading…",
+          "Blaming the last commit for being this awesome…",
+          "Reflogging happy memories…",
+        ];
+        var el = document.getElementById("app-splash-quote");
+        var index = Math.floor(Math.random() * quotes.length);
+        el.textContent = quotes[index];
+        var timer = setInterval(function () {
+          el.classList.add("quote-hidden");
+          setTimeout(function () {
+            index = (index + 1) % quotes.length;
+            el.textContent = quotes[index];
+            el.classList.remove("quote-hidden");
+          }, 250);
+        }, 1800);
+
+        window.__hideAppSplash = function () {
+          clearInterval(timer);
+          var splash = document.getElementById("app-splash");
+          if (!splash) return;
+          splash.classList.add("fade-out");
+          splash.addEventListener("transitionend", function () {
+            splash.remove();
+          });
+        };
+      })();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeBuildCommand": "VITE_E2E=true npm run build"
+  },
+  "app": {
+    "security": {
+      "capabilities": [
+        "default",
+        {
+          "identifier": "e2e",
+          "description": "WebdriverIO test-only permissions. Defined inline here, not as a `capabilities/e2e.json` file, because Tauri's build-time capability validation checks every file under `capabilities/` against the plugins actually compiled in — a standalone file would fail that check on every normal (non-e2e) build, since tauri-plugin-wdio/-webdriver are only linked with `--features e2e`. This override is only ever merged in via `tauri.e2e.conf.json`, so it's the only place these permissions are ever evaluated.",
+          "windows": ["main"],
+          "permissions": ["wdio:default", "wdio-webdriver:default"]
+        }
+      ]
+    }
+  }
+}

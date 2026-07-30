@@ -1,0 +1,7 @@
+node_modules
+/build
+/.svelte-kit
+/package
+src-tauri
+.private
+package-lock.json

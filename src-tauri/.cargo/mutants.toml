@@ -1,0 +1,22 @@
+# cargo-mutants configuration, adopted once MVP + Phase 1 modules stabilized. Scoped to the
+# modules already held to a >=90% line-coverage bar — the pure/near-pure logic
+# with "no excuse for gaps," where a silent correctness bug does the most damage. `remote/`
+# (80% bar, subprocess/network-heavy, already leans on integration fixtures more than narrow
+# unit tests) and the no-hard-gate modules (`commands/`, `state.rs`, `error.rs`,
+# `watcher/`) are deliberately out of scope for the default run.
+examine_globs = [
+    "src/graph/*.rs",
+    "src/diff/*.rs",
+    "src/stage/*.rs",
+    "src/branch/*.rs",
+    "src/stash/*.rs",
+]
+
+# Test-only fixture helper, never compiled into the shipped binary — nothing in it needs
+# mutation coverage.
+exclude_globs = ["src/test_support.rs"]
+
+# The full suite runs in under a second normally, but a mutated build can occasionally hang
+# in a genuinely infinite loop rather than fail fast — this is deliberately generous, not
+# tuned to the common case.
+minimum_test_timeout = 20
