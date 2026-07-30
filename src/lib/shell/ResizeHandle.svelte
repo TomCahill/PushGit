@@ -30,6 +30,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     dragging = true;
     last = pointerPos(event);
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    // Pointer capture only routes pointer events to this element; native text selection
+    // still hit-tests the panes the pointer passes over mid-drag, so suppress it document-wide.
+    document.body.classList.add("resize-active");
   }
 
   function handlePointerMove(event: PointerEvent) {
@@ -43,6 +46,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   function handlePointerUp(event: PointerEvent) {
     dragging = false;
     (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
+    document.body.classList.remove("resize-active");
   }
 
   function handleKeydown(event: KeyboardEvent) {
@@ -99,5 +103,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   .resize-handle:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: -1px;
+  }
+
+  :global(body.resize-active) {
+    user-select: none;
+    /* WebKitGTK (Tauri on Linux) is the one that actually needs this prefixed form. */
+    -webkit-user-select: none;
   }
 </style>
