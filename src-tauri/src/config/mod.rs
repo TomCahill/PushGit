@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::ai::AiSettings;
+
 pub const DEFAULT_MAX_COMMITS_RENDERED: u32 = 500;
 pub const MIN_MAX_COMMITS_RENDERED: u32 = 50;
 
@@ -22,6 +24,8 @@ pub struct AppConfig {
     pub max_commits_rendered: u32,
     #[serde(default)]
     pub reduce_motion: bool,
+    #[serde(default)]
+    pub ai: AiSettings,
 }
 
 impl Default for AppConfig {
@@ -29,6 +33,7 @@ impl Default for AppConfig {
         Self {
             max_commits_rendered: DEFAULT_MAX_COMMITS_RENDERED,
             reduce_motion: false,
+            ai: AiSettings::default(),
         }
     }
 }
@@ -161,6 +166,14 @@ mod tests {
         let config = AppConfig {
             max_commits_rendered: 1234,
             reduce_motion: true,
+            ai: AiSettings {
+                transport: Some(crate::ai::AiTransport::OpenAiCompatible {
+                    base_url: "http://localhost:11434/v1".to_string(),
+                    model: "llama3.1".to_string(),
+                }),
+                instructions: "Use Conventional Commits.".to_string(),
+                cloud_warning_acknowledged: true,
+            },
         };
 
         save_app_config_to(dir.path(), &config);
@@ -170,7 +183,7 @@ mod tests {
     }
 
     #[test]
-    fn app_config_deserializes_reduce_motion_missing_from_an_older_file_as_false() {
+    fn app_config_deserializes_reduce_motion_and_ai_missing_from_an_older_file_as_defaults() {
         let dir = TempDir::new().unwrap();
         std::fs::write(
             app_config_path(dir.path()),
@@ -185,6 +198,7 @@ mod tests {
             AppConfig {
                 max_commits_rendered: 1234,
                 reduce_motion: false,
+                ai: AiSettings::default(),
             }
         );
     }

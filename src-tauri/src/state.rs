@@ -19,6 +19,11 @@ pub struct AppState {
     pub repo_watcher: Mutex<Option<Debouncer<RecommendedWatcher, RecommendedCache>>>,
     /// Cancellation tokens for in-flight fetch/pull/push, keyed by repo path.
     pub remote_cancellation: CancellationRegistry,
+    /// Cancellation tokens for in-flight AI commit-message generation, keyed by repo path — a
+    /// separate instance from `remote_cancellation`: that registry keys purely by repo path, so
+    /// sharing it would let a concurrent fetch/pull/push and AI generation on the same repo
+    /// orphan each other's cancel token.
+    pub ai_cancellation: CancellationRegistry,
     /// Undo/redo history for destructive operations, keyed by repo path.
     pub undo_log: UndoLog,
     /// The repo path passed on the command line at cold start (`tauri-plugin-cli`),

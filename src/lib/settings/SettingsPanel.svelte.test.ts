@@ -17,6 +17,8 @@ describe("SettingsPanel", () => {
   afterEach(() => {
     settingsState.maxCommitsRendered = DEFAULT_MAX_COMMITS_RENDERED;
     settingsState.reduceMotion = false;
+    settingsState.ai = { transport: null, instructions: "", cloudWarningAcknowledged: false };
+    settingsState.hasAiApiKey = false;
     toastState.toasts = [];
   });
 
@@ -50,13 +52,14 @@ describe("SettingsPanel", () => {
       throw new Error(`unexpected command ${cmd}`);
     });
 
-    const { getByLabelText, getByText } = render(SettingsPanel);
+    const { getByLabelText } = render(SettingsPanel);
     const input = getByLabelText("Max commits rendered in graph") as HTMLInputElement;
+    const form = within(input.closest("form")!);
 
     await fireEvent.input(input, { target: { value: "1000" } });
-    await fireEvent.click(getByText("Save"));
+    await fireEvent.click(form.getByText("Save"));
 
-    expect(await waitFor(() => getByText("Saved."))).toBeTruthy();
+    expect(await waitFor(() => form.getByText("Saved."))).toBeTruthy();
   });
 
   it("clamps a value below the minimum on save", async () => {
@@ -67,11 +70,12 @@ describe("SettingsPanel", () => {
       throw new Error(`unexpected command ${cmd}`);
     });
 
-    const { getByLabelText, getByText } = render(SettingsPanel);
+    const { getByLabelText } = render(SettingsPanel);
     const input = getByLabelText("Max commits rendered in graph") as HTMLInputElement;
+    const form = within(input.closest("form")!);
 
     await fireEvent.input(input, { target: { value: "5" } });
-    await fireEvent.click(getByText("Save"));
+    await fireEvent.click(form.getByText("Save"));
 
     await waitFor(() => expect(settingsState.maxCommitsRendered).toBe(MIN_MAX_COMMITS_RENDERED));
     expect(input.value).toBe(String(MIN_MAX_COMMITS_RENDERED));
@@ -107,6 +111,146 @@ describe("SettingsPanel", () => {
 
     await waitFor(() => expect(checkbox.checked).toBe(false));
     expect(toastState.toasts.map((t) => t.message)).toContain("disk full");
+  });
+
+  describe("AI section", () => {
+    it("is shown even when no repo is open", () => {
+      mockIPC(() => {
+        throw new Error("should not be called when no repo is open");
+      });
+
+      const { getByText } = render(SettingsPanel);
+
+      expect(getByText("AI")).toBeTruthy();
+    });
+
+    it("saves the chosen provider, base URL, and model together", async () => {
+      const calls: unknown[] = [];
+      mockIPC((cmd, args) => {
+        if (cmd === "set_ai_transport") {
+          calls.push(args);
+          return {
+            transport: { kind: "openAiCompatible", baseUrl: "http://localhost:11434/v1", model: "llama3.1" },
+            instructions: "",
+            cloudWarningAcknowledged: false,
+          };
+        }
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const { getByLabelText } = render(SettingsPanel);
+      const providerSelect = getByLabelText("Provider") as HTMLSelectElement;
+      const form = within(providerSelect.closest("form")!);
+
+      await fireEvent.change(providerSelect, { target: { value: "openAiCompatible" } });
+      await fireEvent.input(getByLabelText("Base URL"), {
+        target: { value: "http://localhost:11434/v1" },
+      });
+      await fireEvent.input(getByLabelText("Model"), { target: { value: "llama3.1" } });
+      await fireEvent.click(form.getByText("Save"));
+
+      expect(await waitFor(() => form.getByText("Saved."))).toBeTruthy();
+      expect(calls).toEqual([
+        {
+          transport: {
+            kind: "openAiCompatible",
+            baseUrl: "http://localhost:11434/v1",
+            model: "llama3.1",
+          },
+        },
+      ]);
+    });
+
+    it("prefills Anthropic's default base URL when switching to it", async () => {
+      mockIPC(() => {
+        throw new Error("should not be called before Save is clicked");
+      });
+
+      const { getByLabelText } = render(SettingsPanel);
+      const providerSelect = getByLabelText("Provider") as HTMLSelectElement;
+
+      await fireEvent.change(providerSelect, { target: { value: "anthropic" } });
+
+      expect((getByLabelText("Base URL") as HTMLInputElement).value).toBe(
+        "https://api.anthropic.com",
+      );
+    });
+
+    it("does not show base URL/model fields when no provider is selected", () => {
+      mockIPC(() => {
+        throw new Error("should not be called when no repo is open");
+      });
+
+      const { queryByLabelText } = render(SettingsPanel);
+
+      expect(queryByLabelText("Base URL")).toBeNull();
+      expect(queryByLabelText("Model")).toBeNull();
+    });
+
+    it("saves a new API key and shows a saved indicator instead of the key's value", async () => {
+      const calls: unknown[] = [];
+      mockIPC((cmd, args) => {
+        if (cmd === "set_ai_api_key") {
+          calls.push(args);
+          return null;
+        }
+        if (cmd === "has_ai_api_key") return true;
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const { getByLabelText } = render(SettingsPanel);
+      const input = getByLabelText("API key (optional for local servers)") as HTMLInputElement;
+      const form = within(input.closest("form")!);
+
+      await fireEvent.input(input, { target: { value: "sk-test" } });
+      await fireEvent.click(form.getByText("Save"));
+
+      expect(await waitFor(() => form.getByText("Saved."))).toBeTruthy();
+      expect(calls).toEqual([{ key: "sk-test" }]);
+      expect(input.value).toBe(""); // write-only — never reflects the saved value back
+    });
+
+    it("shows a Clear action once a key is saved, and clears it on click", async () => {
+      settingsState.hasAiApiKey = true;
+      const calls: string[] = [];
+      mockIPC((cmd) => {
+        if (cmd === "clear_ai_api_key") {
+          calls.push(cmd);
+          return null;
+        }
+        if (cmd === "has_ai_api_key") return false;
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const { getByLabelText } = render(SettingsPanel);
+      const input = getByLabelText("API key (optional for local servers)") as HTMLInputElement;
+      const form = within(input.closest("form")!);
+
+      await fireEvent.click(form.getByText("Clear"));
+
+      await waitFor(() => expect(calls).toEqual(["clear_ai_api_key"]));
+    });
+
+    it("saves custom instructions", async () => {
+      const calls: unknown[] = [];
+      mockIPC((cmd, args) => {
+        if (cmd === "set_ai_instructions") {
+          calls.push(args);
+          return { transport: null, instructions: "Use Conventional Commits.", cloudWarningAcknowledged: false };
+        }
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const { getByLabelText } = render(SettingsPanel);
+      const textarea = getByLabelText("Custom instructions") as HTMLTextAreaElement;
+      const form = within(textarea.closest("form")!);
+
+      await fireEvent.input(textarea, { target: { value: "Use Conventional Commits." } });
+      await fireEvent.click(form.getByText("Save"));
+
+      expect(await waitFor(() => form.getByText("Saved."))).toBeTruthy();
+      expect(calls).toEqual([{ instructions: "Use Conventional Commits." }]);
+    });
   });
 
   describe("when a repo is open", () => {

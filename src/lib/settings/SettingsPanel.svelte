@@ -18,9 +18,19 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     setCommitTemplatePath,
     setRepoDefaultSkipHooks,
   } from "$lib/git/api";
-  import { setMaxCommitsRendered, setReduceMotion, settingsState } from "./settings.svelte";
+  import {
+    clearAiApiKey,
+    setAiApiKey,
+    setAiInstructions,
+    setAiTransport,
+    setMaxCommitsRendered,
+    setReduceMotion,
+    settingsState,
+  } from "./settings.svelte";
   import { notifyError } from "$lib/shell/toast.svelte";
-  import type { WorkflowConfig } from "$lib/git/types";
+  import type { AiTransport, WorkflowConfig } from "$lib/git/types";
+
+  const ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com";
 
   let { repoPath = null }: { repoPath?: string | null } = $props();
 
@@ -148,6 +158,92 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       notifyError(String(err));
     }
   }
+
+  // AI provider/model/instructions/key — the single place any of this feature's
+  // configuration is surfaced (the commit box's "Generate with AI" button carries none of
+  // it). `aiProviderKind`/`aiBaseUrl`/`aiModel` are drafted from `settingsState.ai.transport`
+  // once at mount, the same "local draft + explicit Save" pattern as the commit-template
+  // field above, rather than two-way binding straight to shared state like the plain
+  // checkboxes do — a provider/URL/model change should only take effect together, on submit.
+  type AiProviderKind = "none" | AiTransport["kind"];
+  let aiProviderKind = $state<AiProviderKind>(settingsState.ai.transport?.kind ?? "none");
+  let aiBaseUrl = $state(settingsState.ai.transport?.baseUrl ?? "");
+  let aiModel = $state(settingsState.ai.transport?.model ?? "");
+  let aiTransportSaved = $state(false);
+
+  let aiInstructions = $state(settingsState.ai.instructions);
+  let aiInstructionsSaved = $state(false);
+
+  let aiApiKeyDraft = $state("");
+  let aiApiKeySaved = $state(false);
+
+  function handleAiProviderChange() {
+    aiTransportSaved = false;
+    // No default model name for any provider (availability varies too much per local
+    // install/account tier to guess safely) — but Anthropic's base URL defaults to its own
+    // API, editable in case the user runs a compatible proxy.
+    if (aiProviderKind === "anthropic" && aiBaseUrl.trim() === "") {
+      aiBaseUrl = ANTHROPIC_DEFAULT_BASE_URL;
+    }
+  }
+
+  function handleAiTransportInput() {
+    aiTransportSaved = false;
+  }
+
+  async function handleAiTransportSubmit(event: SubmitEvent) {
+    event.preventDefault();
+    const transport: AiTransport | null =
+      aiProviderKind === "none"
+        ? null
+        : { kind: aiProviderKind, baseUrl: aiBaseUrl.trim(), model: aiModel.trim() };
+    try {
+      await setAiTransport(transport);
+      aiTransportSaved = true;
+    } catch (err) {
+      notifyError(String(err));
+    }
+  }
+
+  function handleAiInstructionsInput() {
+    aiInstructionsSaved = false;
+  }
+
+  async function handleAiInstructionsSubmit(event: SubmitEvent) {
+    event.preventDefault();
+    try {
+      await setAiInstructions(aiInstructions);
+      aiInstructionsSaved = true;
+    } catch (err) {
+      notifyError(String(err));
+    }
+  }
+
+  function handleAiApiKeyInput() {
+    aiApiKeySaved = false;
+  }
+
+  async function handleAiApiKeySubmit(event: SubmitEvent) {
+    event.preventDefault();
+    if (!aiApiKeyDraft.trim()) return;
+    try {
+      await setAiApiKey(aiApiKeyDraft.trim());
+      aiApiKeyDraft = ""; // write-only field — never reflect the saved value back
+      aiApiKeySaved = true;
+    } catch (err) {
+      notifyError(String(err));
+    }
+  }
+
+  async function handleAiApiKeyClear() {
+    try {
+      await clearAiApiKey();
+      aiApiKeyDraft = "";
+      aiApiKeySaved = false;
+    } catch (err) {
+      notifyError(String(err));
+    }
+  }
 </script>
 
 <div class="settings-panel">
@@ -178,6 +274,97 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       />
       Reduce motion
     </label>
+  </section>
+
+  <section class="settings-section">
+    <h3>AI</h3>
+
+    <form onsubmit={handleAiTransportSubmit}>
+      <label for="ai-provider">Provider</label>
+      <div class="row">
+        <select
+          id="ai-provider"
+          bind:value={aiProviderKind}
+          onchange={handleAiProviderChange}
+        >
+          <option value="none">None</option>
+          <option value="openAiCompatible">OpenAI-compatible</option>
+          <option value="anthropic">Anthropic</option>
+        </select>
+      </div>
+
+      {#if aiProviderKind !== "none"}
+        <label for="ai-base-url">Base URL</label>
+        <div class="row">
+          <input
+            id="ai-base-url"
+            type="text"
+            placeholder="http://localhost:11434/v1"
+            bind:value={aiBaseUrl}
+            oninput={handleAiTransportInput}
+          />
+        </div>
+
+        <label for="ai-model">Model</label>
+        <div class="row">
+          <input
+            id="ai-model"
+            type="text"
+            placeholder="llama3.1"
+            bind:value={aiModel}
+            oninput={handleAiTransportInput}
+          />
+        </div>
+      {/if}
+
+      <div class="row">
+        <button type="submit">Save</button>
+      </div>
+      <p class="hint">
+        {aiTransportSaved
+          ? "Saved."
+          : "Nothing is sent anywhere until you set a provider here and click \"Generate with AI\" in the commit box."}
+      </p>
+    </form>
+
+    <form onsubmit={handleAiApiKeySubmit}>
+      <label for="ai-api-key">API key (optional for local servers)</label>
+      <div class="row">
+        <input
+          id="ai-api-key"
+          type="password"
+          placeholder={settingsState.hasAiApiKey ? "Key saved — enter a new value to replace it" : "No key saved"}
+          bind:value={aiApiKeyDraft}
+          oninput={handleAiApiKeyInput}
+        />
+        <button type="submit" disabled={!aiApiKeyDraft.trim()}>Save</button>
+        {#if settingsState.hasAiApiKey}
+          <button type="button" onclick={handleAiApiKeyClear}>Clear</button>
+        {/if}
+      </div>
+      <p class="hint">
+        {aiApiKeySaved
+          ? "Saved."
+          : "Stored in your OS keyring, never in this app's plain-text config file."}
+      </p>
+    </form>
+
+    <form onsubmit={handleAiInstructionsSubmit}>
+      <label for="ai-instructions">Custom instructions</label>
+      <textarea
+        id="ai-instructions"
+        rows="3"
+        placeholder={`e.g. "use Conventional Commits", "keep the summary under 50 characters"`}
+        bind:value={aiInstructions}
+        oninput={handleAiInstructionsInput}
+      ></textarea>
+      <div class="row">
+        <button type="submit">Save</button>
+      </div>
+      <p class="hint">
+        {aiInstructionsSaved ? "Saved." : "Appended to every generation prompt."}
+      </p>
+    </form>
   </section>
 
   {#if repoPath}
@@ -333,7 +520,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     gap: 0.35rem;
   }
 
-  .row input {
+  .row input,
+  .row select,
+  textarea {
     flex: 1 1 auto;
     min-width: 0;
     font: inherit;
@@ -345,7 +534,13 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     border-radius: var(--radius-sm);
   }
 
-  .row input:focus-visible {
+  textarea {
+    resize: none;
+  }
+
+  .row input:focus-visible,
+  .row select:focus-visible,
+  textarea:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: -1px;
   }
@@ -361,8 +556,13 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     transition: background-color 0.1s ease;
   }
 
-  .row button:hover {
+  .row button:hover:not(:disabled) {
     background: var(--surface-2);
+  }
+
+  .row button:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
 
   .hint {

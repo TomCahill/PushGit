@@ -13,22 +13,41 @@
 // `loadRepoFolders()`). Consumers (`SettingsPanel.svelte`, `CommitGraph.svelte`) read the same
 // `$state` singleton either way; only the population timing changed from synchronous to async.
 import {
+  acknowledgeAiCloudWarning as acknowledgeAiCloudWarningCommand,
+  clearAiApiKey as clearAiApiKeyCommand,
   getAppConfig,
+  hasAiApiKey as hasAiApiKeyCommand,
+  setAiApiKey as setAiApiKeyCommand,
+  setAiInstructions as setAiInstructionsCommand,
+  setAiTransport as setAiTransportCommand,
   setMaxCommitsRendered as setMaxCommitsRenderedCommand,
   setReduceMotion as setReduceMotionCommand,
 } from "$lib/git/api";
+import type { AiSettings, AiTransport } from "$lib/git/types";
 
 export const DEFAULT_MAX_COMMITS_RENDERED = 500;
 export const MIN_MAX_COMMITS_RENDERED = 50;
 
+const DEFAULT_AI_SETTINGS: AiSettings = {
+  transport: null,
+  instructions: "",
+  cloudWarningAcknowledged: false,
+};
+
 interface SettingsState {
   maxCommitsRendered: number;
   reduceMotion: boolean;
+  ai: AiSettings;
+  /** Whether an AI provider API key is currently saved — the key's value itself is never
+   *  read back into the frontend, see `hasAiApiKey`. */
+  hasAiApiKey: boolean;
 }
 
 export const settingsState: SettingsState = $state({
   maxCommitsRendered: DEFAULT_MAX_COMMITS_RENDERED,
   reduceMotion: false,
+  ai: { ...DEFAULT_AI_SETTINGS },
+  hasAiApiKey: false,
 });
 
 /** Loads the backend's app config into `settingsState`. Call once at startup. Failure
@@ -40,8 +59,14 @@ export async function loadAppConfig(): Promise<void> {
     const config = await getAppConfig();
     settingsState.maxCommitsRendered = config.maxCommitsRendered;
     settingsState.reduceMotion = config.reduceMotion;
+    settingsState.ai = config.ai;
   } catch {
     // Keep the hardcoded defaults.
+  }
+  try {
+    settingsState.hasAiApiKey = await hasAiApiKeyCommand();
+  } catch {
+    // Keep the default (false) — an unreadable keyring reads the same as "no key saved."
   }
 }
 
@@ -57,4 +82,33 @@ export async function setMaxCommitsRendered(value: number): Promise<void> {
 export async function setReduceMotion(value: boolean): Promise<void> {
   const config = await setReduceMotionCommand(value);
   settingsState.reduceMotion = config.reduceMotion;
+}
+
+/** Persists the chosen AI transport (`null` clears it); `settingsState.ai` is updated from
+ *  the backend's response. */
+export async function setAiTransport(transport: AiTransport | null): Promise<void> {
+  settingsState.ai = await setAiTransportCommand(transport);
+}
+
+/** Persists the free-text instructions appended to every generation prompt. */
+export async function setAiInstructions(instructions: string): Promise<void> {
+  settingsState.ai = await setAiInstructionsCommand(instructions);
+}
+
+/** Records that the user has confirmed the one-time cloud-egress warning — called only from
+ *  that confirmation dialog's "Continue" action. */
+export async function acknowledgeAiCloudWarning(): Promise<void> {
+  settingsState.ai = await acknowledgeAiCloudWarningCommand();
+}
+
+/** Saves the AI provider API key and refreshes `settingsState.hasAiApiKey`. */
+export async function setAiApiKey(key: string): Promise<void> {
+  await setAiApiKeyCommand(key);
+  settingsState.hasAiApiKey = await hasAiApiKeyCommand();
+}
+
+/** Clears the stored AI provider API key and refreshes `settingsState.hasAiApiKey`. */
+export async function clearAiApiKey(): Promise<void> {
+  await clearAiApiKeyCommand();
+  settingsState.hasAiApiKey = await hasAiApiKeyCommand();
 }

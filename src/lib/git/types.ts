@@ -244,10 +244,27 @@ export interface RepoHealth {
   packedSizeKib: number;
 }
 
+// Mirror of `src-tauri/src/ai/mod.rs`.
+export type AiTransport =
+  | { kind: "openAiCompatible"; baseUrl: string; model: string }
+  | { kind: "anthropic"; baseUrl: string; model: string };
+
+export interface AiSettings {
+  transport: AiTransport | null;
+  instructions: string;
+  cloudWarningAcknowledged: boolean;
+}
+
+/** A streamed delta from `generate_commit_message` — see `ai::generate::AiChunk`. */
+export interface AiChunk {
+  text: string;
+}
+
 // Mirror of `src-tauri/src/config/mod.rs`.
 export interface AppConfig {
   maxCommitsRendered: number;
   reduceMotion: boolean;
+  ai: AiSettings;
 }
 
 export interface RepoConfig {

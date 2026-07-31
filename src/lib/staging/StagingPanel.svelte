@@ -7,12 +7,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   // Working-directory staging UI: unstaged/staged file lists, per-hunk and per-line
   // stage/unstage, and the commit box.
   import {
+    cancelAiGeneration,
     commitChanges,
     commitMessageTemplate,
     createStashForPaths,
     diffStaged,
     diffUnstaged,
     discardFileChanges,
+    generateCommitMessage,
     getRepoConfig,
     headCommitMessage,
     stageFile,
@@ -26,9 +28,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import FileStatusIcon from "$lib/diff/FileStatusIcon.svelte";
   import { confirmAsync } from "$lib/shell/confirmDialog.svelte";
   import CopyButton from "$lib/shell/CopyButton.svelte";
+  import Icon from "$lib/shell/Icon.svelte";
   import ResizeHandle from "$lib/shell/ResizeHandle.svelte";
+  import { acknowledgeAiCloudWarning, settingsState } from "$lib/settings/settings.svelte";
   import { sectionHeightsState, setStagedHeight, setUnstagedHeight } from "./sectionHeights.svelte";
-  import type { FileDiff, FileDiffSelection, Hunk } from "$lib/git/types";
+  import type { AiTransport, FileDiff, FileDiffSelection, Hunk } from "$lib/git/types";
 
   let {
     repoPath,
@@ -73,6 +77,21 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   let skipHooksTouched = false;
   let committing = $state(false);
   let commitError = $state<string | null>(null);
+
+  let generating = $state(false);
+  let aiError = $state<string | null>(null);
+  // Bumped on cancel/repo-switch so a chunk from an abandoned generation can never write into
+  // fields that now belong to a different repo (or a fresh generation) — same
+  // stale-response-guard idea `reload`'s `generation` counter already uses below.
+  let aiGeneration = 0;
+  // Set by a real keystroke (not our own programmatic chunk writes — see the title/
+  // description inputs' `oninput` below) while a generation is in flight, so a manual edit
+  // mid-stream stops chunks from continuing to overwrite it.
+  let aiUserEditedDuringGeneration = false;
+  // Matches `PushGitError::Cancelled`'s `#[error("operation cancelled")]` message
+  // (`RemotePanel.svelte` uses this same pattern for fetch/pull/push) — a user-initiated stop
+  // isn't a failure, so it's cleared quietly rather than shown as an error.
+  const CANCELLED_PATTERN = /operation cancelled/i;
 
   const TITLE_MAX_LENGTH = 72;
 
@@ -131,6 +150,91 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     skipHooksTouched = true;
   }
 
+  // A half-configured transport (provider picked but base URL/model left blank) stays
+  // disabled rather than lighting up and failing at request time — pure frontend check
+  // against the already-loaded `AiSettings`, no extra backend call.
+  const aiDisabledReason = $derived.by(() => {
+    if (stagedFiles.length === 0) return "Stage changes first";
+    const transport = settingsState.ai.transport;
+    const configured = transport && transport.baseUrl.trim() !== "" && transport.model.trim() !== "";
+    return configured ? null : "Configure an AI provider in Settings first";
+  });
+
+  const generateAiTooltip = $derived(
+    generating ? "Stop generating" : (aiDisabledReason ?? "Generate a commit message from the staged diff"),
+  );
+
+  function isLocalTransport(transport: AiTransport): boolean {
+    try {
+      const host = new URL(transport.baseUrl).hostname;
+      return host === "localhost" || host === "127.0.0.1";
+    } catch {
+      return false; // an unparseable base URL doesn't get treated as local
+    }
+  }
+
+  function handleTitleInputWhileGenerating() {
+    if (generating) aiUserEditedDuringGeneration = true;
+  }
+
+  function handleDescriptionInputWhileGenerating() {
+    if (generating) aiUserEditedDuringGeneration = true;
+  }
+
+  async function handleGenerateWithAi() {
+    if (generating || aiDisabledReason) return;
+    const transport = settingsState.ai.transport;
+    if (!transport) return;
+
+    if (!isLocalTransport(transport) && !settingsState.ai.cloudWarningAcknowledged) {
+      const confirmed = await confirmAsync(
+        `This will send your staged diff to ${transport.baseUrl}. Staged changes can include secrets — review what's staged before continuing.`,
+      );
+      if (!confirmed) return;
+      try {
+        await acknowledgeAiCloudWarning();
+      } catch (err) {
+        aiError = String(err);
+        return;
+      }
+    }
+
+    if (title !== "" || description !== "") {
+      const confirmed = await confirmAsync(
+        "Replace the current commit title/description with an AI-generated one?",
+      );
+      if (!confirmed) return;
+    }
+
+    const myGeneration = ++aiGeneration;
+    title = "";
+    description = "";
+    aiError = null;
+    aiUserEditedDuringGeneration = false;
+    generating = true;
+    let buffer = "";
+    try {
+      await generateCommitMessage(repoPath, (chunk) => {
+        if (myGeneration !== aiGeneration || aiUserEditedDuringGeneration) return;
+        buffer += chunk;
+        const split = splitMessage(buffer);
+        title = split.title;
+        description = split.description;
+      });
+    } catch (err) {
+      if (myGeneration === aiGeneration) {
+        const message = String(err);
+        if (!CANCELLED_PATTERN.test(message)) aiError = message;
+      }
+    } finally {
+      if (myGeneration === aiGeneration) generating = false;
+    }
+  }
+
+  function handleStopGeneration() {
+    void cancelAiGeneration(repoPath);
+  }
+
   let generation = 0;
 
   $effect(() => {
@@ -144,6 +248,21 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   $effect(() => {
     skipHooksTouched = false;
     void loadSkipHooksDefault(repoPath);
+  });
+
+  // Cancels any in-flight AI generation the moment `repoPath` changes (or this panel
+  // unmounts), the same shape as the effect above that resets `skipHooksTouched` on repo
+  // change — a stream from the old repo can never keep writing into the new one's fields.
+  // Whatever partial text already streamed in is left as-is, same as if the user had typed it.
+  $effect(() => {
+    const path = repoPath;
+    return () => {
+      if (generating) {
+        aiGeneration++;
+        generating = false;
+        void cancelAiGeneration(path);
+      }
+    };
   });
 
   function fileKey(file: FileDiff): string {
@@ -487,14 +606,28 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   <form class="commit-box" onsubmit={handleCommit}>
     <div class="commit-title-row">
       <label for="commit-title">Commit title</label>
-      <span class="char-count" class:over={title.length >= TITLE_MAX_LENGTH}>
-        {title.length}/{TITLE_MAX_LENGTH}
-      </span>
+      <div class="title-row-actions">
+        <button
+          type="button"
+          class="generate-ai"
+          class:generating
+          title={generateAiTooltip}
+          aria-label={generateAiTooltip}
+          disabled={!generating && aiDisabledReason !== null}
+          onclick={generating ? handleStopGeneration : handleGenerateWithAi}
+        >
+          <Icon name={generating ? "square" : "sparkles"} size={12} />
+        </button>
+        <span class="char-count" class:over={title.length >= TITLE_MAX_LENGTH}>
+          {title.length}/{TITLE_MAX_LENGTH}
+        </span>
+      </div>
     </div>
     <input
       id="commit-title"
       type="text"
       bind:value={title}
+      oninput={handleTitleInputWhileGenerating}
       maxlength={TITLE_MAX_LENGTH}
       placeholder="Summarize this change"
       required
@@ -503,6 +636,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     <textarea
       id="commit-description"
       bind:value={description}
+      oninput={handleDescriptionInputWhileGenerating}
       rows="3"
       placeholder="Add more detail"></textarea>
     <div class="commit-actions">
@@ -519,6 +653,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         {amend ? "Amend" : "Commit"}
       </button>
     </div>
+    {#if aiError}
+      <p class="error" role="alert">{aiError}</p>
+    {/if}
     {#if commitError}
       <p class="error" role="alert">{commitError}</p>
     {/if}
@@ -774,6 +911,45 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     display: flex;
     align-items: baseline;
     justify-content: space-between;
+  }
+
+  .title-row-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .generate-ai {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    padding: 0.1rem;
+    color: var(--text-muted);
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    opacity: 0.55;
+    cursor: pointer;
+    transition:
+      opacity 0.1s ease,
+      color 0.1s ease;
+  }
+
+  .generate-ai:hover:not(:disabled),
+  .generate-ai:focus-visible {
+    opacity: 1;
+    color: var(--accent);
+  }
+
+  .generate-ai.generating {
+    opacity: 1;
+    color: var(--danger);
+  }
+
+  .generate-ai:disabled {
+    opacity: 0.3;
+    cursor: default;
   }
 
   .char-count {

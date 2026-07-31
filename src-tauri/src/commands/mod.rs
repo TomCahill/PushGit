@@ -10,6 +10,7 @@ use git2::Repository;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, State};
 
+use crate::ai;
 use crate::blame::{self, BlameLine, FileHistoryEntry};
 use crate::branch::{
     self, BranchInfo, CherryPickOutcome, MergeOutcome, RebaseOutcome, RepoState, ResetMode,
@@ -1102,4 +1103,86 @@ pub fn get_startup_repo_path(state: State<'_, AppState>) -> Option<String> {
         .lock()
         .expect("startup_repo_path mutex poisoned")
         .take()
+}
+
+/// This app's AI-assist settings (provider/model/instructions/cloud-warning-ack) — never
+/// includes the API key itself, see `has_ai_api_key`.
+#[tauri::command]
+pub fn get_ai_settings() -> ai::AiSettings {
+    config::load_app_config().ai
+}
+
+/// Persists the chosen AI transport (or clears it, `None`), returning the resulting settings.
+/// Loads the existing config first so other fields aren't clobbered back to their defaults,
+/// same reasoning as `set_max_commits_rendered`.
+#[tauri::command]
+pub fn set_ai_transport(transport: Option<ai::AiTransport>) -> ai::AiSettings {
+    let mut config = config::load_app_config();
+    config.ai.transport = transport;
+    config::save_app_config(&config);
+    config.ai
+}
+
+/// Persists the free-text instructions appended to every generation prompt.
+#[tauri::command]
+pub fn set_ai_instructions(instructions: String) -> ai::AiSettings {
+    let mut config = config::load_app_config();
+    config.ai.instructions = instructions;
+    config::save_app_config(&config);
+    config.ai
+}
+
+/// Records that the user has confirmed the one-time cloud-egress warning — called only from
+/// that confirmation dialog's "Continue" action, never shown again once set.
+#[tauri::command]
+pub fn acknowledge_ai_cloud_warning() -> ai::AiSettings {
+    let mut config = config::load_app_config();
+    config.ai.cloud_warning_acknowledged = true;
+    config::save_app_config(&config);
+    config.ai
+}
+
+/// Saves the AI provider API key to the OS keyring — never written to `config.json`. Surfaces
+/// keyring failures rather than swallowing them; see `ai::keys`'s module doc for why.
+#[tauri::command]
+pub fn set_ai_api_key(key: String) -> PushGitResult<()> {
+    ai::store_api_key(&key)
+}
+
+/// Clears the stored AI provider API key, if any.
+#[tauri::command]
+pub fn clear_ai_api_key() -> PushGitResult<()> {
+    ai::clear_api_key()
+}
+
+/// Existence check only — the frontend never reads the key's value back once saved, the same
+/// "write-only secret field" pattern password managers use.
+#[tauri::command]
+pub fn has_ai_api_key() -> bool {
+    ai::has_api_key()
+}
+
+/// Streams a generated commit message for `repo_path`'s staged diff through `channel`,
+/// registering a fresh cancellation token first — `cancel_ai_generation` sets it. Uses its
+/// own `ai_cancellation` registry, distinct from `remote_cancellation`, so a concurrent
+/// fetch/pull/push on the same repo can't orphan this cancel token or vice versa.
+#[tauri::command]
+pub async fn generate_commit_message(
+    repo_path: String,
+    channel: Channel<ai::AiChunk>,
+    state: State<'_, AppState>,
+) -> PushGitResult<()> {
+    let cancel = state.ai_cancellation.register(Path::new(&repo_path)).await;
+    ai::generate_commit_message(Path::new(&repo_path), &channel, &cancel).await
+}
+
+/// Cancels whatever AI generation is currently in flight for `repo_path`, if any — a no-op
+/// if nothing is (already finished, or never started).
+#[tauri::command]
+pub async fn cancel_ai_generation(
+    repo_path: String,
+    state: State<'_, AppState>,
+) -> PushGitResult<()> {
+    state.ai_cancellation.cancel(Path::new(&repo_path)).await;
+    Ok(())
 }

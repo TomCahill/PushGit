@@ -9,6 +9,9 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open as openFolderPicker } from "@tauri-apps/plugin-dialog";
 import type {
+  AiChunk,
+  AiSettings,
+  AiTransport,
   AppConfig,
   BlameLine,
   BranchInfo,
@@ -537,4 +540,51 @@ export function setRepoDefaultSkipHooks(repoPath: string, value: boolean): Promi
  *  the first — the backend `take()`s it so a page reload doesn't keep re-opening the same repo. */
 export function getStartupRepoPath(): Promise<string | null> {
   return invoke("get_startup_repo_path");
+}
+
+/** Persists the chosen AI transport (`null` clears it), returning the resulting settings. */
+export function setAiTransport(transport: AiTransport | null): Promise<AiSettings> {
+  return invoke("set_ai_transport", { transport });
+}
+
+/** Persists the free-text instructions appended to every generation prompt. */
+export function setAiInstructions(instructions: string): Promise<AiSettings> {
+  return invoke("set_ai_instructions", { instructions });
+}
+
+/** Records that the user has confirmed the one-time cloud-egress warning — never shown again
+ *  once set. */
+export function acknowledgeAiCloudWarning(): Promise<AiSettings> {
+  return invoke("acknowledge_ai_cloud_warning");
+}
+
+/** Saves the AI provider API key to the OS keyring. */
+export function setAiApiKey(key: string): Promise<void> {
+  return invoke("set_ai_api_key", { key });
+}
+
+/** Clears the stored AI provider API key, if any. */
+export function clearAiApiKey(): Promise<void> {
+  return invoke("clear_ai_api_key");
+}
+
+/** Existence check only — the key's value is never read back once saved. */
+export function hasAiApiKey(): Promise<boolean> {
+  return invoke("has_ai_api_key");
+}
+
+/** Streams a generated commit message for `repoPath`'s staged diff, calling `onChunk` with
+ *  each raw text delta as it arrives. */
+export function generateCommitMessage(
+  repoPath: string,
+  onChunk: (text: string) => void,
+): Promise<void> {
+  const channel = new Channel<AiChunk>();
+  channel.onmessage = (chunk) => onChunk(chunk.text);
+  return invoke("generate_commit_message", { repoPath, channel });
+}
+
+/** Cancels whatever AI generation is currently in flight for `repoPath`, if any. */
+export function cancelAiGeneration(repoPath: string): Promise<void> {
+  return invoke("cancel_ai_generation", { repoPath });
 }

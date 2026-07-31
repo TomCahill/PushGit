@@ -1,15 +1,22 @@
 // Copyright (C) 2026 Tom Cahill
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, waitFor } from "@testing-library/svelte";
 import { within } from "@testing-library/dom";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import ConfirmDialog from "$lib/shell/ConfirmDialog.svelte";
 import StagingPanel from "./StagingPanel.svelte";
 import { makeFileDiff, makeHunk } from "$lib/git/testFixtures";
+import { settingsState } from "$lib/settings/settings.svelte";
+
+type AiChannel = { channel: { onmessage: (chunk: { text: string }) => void } };
 
 describe("StagingPanel", () => {
+  afterEach(() => {
+    settingsState.ai = { transport: null, instructions: "", cloudWarningAcknowledged: false };
+  });
+
   it("does nothing when no repo is open", () => {
     mockIPC(() => {
       throw new Error("should not be called");
@@ -740,5 +747,320 @@ describe("StagingPanel", () => {
 
     const alert = await findByRole("alert");
     expect(alert.textContent).toContain("not a repository");
+  });
+
+  describe("Generate with AI", () => {
+    const LOCAL_TRANSPORT = {
+      kind: "openAiCompatible" as const,
+      baseUrl: "http://localhost:11434/v1",
+      model: "llama3.1",
+    };
+    const CLOUD_TRANSPORT = {
+      kind: "anthropic" as const,
+      baseUrl: "https://api.anthropic.com",
+      model: "claude-sonnet-5",
+    };
+
+    it("is disabled with a 'stage changes' reason when nothing is staged", async () => {
+      settingsState.ai.transport = LOCAL_TRANSPORT;
+      mockIPC((cmd) => {
+        if (cmd === "diff_unstaged" || cmd === "diff_staged") return [];
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const { findByTitle } = render(StagingPanel, { props: { repoPath: "/repo", refreshKey: 0 } });
+
+      const button = (await findByTitle("Stage changes first")) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+    });
+
+    it("is disabled pointing at Settings when no provider is configured", async () => {
+      settingsState.ai.transport = null;
+      mockIPC((cmd) => {
+        if (cmd === "diff_unstaged") return [];
+        if (cmd === "diff_staged") return [makeFileDiff({ newPath: "a.txt" })];
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const { findByTitle } = render(StagingPanel, { props: { repoPath: "/repo", refreshKey: 0 } });
+
+      const button = (await findByTitle(
+        "Configure an AI provider in Settings first",
+      )) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+    });
+
+    it("is disabled pointing at Settings when the transport is half-configured", async () => {
+      settingsState.ai.transport = { kind: "openAiCompatible", baseUrl: "", model: "" };
+      mockIPC((cmd) => {
+        if (cmd === "diff_unstaged") return [];
+        if (cmd === "diff_staged") return [makeFileDiff({ newPath: "a.txt" })];
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const { findByTitle } = render(StagingPanel, { props: { repoPath: "/repo", refreshKey: 0 } });
+
+      const button = (await findByTitle(
+        "Configure an AI provider in Settings first",
+      )) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+    });
+
+    it("is enabled once files are staged and a provider is fully configured", async () => {
+      settingsState.ai.transport = LOCAL_TRANSPORT;
+      mockIPC((cmd) => {
+        if (cmd === "diff_unstaged") return [];
+        if (cmd === "diff_staged") return [makeFileDiff({ newPath: "a.txt" })];
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const { findByTitle } = render(StagingPanel, { props: { repoPath: "/repo", refreshKey: 0 } });
+
+      const button = (await findByTitle(
+        "Generate a commit message from the staged diff",
+      )) as HTMLButtonElement;
+      expect(button.disabled).toBe(false);
+    });
+
+    it("streams generated text into the title/description live, for a local transport with no cloud-warning dialog", async () => {
+      settingsState.ai.transport = LOCAL_TRANSPORT;
+      mockIPC((cmd, args) => {
+        if (cmd === "diff_unstaged") return [];
+        if (cmd === "diff_staged") return [makeFileDiff({ newPath: "a.txt" })];
+        if (cmd === "generate_commit_message") {
+          (args as AiChannel).channel.onmessage({ text: "feat: add thing\n\nLonger body." });
+          return null;
+        }
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const { findByTitle, findByLabelText } = render(StagingPanel, {
+        props: { repoPath: "/repo", refreshKey: 0 },
+      });
+
+      await fireEvent.click(await findByTitle("Generate a commit message from the staged diff"));
+
+      const titleInput = (await findByLabelText("Commit title")) as HTMLInputElement;
+      const descriptionInput = (await findByLabelText(
+        "Description (optional)",
+      )) as HTMLTextAreaElement;
+      await waitFor(() => expect(titleInput.value).toBe("feat: add thing"));
+      expect(descriptionInput.value).toBe("Longer body.");
+    });
+
+    it("shows a one-time cloud-egress confirmation for a non-local transport, and confirming persists the acknowledgement", async () => {
+      settingsState.ai.transport = CLOUD_TRANSPORT;
+      const ackCalls: number[] = [];
+      mockIPC((cmd, args) => {
+        if (cmd === "diff_unstaged") return [];
+        if (cmd === "diff_staged") return [makeFileDiff({ newPath: "a.txt" })];
+        if (cmd === "acknowledge_ai_cloud_warning") {
+          ackCalls.push(1);
+          return { transport: CLOUD_TRANSPORT, instructions: "", cloudWarningAcknowledged: true };
+        }
+        if (cmd === "generate_commit_message") {
+          (args as AiChannel).channel.onmessage({ text: "feat: ok" });
+          return null;
+        }
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      render(ConfirmDialog);
+      const { findByTitle, findByRole, findByLabelText } = render(StagingPanel, {
+        props: { repoPath: "/repo", refreshKey: 0 },
+      });
+
+      await fireEvent.click(await findByTitle("Generate a commit message from the staged diff"));
+      const dialog = await findByRole("alertdialog");
+      expect(dialog.textContent).toContain("https://api.anthropic.com");
+      await fireEvent.click(within(dialog).getByRole("button", { name: "OK" }));
+
+      const titleInput = (await findByLabelText("Commit title")) as HTMLInputElement;
+      await waitFor(() => expect(titleInput.value).toBe("feat: ok"));
+      expect(ackCalls).toEqual([1]);
+      expect(settingsState.ai.cloudWarningAcknowledged).toBe(true);
+    });
+
+    it("declining the cloud-egress confirmation aborts generation without persisting acknowledgement", async () => {
+      settingsState.ai.transport = CLOUD_TRANSPORT;
+      mockIPC((cmd) => {
+        if (cmd === "diff_unstaged") return [];
+        if (cmd === "diff_staged") return [makeFileDiff({ newPath: "a.txt" })];
+        throw new Error(`unexpected command ${cmd} — declining should make no other backend call`);
+      });
+
+      render(ConfirmDialog);
+      const { findByTitle, findByRole } = render(StagingPanel, {
+        props: { repoPath: "/repo", refreshKey: 0 },
+      });
+
+      await fireEvent.click(await findByTitle("Generate a commit message from the staged diff"));
+      const dialog = await findByRole("alertdialog");
+      await fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+      expect(settingsState.ai.cloudWarningAcknowledged).toBe(false);
+    });
+
+    it("does not re-show the cloud-egress dialog once already acknowledged", async () => {
+      settingsState.ai.transport = CLOUD_TRANSPORT;
+      settingsState.ai.cloudWarningAcknowledged = true;
+      mockIPC((cmd, args) => {
+        if (cmd === "diff_unstaged") return [];
+        if (cmd === "diff_staged") return [makeFileDiff({ newPath: "a.txt" })];
+        if (cmd === "generate_commit_message") {
+          (args as AiChannel).channel.onmessage({ text: "feat: ok" });
+          return null;
+        }
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const { findByTitle, findByLabelText, queryByRole } = render(StagingPanel, {
+        props: { repoPath: "/repo", refreshKey: 0 },
+      });
+
+      await fireEvent.click(await findByTitle("Generate a commit message from the staged diff"));
+
+      const titleInput = (await findByLabelText("Commit title")) as HTMLInputElement;
+      await waitFor(() => expect(titleInput.value).toBe("feat: ok"));
+      expect(queryByRole("alertdialog")).toBeNull();
+    });
+
+    it("asks for confirmation before replacing an already-typed commit message", async () => {
+      settingsState.ai.transport = LOCAL_TRANSPORT;
+      mockIPC((cmd, args) => {
+        if (cmd === "diff_unstaged") return [];
+        if (cmd === "diff_staged") return [makeFileDiff({ newPath: "a.txt" })];
+        if (cmd === "generate_commit_message") {
+          (args as AiChannel).channel.onmessage({ text: "feat: replaced" });
+          return null;
+        }
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      render(ConfirmDialog);
+      const { findByTitle, findByLabelText, findByRole } = render(StagingPanel, {
+        props: { repoPath: "/repo", refreshKey: 0 },
+      });
+
+      const titleInput = (await findByLabelText("Commit title")) as HTMLInputElement;
+      await fireEvent.input(titleInput, { target: { value: "my draft title" } });
+
+      await fireEvent.click(await findByTitle("Generate a commit message from the staged diff"));
+      await fireEvent.click(
+        within(await findByRole("alertdialog")).getByRole("button", { name: "OK" }),
+      );
+
+      await waitFor(() => expect(titleInput.value).toBe("feat: replaced"));
+    });
+
+    it("cancelling the replace confirmation leaves the existing draft untouched", async () => {
+      settingsState.ai.transport = LOCAL_TRANSPORT;
+      mockIPC((cmd) => {
+        if (cmd === "diff_unstaged") return [];
+        if (cmd === "diff_staged") return [makeFileDiff({ newPath: "a.txt" })];
+        throw new Error(`unexpected command ${cmd} — cancelling should make no other backend call`);
+      });
+
+      render(ConfirmDialog);
+      const { findByTitle, findByLabelText, findByRole } = render(StagingPanel, {
+        props: { repoPath: "/repo", refreshKey: 0 },
+      });
+
+      const titleInput = (await findByLabelText("Commit title")) as HTMLInputElement;
+      await fireEvent.input(titleInput, { target: { value: "my draft title" } });
+
+      await fireEvent.click(await findByTitle("Generate a commit message from the staged diff"));
+      await fireEvent.click(
+        within(await findByRole("alertdialog")).getByRole("button", { name: "Cancel" }),
+      );
+
+      expect(titleInput.value).toBe("my draft title");
+    });
+
+    it("shows a stop affordance while streaming and cancels via cancel_ai_generation without showing an error", async () => {
+      settingsState.ai.transport = LOCAL_TRANSPORT;
+      let rejectGenerate: (reason: unknown) => void = () => {};
+      const gate = new Promise<void>((_resolve, reject) => {
+        rejectGenerate = reject;
+      });
+      const cancelCalls: unknown[] = [];
+
+      mockIPC(async (cmd, args) => {
+        if (cmd === "diff_unstaged") return [];
+        if (cmd === "diff_staged") return [makeFileDiff({ newPath: "a.txt" })];
+        if (cmd === "generate_commit_message") {
+          (args as AiChannel).channel.onmessage({ text: "partial" });
+          await gate;
+          return null;
+        }
+        if (cmd === "cancel_ai_generation") {
+          cancelCalls.push(args);
+          rejectGenerate("operation cancelled");
+          return null;
+        }
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const { findByTitle, findByLabelText, queryByRole } = render(StagingPanel, {
+        props: { repoPath: "/repo", refreshKey: 0 },
+      });
+
+      await fireEvent.click(await findByTitle("Generate a commit message from the staged diff"));
+
+      const titleInput = (await findByLabelText("Commit title")) as HTMLInputElement;
+      await waitFor(() => expect(titleInput.value).toBe("partial"));
+
+      const stopButton = await findByTitle("Stop generating");
+      await fireEvent.click(stopButton);
+
+      await waitFor(() => expect(cancelCalls).toEqual([{ repoPath: "/repo" }]));
+      expect(titleInput.value).toBe("partial"); // partial text left in place, not cleared
+      expect(queryByRole("alert")).toBeNull();
+    });
+
+    it("cancels an in-flight generation when repoPath changes, leaving partial text in place", async () => {
+      settingsState.ai.transport = LOCAL_TRANSPORT;
+      let rejectGenerate: (reason: unknown) => void = () => {};
+      const gate = new Promise<void>((_resolve, reject) => {
+        rejectGenerate = reject;
+      });
+      const cancelCalls: unknown[] = [];
+
+      mockIPC(async (cmd, args) => {
+        switch (cmd) {
+          case "diff_unstaged":
+            return [];
+          case "diff_staged":
+            return [makeFileDiff({ newPath: "a.txt" })];
+          case "commit_message_template":
+            return null;
+          case "get_repo_config":
+            return { defaultSkipHooks: false };
+          case "generate_commit_message":
+            (args as AiChannel).channel.onmessage({ text: "partial from repo a" });
+            await gate;
+            return null;
+          case "cancel_ai_generation":
+            cancelCalls.push(args);
+            rejectGenerate("operation cancelled");
+            return null;
+          default:
+            throw new Error(`unexpected command ${cmd}`);
+        }
+      });
+
+      const { findByTitle, findByLabelText, rerender } = render(StagingPanel, {
+        props: { repoPath: "/repo-a", refreshKey: 0 },
+      });
+
+      await fireEvent.click(await findByTitle("Generate a commit message from the staged diff"));
+      const titleInput = (await findByLabelText("Commit title")) as HTMLInputElement;
+      await waitFor(() => expect(titleInput.value).toBe("partial from repo a"));
+
+      await rerender({ repoPath: "/repo-b", refreshKey: 0 });
+
+      await waitFor(() => expect(cancelCalls).toEqual([{ repoPath: "/repo-a" }]));
+      expect(titleInput.value).toBe("partial from repo a");
+    });
   });
 });

@@ -4,6 +4,7 @@
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{Emitter, Manager};
 
+mod ai;
 mod blame;
 mod branch;
 mod cherry_pick_range;
@@ -221,6 +222,15 @@ pub fn run() {
         commands::get_commit_template_path,
         commands::set_commit_template_path,
         commands::get_startup_repo_path,
+        commands::get_ai_settings,
+        commands::set_ai_transport,
+        commands::set_ai_instructions,
+        commands::set_ai_api_key,
+        commands::clear_ai_api_key,
+        commands::has_ai_api_key,
+        commands::acknowledge_ai_cloud_warning,
+        commands::generate_commit_message,
+        commands::cancel_ai_generation,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
