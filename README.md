@@ -6,8 +6,8 @@
 <p align="center">A fast, native git GUI with a proper visual commit graph.</p>
 
 <p align="center">
-  <img src="https://img.shields.io/github/actions/workflow/status/TomCahill/pushgit.git/ci.yml?branch=main&label=CI" alt="CI status">
-  <img src="https://img.shields.io/github/v/release/TomCahill/pushgit.git" alt="Latest release">
+  <img src="https://img.shields.io/github/actions/workflow/status/TomCahill/pushgit/ci.yml?branch=main&label=CI" alt="CI status">
+  <img src="https://img.shields.io/github/v/release/TomCahill/pushgit" alt="Latest release">
   <img src="https://img.shields.io/badge/platform-Linux-informational" alt="Platform: Linux">
   <img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-blue" alt="License: AGPL-3.0-or-later">
 </p>
@@ -42,10 +42,13 @@ Not an all-in-one dev platform. No PR review, no issue tracking, no phone-home.
 ## Status
 
 PushGit is under active development and Linux-first for now (the architecture doesn't preclude macOS/
-Windows later). There are no packaged releases yet building from source is currently the only way to
-run it.
+Windows later). Release binaries are available for download under each
+[release on GitHub](https://github.com/TomCahill/pushgit/releases), or you can build from source.
 
 ## Getting started
+
+Download a prebuilt binary from the [releases page](https://github.com/TomCahill/pushgit/releases),
+or build from source.
 
 **Prerequisites:** [Rust](https://www.rust-lang.org/tools/install), Node.js 20+, and the [Tauri Linux
 system dependencies](https://v2.tauri.app/start/prerequisites/#linux).

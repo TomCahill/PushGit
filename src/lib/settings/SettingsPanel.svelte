@@ -535,6 +535,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   .row {
     display: flex;
     gap: 0.5rem;
+    margin-bottom: 0.5rem;
   }
 
   .hint {
