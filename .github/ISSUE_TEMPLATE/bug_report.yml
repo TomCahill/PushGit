@@ -1,0 +1,68 @@
+name: Bug report
+description: Something in PushGit isn't working as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please search existing issues first to avoid duplicates.
+        For security vulnerabilities, do not use this template — see [SECURITY.md](../../SECURITY.md) instead.
+
+  - type: input
+    id: version
+    attributes:
+      label: PushGit version
+      description: Found in the app's About screen, or the release/commit you built from.
+      placeholder: e.g. v1.2.0 or commit 6443423
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS / distro
+      placeholder: e.g. Ubuntu 24.04, Fedora 40
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a repo with ...
+        2. Click ...
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or screenshots
+      description: Attach anything that might help (console output, screenshots, a stack trace).
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else?
+      description: Repo size/shape, unusual git config, hooks, submodules — anything that might be relevant.
+    validations:
+      required: false
