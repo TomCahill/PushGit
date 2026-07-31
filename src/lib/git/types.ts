@@ -247,7 +247,8 @@ export interface RepoHealth {
 // Mirror of `src-tauri/src/ai/mod.rs`.
 export type AiTransport =
   | { kind: "openAiCompatible"; baseUrl: string; model: string }
-  | { kind: "anthropic"; baseUrl: string; model: string };
+  | { kind: "anthropic"; baseUrl: string; model: string }
+  | { kind: "managedLocal" };
 
 export interface AiSettings {
   transport: AiTransport | null;
@@ -258,6 +259,19 @@ export interface AiSettings {
 /** A streamed delta from `generate_commit_message` — see `ai::generate::AiChunk`. */
 export interface AiChunk {
   text: string;
+}
+
+// Mirror of `src-tauri/src/ai/local/mod.rs::LocalAiStatus`.
+export interface LocalAiStatus {
+  modelPresent: boolean;
+  enginePresent: boolean;
+}
+
+// Mirror of `src-tauri/src/ai/local/download.rs::DownloadProgress`.
+export interface DownloadProgress {
+  stage: "engine" | "model";
+  bytesDownloaded: number;
+  bytesTotal: number;
 }
 
 // Mirror of `src-tauri/src/config/mod.rs`.

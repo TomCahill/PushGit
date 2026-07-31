@@ -15,6 +15,7 @@ type AiChannel = { channel: { onmessage: (chunk: { text: string }) => void } };
 describe("StagingPanel", () => {
   afterEach(() => {
     settingsState.ai = { transport: null, instructions: "", cloudWarningAcknowledged: false };
+    settingsState.localAiStatus = { modelPresent: false, enginePresent: false };
   });
 
   it("does nothing when no repo is open", () => {
@@ -806,6 +807,40 @@ describe("StagingPanel", () => {
       expect(button.disabled).toBe(true);
     });
 
+    it("is disabled pointing at Settings when the managed local engine isn't downloaded yet", async () => {
+      settingsState.ai.transport = { kind: "managedLocal" };
+      settingsState.localAiStatus = { modelPresent: false, enginePresent: false };
+      mockIPC((cmd) => {
+        if (cmd === "diff_unstaged") return [];
+        if (cmd === "diff_staged") return [makeFileDiff({ newPath: "a.txt" })];
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const { findByTitle } = render(StagingPanel, { props: { repoPath: "/repo", refreshKey: 0 } });
+
+      const button = (await findByTitle(
+        "Download the local AI engine in Settings first",
+      )) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+    });
+
+    it("is enabled for the managed local transport once the engine and model are downloaded", async () => {
+      settingsState.ai.transport = { kind: "managedLocal" };
+      settingsState.localAiStatus = { modelPresent: true, enginePresent: true };
+      mockIPC((cmd) => {
+        if (cmd === "diff_unstaged") return [];
+        if (cmd === "diff_staged") return [makeFileDiff({ newPath: "a.txt" })];
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const { findByTitle } = render(StagingPanel, { props: { repoPath: "/repo", refreshKey: 0 } });
+
+      const button = (await findByTitle(
+        "Generate a commit message from the staged diff",
+      )) as HTMLButtonElement;
+      expect(button.disabled).toBe(false);
+    });
+
     it("is enabled once files are staged and a provider is fully configured", async () => {
       settingsState.ai.transport = LOCAL_TRANSPORT;
       mockIPC((cmd) => {
@@ -846,6 +881,93 @@ describe("StagingPanel", () => {
       )) as HTMLTextAreaElement;
       await waitFor(() => expect(titleInput.value).toBe("feat: add thing"));
       expect(descriptionInput.value).toBe("Longer body.");
+    });
+
+    it("streams generated text for the managed local transport with no cloud-warning dialog", async () => {
+      settingsState.ai.transport = { kind: "managedLocal" };
+      settingsState.localAiStatus = { modelPresent: true, enginePresent: true };
+      mockIPC((cmd, args) => {
+        if (cmd === "diff_unstaged") return [];
+        if (cmd === "diff_staged") return [makeFileDiff({ newPath: "a.txt" })];
+        if (cmd === "generate_commit_message") {
+          (args as AiChannel).channel.onmessage({ text: "feat: from local engine" });
+          return null;
+        }
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const { findByTitle, findByLabelText } = render(StagingPanel, {
+        props: { repoPath: "/repo", refreshKey: 0 },
+      });
+
+      await fireEvent.click(await findByTitle("Generate a commit message from the staged diff"));
+
+      const titleInput = (await findByLabelText("Commit title")) as HTMLInputElement;
+      await waitFor(() => expect(titleInput.value).toBe("feat: from local engine"));
+    });
+
+    it("strips a markdown code fence a weaker model wraps its output in", async () => {
+      settingsState.ai.transport = { kind: "managedLocal" };
+      settingsState.localAiStatus = { modelPresent: true, enginePresent: true };
+      mockIPC((cmd, args) => {
+        if (cmd === "diff_unstaged") return [];
+        if (cmd === "diff_staged") return [makeFileDiff({ newPath: "a.txt" })];
+        if (cmd === "generate_commit_message") {
+          (args as AiChannel).channel.onmessage({
+            text: "```plaintext\nfeat(ai): add local engine support\n\n- did a thing\n```",
+          });
+          return null;
+        }
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const { findByTitle, findByLabelText } = render(StagingPanel, {
+        props: { repoPath: "/repo", refreshKey: 0 },
+      });
+
+      await fireEvent.click(await findByTitle("Generate a commit message from the staged diff"));
+
+      const titleInput = (await findByLabelText("Commit title")) as HTMLInputElement;
+      const descriptionInput = (await findByLabelText(
+        "Description (optional)",
+      )) as HTMLTextAreaElement;
+      await waitFor(() => expect(titleInput.value).toBe("feat(ai): add local engine support"));
+      expect(descriptionInput.value).toBe("- did a thing");
+    });
+
+    it("freezes at 4 bullets and cancels generation once the model tries to write a 5th", async () => {
+      settingsState.ai.transport = { kind: "managedLocal" };
+      settingsState.localAiStatus = { modelPresent: true, enginePresent: true };
+      const cancelCalls: string[] = [];
+      mockIPC((cmd, args) => {
+        if (cmd === "diff_unstaged") return [];
+        if (cmd === "diff_staged") return [makeFileDiff({ newPath: "a.txt" })];
+        if (cmd === "cancel_ai_generation") {
+          cancelCalls.push(cmd);
+          return null;
+        }
+        if (cmd === "generate_commit_message") {
+          const send = (text: string) => (args as AiChannel).channel.onmessage({ text });
+          send("feat(ai): add local engine support\n\n");
+          send("- one\n- two\n- three\n- four\n");
+          send("- five\n- six\n"); // beyond the cap — must never be shown
+          throw "operation cancelled"; // the cap's own cancel call resolves the invoke this way
+        }
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const { findByTitle, findByLabelText } = render(StagingPanel, {
+        props: { repoPath: "/repo", refreshKey: 0 },
+      });
+
+      await fireEvent.click(await findByTitle("Generate a commit message from the staged diff"));
+
+      const descriptionInput = (await findByLabelText(
+        "Description (optional)",
+      )) as HTMLTextAreaElement;
+      await waitFor(() => expect(descriptionInput.value).toBe("- one\n- two\n- three\n- four"));
+      expect(descriptionInput.value).not.toContain("five");
+      expect(cancelCalls).toEqual(["cancel_ai_generation"]);
     });
 
     it("shows a one-time cloud-egress confirmation for a non-local transport, and confirming persists the acknowledgement", async () => {

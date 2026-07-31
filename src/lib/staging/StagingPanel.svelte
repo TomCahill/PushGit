@@ -96,13 +96,52 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
   const TITLE_MAX_LENGTH = 72;
 
+  // Some models (small local ones especially — weaker instruction-following than the cloud
+  // models this prompt was first tuned against) wrap their output in a markdown code fence
+  // despite the system prompt explicitly forbidding it. Stripped defensively here rather than
+  // trusted away, since a leading ```lang line would otherwise become the commit title
+  // verbatim. Applied on every chunk against the whole accumulated buffer (not incrementally),
+  // so a fence still being typed out mid-stream may render partially stripped for a moment —
+  // harmless, since it settles to the correct result once the opening line finishes streaming.
+  function stripCodeFence(text: string): string {
+    return text.replace(/^```[^\n]*\n?/, "").replace(/\n?```\s*$/, "");
+  }
+
   function splitMessage(full: string): { title: string; description: string } {
-    const newlineIndex = full.indexOf("\n");
-    if (newlineIndex === -1) return { title: full, description: "" };
+    const stripped = stripCodeFence(full);
+    const newlineIndex = stripped.indexOf("\n");
+    if (newlineIndex === -1) return { title: stripped, description: "" };
     return {
-      title: full.slice(0, newlineIndex),
-      description: full.slice(newlineIndex + 1).replace(/^\n+/, ""),
+      title: stripped.slice(0, newlineIndex),
+      description: stripped.slice(newlineIndex + 1).replace(/^\n+/, ""),
     };
+  }
+
+  // The managed local model can't be trusted to stop itself at a bullet count — verified
+  // directly against the real model that asking it to cap at 3-4 bullets either gets ignored
+  // (it enumerates a bullet per file regardless) or, worded more mechanically, degenerates into
+  // repeating the same line until the token limit. Enforced here instead: once a bullet beyond
+  // `MAX_LOCAL_BULLETS` starts streaming in, the displayed text freezes right before it and
+  // `handleGenerateWithAi` cancels the underlying generation — this also happens to catch the
+  // repetition-loop failure mode, since a 5th bullet-shaped line triggers the cap regardless of
+  // whether the first four were sensible or just the same line repeated.
+  const MAX_LOCAL_BULLETS = 4;
+
+  function capBullets(
+    description: string,
+    maxBullets: number,
+  ): { capped: string; exceeded: boolean } {
+    const lines = description.split("\n");
+    let bulletCount = 0;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith("- ")) {
+        bulletCount++;
+        if (bulletCount > maxBullets) {
+          return { capped: lines.slice(0, i).join("\n").replace(/\n+$/, ""), exceeded: true };
+        }
+      }
+    }
+    return { capped: description, exceeded: false };
   }
 
   function buildMessage(titleText: string, descriptionText: string): string {
@@ -157,7 +196,13 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   const aiDisabledReason = $derived.by(() => {
     if (stagedFiles.length === 0) return "Stage changes first";
     const transport = settingsState.ai.transport;
-    const configured = transport && transport.baseUrl.trim() !== "" && transport.model.trim() !== "";
+    if (!transport) return "Configure an AI provider in Settings first";
+    if (transport.kind === "managedLocal") {
+      const ready =
+        settingsState.localAiStatus.modelPresent && settingsState.localAiStatus.enginePresent;
+      return ready ? null : "Download the local AI engine in Settings first";
+    }
+    const configured = transport.baseUrl.trim() !== "" && transport.model.trim() !== "";
     return configured ? null : "Configure an AI provider in Settings first";
   });
 
@@ -166,6 +211,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   );
 
   function isLocalTransport(transport: AiTransport): boolean {
+    if (transport.kind === "managedLocal") return true; // always loopback — no cloud-egress warning
     try {
       const host = new URL(transport.baseUrl).hostname;
       return host === "localhost" || host === "127.0.0.1";
@@ -187,7 +233,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     const transport = settingsState.ai.transport;
     if (!transport) return;
 
-    if (!isLocalTransport(transport) && !settingsState.ai.cloudWarningAcknowledged) {
+    if (
+      transport.kind !== "managedLocal" &&
+      !isLocalTransport(transport) &&
+      !settingsState.ai.cloudWarningAcknowledged
+    ) {
       const confirmed = await confirmAsync(
         `This will send your staged diff to ${transport.baseUrl}. Staged changes can include secrets — review what's staged before continuing.`,
       );
@@ -214,13 +264,26 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     aiUserEditedDuringGeneration = false;
     generating = true;
     let buffer = "";
+    const isManagedLocal = transport.kind === "managedLocal";
+    let bulletCapReached = false;
     try {
       await generateCommitMessage(repoPath, (chunk) => {
-        if (myGeneration !== aiGeneration || aiUserEditedDuringGeneration) return;
+        if (myGeneration !== aiGeneration || aiUserEditedDuringGeneration || bulletCapReached) {
+          return;
+        }
         buffer += chunk;
         const split = splitMessage(buffer);
         title = split.title;
-        description = split.description;
+        if (isManagedLocal) {
+          const { capped, exceeded } = capBullets(split.description, MAX_LOCAL_BULLETS);
+          description = capped;
+          if (exceeded) {
+            bulletCapReached = true;
+            void cancelAiGeneration(repoPath);
+          }
+        } else {
+          description = split.description;
+        }
       });
     } catch (err) {
       if (myGeneration === aiGeneration) {

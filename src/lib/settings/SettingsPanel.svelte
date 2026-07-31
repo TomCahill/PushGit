@@ -19,7 +19,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     setRepoDefaultSkipHooks,
   } from "$lib/git/api";
   import {
+    cancelLocalAiDownload,
     clearAiApiKey,
+    downloadLocalAi,
     setAiApiKey,
     setAiInstructions,
     setAiTransport,
@@ -171,9 +173,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   // field above, rather than two-way binding straight to shared state like the plain
   // checkboxes do — a provider/URL/model change should only take effect together, on submit.
   type AiProviderKind = "none" | AiTransport["kind"];
-  let aiProviderKind = $state<AiProviderKind>(settingsState.ai.transport?.kind ?? "none");
-  let aiBaseUrl = $state(settingsState.ai.transport?.baseUrl ?? "");
-  let aiModel = $state(settingsState.ai.transport?.model ?? "");
+  const initialTransport = settingsState.ai.transport;
+  let aiProviderKind = $state<AiProviderKind>(initialTransport?.kind ?? "none");
+  let aiBaseUrl = $state(initialTransport && "baseUrl" in initialTransport ? initialTransport.baseUrl : "");
+  let aiModel = $state(initialTransport && "model" in initialTransport ? initialTransport.model : "");
   let aiTransportSaved = $state(false);
 
   let aiInstructions = $state(settingsState.ai.instructions);
@@ -198,16 +201,51 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
   async function handleAiTransportSubmit(event: SubmitEvent) {
     event.preventDefault();
-    const transport: AiTransport | null =
-      aiProviderKind === "none"
-        ? null
-        : { kind: aiProviderKind, baseUrl: aiBaseUrl.trim(), model: aiModel.trim() };
+    let transport: AiTransport | null;
+    if (aiProviderKind === "none") {
+      transport = null;
+    } else if (aiProviderKind === "managedLocal") {
+      transport = { kind: "managedLocal" };
+    } else {
+      transport = { kind: aiProviderKind, baseUrl: aiBaseUrl.trim(), model: aiModel.trim() };
+    }
     try {
       await setAiTransport(transport);
       aiTransportSaved = true;
     } catch (err) {
       notifyError(String(err));
     }
+  }
+
+  // Local-AI download — a direct click starts it; no confirmation dialog, since this pulls
+  // bytes onto the machine rather than sending anything off it (the cloud-egress warning
+  // elsewhere in this panel is about the opposite direction).
+  const CANCELLED_PATTERN = /operation cancelled/i;
+
+  // Tracked separately from `settingsState.localAiDownloadProgress`: a moment can pass after
+  // the click (DNS/connect) before the first progress chunk arrives, and the Cancel button
+  // needs to be there for that whole window, not just once progress data exists.
+  let downloadingLocalAi = $state(false);
+
+  async function handleDownloadLocalAi() {
+    downloadingLocalAi = true;
+    try {
+      await downloadLocalAi();
+    } catch (err) {
+      if (!CANCELLED_PATTERN.test(String(err))) {
+        notifyError(String(err));
+      }
+    } finally {
+      downloadingLocalAi = false;
+    }
+  }
+
+  function handleCancelLocalAiDownload() {
+    void cancelLocalAiDownload();
+  }
+
+  function downloadPercent(bytesDownloaded: number, bytesTotal: number): number {
+    return bytesTotal > 0 ? Math.round((bytesDownloaded / bytesTotal) * 100) : 0;
   }
 
   function handleAiInstructionsInput() {
@@ -298,9 +336,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
             <option value="none">None</option>
             <option value="openAiCompatible">OpenAI-compatible</option>
             <option value="anthropic">Anthropic</option>
+            <option value="managedLocal">Local AI</option>
           </Select>
 
-          {#if aiProviderKind !== "none"}
+          {#if aiProviderKind === "openAiCompatible" || aiProviderKind === "anthropic"}
             <TextField
               id="ai-base-url"
               label="Base URL"
@@ -316,6 +355,44 @@ SPDX-License-Identifier: AGPL-3.0-or-later
               bind:value={aiModel}
               oninput={handleAiTransportInput}
             />
+          {:else if aiProviderKind === "managedLocal"}
+            <div class="local-ai-status">
+              {#if downloadingLocalAi}
+                {#if settingsState.localAiDownloadProgress}
+                  {@const p = settingsState.localAiDownloadProgress}
+                  <div class="progress" role="status">
+                    <div class="progress-track">
+                      <div
+                        class="progress-fill"
+                        style={`width: ${downloadPercent(p.bytesDownloaded, p.bytesTotal)}%`}
+                      ></div>
+                    </div>
+                    <p class="progress-label">
+                      {p.stage === "engine" ? "Engine" : "Model"}: {downloadPercent(
+                        p.bytesDownloaded,
+                        p.bytesTotal,
+                      )}%
+                    </p>
+                  </div>
+                {:else}
+                  <p class="hint">Starting download…</p>
+                {/if}
+                <div class="row">
+                  <Button variant="outlined" type="button" onclick={handleCancelLocalAiDownload}>
+                    Cancel
+                  </Button>
+                </div>
+              {:else if settingsState.localAiStatus.modelPresent && settingsState.localAiStatus.enginePresent}
+                <p class="hint">Ready — Qwen2.5-Coder-1.5B running locally via llama.cpp.</p>
+              {:else}
+                <p class="hint">Not downloaded yet (~1.1GB).</p>
+                <div class="row">
+                  <Button variant="tonal" type="button" onclick={handleDownloadLocalAi}>
+                    <Icon name="download" size={13} /> Download Local AI Engine
+                  </Button>
+                </div>
+              {/if}
+            </div>
           {/if}
         </div>
 
@@ -501,6 +578,40 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     gap: 0.6rem;
     padding-left: var(--space-3);
     border-left: 2px solid var(--border);
+  }
+
+  .local-ai-status {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .progress {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .progress-track {
+    flex: 1 1 auto;
+    height: 0.3rem;
+    background: var(--surface-2);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.15s ease;
+  }
+
+  .progress-label {
+    flex-shrink: 0;
+    margin: 0;
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
   }
 
   .workflow-status,

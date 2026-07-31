@@ -14,8 +14,11 @@
 // `$state` singleton either way; only the population timing changed from synchronous to async.
 import {
   acknowledgeAiCloudWarning as acknowledgeAiCloudWarningCommand,
+  cancelLocalAiDownload as cancelLocalAiDownloadCommand,
   clearAiApiKey as clearAiApiKeyCommand,
+  downloadLocalAi as downloadLocalAiCommand,
   getAppConfig,
+  getLocalAiStatus,
   hasAiApiKey as hasAiApiKeyCommand,
   setAiApiKey as setAiApiKeyCommand,
   setAiInstructions as setAiInstructionsCommand,
@@ -23,7 +26,7 @@ import {
   setMaxCommitsRendered as setMaxCommitsRenderedCommand,
   setReduceMotion as setReduceMotionCommand,
 } from "$lib/git/api";
-import type { AiSettings, AiTransport } from "$lib/git/types";
+import type { AiSettings, AiTransport, DownloadProgress, LocalAiStatus } from "$lib/git/types";
 
 export const DEFAULT_MAX_COMMITS_RENDERED = 500;
 export const MIN_MAX_COMMITS_RENDERED = 50;
@@ -34,6 +37,11 @@ const DEFAULT_AI_SETTINGS: AiSettings = {
   cloudWarningAcknowledged: false,
 };
 
+const DEFAULT_LOCAL_AI_STATUS: LocalAiStatus = {
+  modelPresent: false,
+  enginePresent: false,
+};
+
 interface SettingsState {
   maxCommitsRendered: number;
   reduceMotion: boolean;
@@ -41,6 +49,11 @@ interface SettingsState {
   /** Whether an AI provider API key is currently saved — the key's value itself is never
    *  read back into the frontend, see `hasAiApiKey`. */
   hasAiApiKey: boolean;
+  /** Whether the managed local-AI model/engine are downloaded and verified. */
+  localAiStatus: LocalAiStatus;
+  /** The in-progress download's latest reported progress, or `null` when no download is
+   *  running — drives the Settings panel's progress bar. */
+  localAiDownloadProgress: DownloadProgress | null;
 }
 
 export const settingsState: SettingsState = $state({
@@ -48,6 +61,8 @@ export const settingsState: SettingsState = $state({
   reduceMotion: false,
   ai: { ...DEFAULT_AI_SETTINGS },
   hasAiApiKey: false,
+  localAiStatus: { ...DEFAULT_LOCAL_AI_STATUS },
+  localAiDownloadProgress: null,
 });
 
 /** Loads the backend's app config into `settingsState`. Call once at startup. Failure
@@ -68,6 +83,37 @@ export async function loadAppConfig(): Promise<void> {
   } catch {
     // Keep the default (false) — an unreadable keyring reads the same as "no key saved."
   }
+  await refreshLocalAiStatus();
+}
+
+/** Re-reads local-AI download/readiness status from the backend — called at startup and again
+ *  after a download finishes (success or failure), since either can change what's on disk. */
+export async function refreshLocalAiStatus(): Promise<void> {
+  try {
+    settingsState.localAiStatus = await getLocalAiStatus();
+  } catch {
+    // Keep the previous value — an unresolvable data dir reads the same as "not downloaded."
+  }
+}
+
+/** Downloads and verifies the local-AI model/engine, updating `localAiDownloadProgress` as
+ *  chunks arrive and refreshing `localAiStatus` once it settles either way. Rethrows on
+ *  failure/cancellation so the calling UI can surface the error. */
+export async function downloadLocalAi(): Promise<void> {
+  settingsState.localAiDownloadProgress = null;
+  try {
+    await downloadLocalAiCommand((progress) => {
+      settingsState.localAiDownloadProgress = progress;
+    });
+  } finally {
+    settingsState.localAiDownloadProgress = null;
+    await refreshLocalAiStatus();
+  }
+}
+
+/** Cancels whatever local-AI download is currently in progress, if any. */
+export async function cancelLocalAiDownload(): Promise<void> {
+  await cancelLocalAiDownloadCommand();
 }
 
 /** Persists a new max-commits-rendered default; the backend clamps it to

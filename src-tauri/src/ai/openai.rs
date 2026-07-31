@@ -7,6 +7,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::Value;
@@ -15,7 +16,7 @@ use tauri::ipc::Channel;
 use crate::error::{PushGitError, PushGitResult};
 
 use super::generate::AiChunk;
-use super::sse::{check_response_status, SseReader, IDLE_TIMEOUT};
+use super::sse::{check_response_status, SseReader};
 
 #[derive(Serialize)]
 struct ChatMessage<'a> {
@@ -28,8 +29,20 @@ struct ChatRequest<'a> {
     model: &'a str,
     messages: Vec<ChatMessage<'a>>,
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u32>,
 }
 
+/// `temperature`/`max_tokens` are `None` for every caller except the managed local-AI
+/// transport, which passes its fixed constants (see `ai::local`) — every cloud/self-hosted
+/// OpenAI-compatible provider keeps using its own server-side defaults, unchanged from before
+/// these fields existed. `idle_timeout` is caller-chosen rather than a shared constant: a
+/// cloud API and a CPU-bound local `llama-server` prefilling a multi-thousand-token prompt
+/// have very different "this has gone quiet, something's wrong" thresholds — see
+/// `ai::generate::LOCAL_IDLE_TIMEOUT`'s doc comment for why the local value is much larger.
+#[allow(clippy::too_many_arguments)]
 pub async fn stream(
     base_url: &str,
     model: &str,
@@ -37,6 +50,9 @@ pub async fn stream(
     prompt: &str,
     channel: &Channel<AiChunk>,
     cancel: &Arc<AtomicBool>,
+    temperature: Option<f32>,
+    max_tokens: Option<u32>,
+    idle_timeout: Duration,
 ) -> PushGitResult<()> {
     let client = reqwest::Client::new();
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
@@ -53,6 +69,8 @@ pub async fn stream(
             },
         ],
         stream: true,
+        temperature,
+        max_tokens,
     };
 
     let mut request = client.post(&url).json(&body);
@@ -72,7 +90,7 @@ pub async fn stream(
             return Err(PushGitError::Cancelled);
         }
 
-        let event = match tokio::time::timeout(IDLE_TIMEOUT, reader.next_event()).await {
+        let event = match tokio::time::timeout(idle_timeout, reader.next_event()).await {
             Ok(result) => result?,
             Err(_) => return Err(PushGitError::Invalid("AI request timed out".to_string())),
         };
@@ -130,6 +148,8 @@ mod tests {
         Arc::new(AtomicBool::new(false))
     }
 
+    const TEST_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
+
     #[tokio::test]
     async fn assembles_a_full_stream_from_multiple_delta_chunks() {
         let server = MockServer::start().await;
@@ -152,11 +172,74 @@ mod tests {
             "prompt",
             &channel,
             &not_cancelled(),
+            None,
+            None,
+            TEST_IDLE_TIMEOUT,
         )
         .await
         .unwrap();
 
         assert_eq!(*received.lock().unwrap(), vec!["feat: ", "add thing"]);
+    }
+
+    #[tokio::test]
+    async fn temperature_and_max_tokens_are_omitted_from_the_request_body_by_default() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("data: [DONE]\n\n"))
+            .mount(&server)
+            .await;
+        let (channel, _received) = collecting_channel();
+
+        stream(
+            &server.uri(),
+            "llama3.1",
+            None,
+            "prompt",
+            &channel,
+            &not_cancelled(),
+            None,
+            None,
+            TEST_IDLE_TIMEOUT,
+        )
+        .await
+        .unwrap();
+
+        let request = &server.received_requests().await.unwrap()[0];
+        let body: Value = request.body_json().unwrap();
+        assert!(body.get("temperature").is_none());
+        assert!(body.get("max_tokens").is_none());
+    }
+
+    #[tokio::test]
+    async fn temperature_and_max_tokens_are_included_when_provided() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("data: [DONE]\n\n"))
+            .mount(&server)
+            .await;
+        let (channel, _received) = collecting_channel();
+
+        stream(
+            &server.uri(),
+            "llama3.1",
+            None,
+            "prompt",
+            &channel,
+            &not_cancelled(),
+            Some(0.1),
+            Some(100),
+            TEST_IDLE_TIMEOUT,
+        )
+        .await
+        .unwrap();
+
+        let request = &server.received_requests().await.unwrap()[0];
+        let body: Value = request.body_json().unwrap();
+        assert_eq!(body["temperature"], 0.1);
+        assert_eq!(body["max_tokens"], 100);
     }
 
     #[tokio::test]
@@ -176,6 +259,9 @@ mod tests {
             "prompt",
             &channel,
             &not_cancelled(),
+            None,
+            None,
+            TEST_IDLE_TIMEOUT,
         )
         .await
         .unwrap_err();
@@ -205,6 +291,9 @@ mod tests {
             "prompt",
             &channel,
             &not_cancelled(),
+            None,
+            None,
+            TEST_IDLE_TIMEOUT,
         )
         .await
         .unwrap();
@@ -225,9 +314,19 @@ mod tests {
 
         let (channel, received) = collecting_channel();
         let cancel = Arc::new(AtomicBool::new(true));
-        let err = stream(&server.uri(), "llama3.1", None, "prompt", &channel, &cancel)
-            .await
-            .unwrap_err();
+        let err = stream(
+            &server.uri(),
+            "llama3.1",
+            None,
+            "prompt",
+            &channel,
+            &cancel,
+            None,
+            None,
+            TEST_IDLE_TIMEOUT,
+        )
+        .await
+        .unwrap_err();
 
         assert!(matches!(err, PushGitError::Cancelled));
         assert!(received.lock().unwrap().is_empty());

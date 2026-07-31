@@ -18,12 +18,14 @@ import type {
   CherryPickOutcome,
   CommitGraphPage,
   ConflictSides,
+  DownloadProgress,
   FileDiff,
   FileHistoryEntry,
   FinishOutcome,
   GitVersionCheck,
   GraphFilter,
   Hunk,
+  LocalAiStatus,
   MergeOutcome,
   OperationSummary,
   RebaseCommitSummary,
@@ -587,4 +589,24 @@ export function generateCommitMessage(
 /** Cancels whatever AI generation is currently in flight for `repoPath`, if any. */
 export function cancelAiGeneration(repoPath: string): Promise<void> {
   return invoke("cancel_ai_generation", { repoPath });
+}
+
+/** Whether the pinned local-AI model/engine are downloaded and verified. */
+export function getLocalAiStatus(): Promise<LocalAiStatus> {
+  return invoke("get_local_ai_status");
+}
+
+/** Downloads and verifies the pinned local-AI engine and model, calling `onProgress` with each
+ *  update as it arrives. */
+export function downloadLocalAi(
+  onProgress: (progress: DownloadProgress) => void,
+): Promise<void> {
+  const channel = new Channel<DownloadProgress>();
+  channel.onmessage = onProgress;
+  return invoke("download_local_ai", { channel });
+}
+
+/** Cancels whatever local-AI download is currently in progress, if any. */
+export function cancelLocalAiDownload(): Promise<void> {
+  return invoke("cancel_local_ai_download");
 }

@@ -141,7 +141,6 @@ declare module '$env/static/private' {
 	export const XDG_DATA_DIRS: string;
 	export const CLAUDE_CODE_EXECPATH: string;
 	export const npm_config_global_prefix: string;
-	export const npm_config_allow_scripts: string;
 	export const npm_command: string;
 	export const MEMORY_PRESSURE_WRITE: string;
 	export const INIT_CWD: string;
@@ -342,7 +341,6 @@ declare module '$env/dynamic/private' {
 		XDG_DATA_DIRS: string;
 		CLAUDE_CODE_EXECPATH: string;
 		npm_config_global_prefix: string;
-		npm_config_allow_scripts: string;
 		npm_command: string;
 		MEMORY_PRESSURE_WRITE: string;
 		INIT_CWD: string;

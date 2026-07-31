@@ -1173,7 +1173,13 @@ pub async fn generate_commit_message(
     state: State<'_, AppState>,
 ) -> PushGitResult<()> {
     let cancel = state.ai_cancellation.register(Path::new(&repo_path)).await;
-    ai::generate_commit_message(Path::new(&repo_path), &channel, &cancel).await
+    ai::generate_commit_message(
+        Path::new(&repo_path),
+        &channel,
+        &cancel,
+        &state.local_engine,
+    )
+    .await
 }
 
 /// Cancels whatever AI generation is currently in flight for `repo_path`, if any — a no-op
@@ -1184,5 +1190,35 @@ pub async fn cancel_ai_generation(
     state: State<'_, AppState>,
 ) -> PushGitResult<()> {
     state.ai_cancellation.cancel(Path::new(&repo_path)).await;
+    Ok(())
+}
+
+/// Whether the pinned local-AI model/engine are downloaded and verified — checked on Settings
+/// load and again after a download completes.
+#[tauri::command]
+pub fn get_local_ai_status() -> ai::local::LocalAiStatus {
+    ai::local::get_local_ai_status()
+}
+
+/// Downloads and verifies the pinned local-AI engine and model, registering a fresh
+/// cancellation token first — `cancel_local_ai_download` sets it. Registering also doubles as
+/// the guard against two concurrent downloads racing on the same `.part` files; the token is
+/// cleared once this call finishes, however it finishes, so a later download isn't rejected by
+/// a token nothing will ever clear.
+#[tauri::command]
+pub async fn download_local_ai(
+    channel: Channel<ai::local::DownloadProgress>,
+    state: State<'_, AppState>,
+) -> PushGitResult<()> {
+    let cancel = state.local_ai_cancellation.register().await?;
+    let result = ai::local::download_local_ai(&channel, &cancel).await;
+    state.local_ai_cancellation.clear().await;
+    result
+}
+
+/// Cancels whatever local-AI download is currently in progress, if any — a no-op if nothing is.
+#[tauri::command]
+pub async fn cancel_local_ai_download(state: State<'_, AppState>) -> PushGitResult<()> {
+    state.local_ai_cancellation.cancel().await;
     Ok(())
 }

@@ -113,7 +113,8 @@ pub fn run() {
             .plugin(tauri_plugin_dialog::init())
             .plugin(tauri_plugin_window_state::Builder::default().build())
             .plugin(tauri_plugin_cli::init())
-            .plugin(tauri_plugin_notification::init()),
+            .plugin(tauri_plugin_notification::init())
+            .plugin(tauri_plugin_opener::init()),
     )
     .manage(state::AppState::default())
     .menu(build_menu)
@@ -231,7 +232,26 @@ pub fn run() {
         commands::acknowledge_ai_cloud_warning,
         commands::generate_commit_message,
         commands::cancel_ai_generation,
+        commands::get_local_ai_status,
+        commands::download_local_ai,
+        commands::cancel_local_ai_download,
     ])
-    .run(tauri::generate_context!())
-    .expect("error while running tauri application");
+    .build(tauri::generate_context!())
+    .expect("error while running tauri application")
+    .run(|app_handle, event| {
+        // The only long-lived child process this app manages — every other subprocess (`git`)
+        // is spawned and awaited to completion within a single command call, so this is the
+        // first thing that needs cleanup on exit rather than living for the app's lifetime.
+        if let tauri::RunEvent::ExitRequested { .. } = event {
+            if let Ok(mut engine) = app_handle
+                .state::<state::AppState>()
+                .local_engine
+                .try_lock()
+            {
+                if let Some(mut handle) = engine.take() {
+                    handle.kill();
+                }
+            }
+        }
+    });
 }

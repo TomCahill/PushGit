@@ -8,6 +8,7 @@
 mod anthropic;
 mod generate;
 mod keys;
+pub mod local;
 mod openai;
 mod prompt;
 mod sse;
@@ -17,6 +18,8 @@ pub use keys::{clear_api_key, get_api_key, has_api_key, store_api_key};
 
 use serde::{Deserialize, Serialize};
 
+/// `ManagedLocal` carries no fields — unlike the other two variants, its model path and engine
+/// address are fixed and internally managed (see `local`), not user-configured.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     rename_all = "camelCase",
@@ -26,6 +29,7 @@ use serde::{Deserialize, Serialize};
 pub enum AiTransport {
     OpenAiCompatible { base_url: String, model: String },
     Anthropic { base_url: String, model: String },
+    ManagedLocal,
 }
 
 /// `transport: None` is the out-of-the-box, feature-inert state. `instructions` and
@@ -64,6 +68,13 @@ mod tests {
                 "model": "llama3.1",
             })
         );
+    }
+
+    #[test]
+    fn managed_local_serializes_as_a_field_less_kind_tag() {
+        let value = serde_json::to_value(AiTransport::ManagedLocal).unwrap();
+
+        assert_eq!(value, serde_json::json!({ "kind": "managedLocal" }));
     }
 
     #[test]

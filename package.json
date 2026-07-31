@@ -15,7 +15,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "tauri": "tauri",
-    "release": "npm run tauri build", 
+    "tauri:cache:clear": "rm -rf ~/.local/share/dev.pushgit.app/WebKitCache ~/.local/share/dev.pushgit.app/CacheStorage node_modules/.vite",
+    "release": "npm run tauri build",
     "rust:check": "cd src-tauri && cargo check",
     "rust:build": "cd src-tauri && cargo build",
     "rust:build:release": "cd src-tauri && cargo build --release",
@@ -39,6 +40,7 @@
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-notification": "^2.3.3",
+    "@tauri-apps/plugin-opener": "^2",
     "highlight.js": "^11.11.1"
   },
   "devDependencies": {

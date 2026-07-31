@@ -7,6 +7,7 @@
 use notify_debouncer_full::{notify::RecommendedWatcher, Debouncer, RecommendedCache};
 use tokio::sync::Mutex;
 
+use crate::ai::local::{LocalAiCancellation, LocalEngineHandle};
 use crate::graph::GraphSessions;
 use crate::remote::CancellationRegistry;
 use crate::undo::UndoLog;
@@ -26,6 +27,14 @@ pub struct AppState {
     pub ai_cancellation: CancellationRegistry,
     /// Undo/redo history for destructive operations, keyed by repo path.
     pub undo_log: UndoLog,
+    /// Cancellation for an in-progress local-AI model/engine download — a singleton, not a
+    /// per-repo registry: a download is app-level and at-most-one-at-a-time, unlike
+    /// `ai_cancellation`/`remote_cancellation`.
+    pub local_ai_cancellation: LocalAiCancellation,
+    /// The running `llama-server` subprocess for the managed local-AI transport, if one has
+    /// been started this session — lazily spawned on first use, kept warm afterward, and
+    /// killed on app exit (see `lib.rs`'s `RunEvent::ExitRequested` handler).
+    pub local_engine: Mutex<Option<LocalEngineHandle>>,
     /// The repo path passed on the command line at cold start (`tauri-plugin-cli`),
     /// if any. Read once via
     /// `commands::get_startup_repo_path`, which `take()`s it so a later call (e.g. a page

@@ -19,6 +19,8 @@ describe("SettingsPanel", () => {
     settingsState.reduceMotion = false;
     settingsState.ai = { transport: null, instructions: "", cloudWarningAcknowledged: false };
     settingsState.hasAiApiKey = false;
+    settingsState.localAiStatus = { modelPresent: false, enginePresent: false };
+    settingsState.localAiDownloadProgress = null;
     toastState.toasts = [];
   });
 
@@ -250,6 +252,103 @@ describe("SettingsPanel", () => {
 
       expect(await waitFor(() => form.getByText("Saved."))).toBeTruthy();
       expect(calls).toEqual([{ instructions: "Use Conventional Commits." }]);
+    });
+
+    describe("Local AI (managed)", () => {
+      type DownloadChannel = { channel: { onmessage: (progress: unknown) => void } };
+
+      it("shows a Download button with a size estimate when nothing is downloaded yet", async () => {
+        mockIPC(() => {
+          throw new Error("should not be called before Save is clicked");
+        });
+
+        const { getByLabelText, getByText } = render(SettingsPanel);
+        await fireEvent.change(getByLabelText("Provider"), { target: { value: "managedLocal" } });
+
+        expect(getByText("Not downloaded yet (~1.1GB).")).toBeTruthy();
+        expect(getByText("Download Local AI Engine")).toBeTruthy();
+      });
+
+      it("does not show base URL/model fields for the managed local transport", async () => {
+        mockIPC(() => {
+          throw new Error("should not be called before Save is clicked");
+        });
+
+        const { getByLabelText, queryByLabelText } = render(SettingsPanel);
+        await fireEvent.change(getByLabelText("Provider"), { target: { value: "managedLocal" } });
+
+        expect(queryByLabelText("Base URL")).toBeNull();
+        expect(queryByLabelText("Model")).toBeNull();
+      });
+
+      it("shows Ready status when the model and engine are already present", async () => {
+        settingsState.localAiStatus = { modelPresent: true, enginePresent: true };
+        mockIPC(() => {
+          throw new Error("should not be called before Save is clicked");
+        });
+
+        const { getByLabelText, getByText } = render(SettingsPanel);
+        await fireEvent.change(getByLabelText("Provider"), { target: { value: "managedLocal" } });
+
+        expect(getByText("Ready", { exact: false })).toBeTruthy();
+      });
+
+      it("shows a progress bar reflecting the latest reported chunk while downloading", async () => {
+        mockIPC((cmd, args) => {
+          if (cmd === "download_local_ai") {
+            (args as DownloadChannel).channel.onmessage({
+              stage: "engine",
+              bytesDownloaded: 50,
+              bytesTotal: 100,
+            });
+            return new Promise(() => {}); // never resolves — the download is still in flight
+          }
+          throw new Error(`unexpected command ${cmd}`);
+        });
+
+        const { getByLabelText, getByText } = render(SettingsPanel);
+        await fireEvent.change(getByLabelText("Provider"), { target: { value: "managedLocal" } });
+        await fireEvent.click(getByText("Download Local AI Engine"));
+
+        expect(await waitFor(() => getByText("Engine: 50%"))).toBeTruthy();
+      });
+
+      it("shows Ready and refreshes status once a download completes", async () => {
+        mockIPC((cmd) => {
+          if (cmd === "download_local_ai") return null;
+          if (cmd === "get_local_ai_status") {
+            return { modelPresent: true, enginePresent: true };
+          }
+          throw new Error(`unexpected command ${cmd}`);
+        });
+
+        const { getByLabelText, getByText } = render(SettingsPanel);
+        await fireEvent.change(getByLabelText("Provider"), { target: { value: "managedLocal" } });
+        await fireEvent.click(getByText("Download Local AI Engine"));
+
+        expect(await waitFor(() => getByText("Ready", { exact: false }))).toBeTruthy();
+      });
+
+      it("cancels an in-progress download", async () => {
+        const calls: string[] = [];
+        mockIPC((cmd) => {
+          if (cmd === "download_local_ai") {
+            return new Promise(() => {}); // never resolves — simulates an in-flight download
+          }
+          if (cmd === "cancel_local_ai_download") {
+            calls.push(cmd);
+            return null;
+          }
+          throw new Error(`unexpected command ${cmd}`);
+        });
+
+        const { getByLabelText, getByText } = render(SettingsPanel);
+        await fireEvent.change(getByLabelText("Provider"), { target: { value: "managedLocal" } });
+        await fireEvent.click(getByText("Download Local AI Engine"));
+        await fireEvent.click(await waitFor(() => getByText("Cancel")));
+
+        expect(calls).toEqual(["cancel_local_ai_download"]);
+      });
     });
   });
 

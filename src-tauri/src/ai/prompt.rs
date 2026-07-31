@@ -10,7 +10,7 @@
 
 use crate::diff::{FileDiff, Hunk, LineOrigin};
 
-const SYSTEM_PROMPT: &str = "You are an expert developer. Read the following git diff and generate a Conventional Commit message.\nConsider the diff as a whole: summarize the overall intent across every file touched, weighing each roughly equally rather than fixating on whichever single file or hunk happens to be largest.\nA line reading \"[dependency lockfile - diff omitted; ...]\" marks a machine-generated lockfile update with no hand-written content - mention it only if it is the only change in the diff, never let it dominate the summary.\nFormat: <type>(<scope>): <subject>\nDo NOT include any explanations, markdown, or conversational text. Output ONLY the commit message.";
+const SYSTEM_PROMPT: &str = "You are an expert developer. Read the following git diff and generate a Conventional Commit message.\nConsider the diff as a whole: summarize the overall intent across every file touched, weighing each roughly equally rather than fixating on whichever single file or hunk happens to be largest.\nA line reading \"[dependency lockfile - diff omitted; ...]\" marks a machine-generated lockfile update with no hand-written content - mention it only if it is the only change in the diff, never let it dominate the summary.\nFormat: <type>(<scope>): <subject>\nDo NOT include any explanations, markdown, or conversational text, and do NOT wrap the output in a code block or markdown fence (no ``` anywhere). Output ONLY the commit message as plain text.";
 
 /// Diffs above this are truncated at the last complete file/hunk boundary before the cap —
 /// very large diffs are rare for a single commit, and a truncated-but-present diff still
@@ -54,8 +54,24 @@ fn is_lockfile(path: &str) -> bool {
     LOCKFILE_BASENAMES.contains(&basename)
 }
 
-pub fn build_prompt(staged: &[FileDiff], instructions: &str) -> String {
+/// `extra_directive`, if given, is appended right after the base system prompt and before the
+/// user's own custom instructions — reinforcement PushGit adds itself, not user text, so it
+/// stays ahead of (and can't be overridden by) whatever the user asked for. Used only by the
+/// managed local transport (see `ai::generate::LOCAL_SINGLE_LINE_DIRECTIVE`): verified directly
+/// against the real model that a 1.5B model needs a much more forceful, repeated single-line
+/// constraint than cloud models do — without it, it reliably enumerates a bullet per file
+/// touched instead of writing one subject line, and on a large enough diff that enumeration
+/// runs into `LOCAL_MAX_TOKENS` and gets cut off mid-word.
+pub fn build_prompt(
+    staged: &[FileDiff],
+    instructions: &str,
+    extra_directive: Option<&str>,
+) -> String {
     let mut prompt = SYSTEM_PROMPT.to_string();
+    if let Some(directive) = extra_directive {
+        prompt.push('\n');
+        prompt.push_str(directive);
+    }
     if !instructions.trim().is_empty() {
         prompt.push_str("\n\n");
         prompt.push_str(instructions.trim());
@@ -214,7 +230,7 @@ mod tests {
 
     #[test]
     fn build_prompt_includes_the_fixed_system_prompt() {
-        let prompt = build_prompt(&[], "");
+        let prompt = build_prompt(&[], "", None);
         assert!(prompt.starts_with(SYSTEM_PROMPT));
     }
 
@@ -226,16 +242,29 @@ mod tests {
 
     #[test]
     fn build_prompt_appends_custom_instructions_after_the_system_prompt() {
-        let prompt = build_prompt(&[], "Always mention ABC-123.");
+        let prompt = build_prompt(&[], "Always mention ABC-123.", None);
         assert!(prompt.contains("Always mention ABC-123."));
         assert!(prompt.find(SYSTEM_PROMPT).unwrap() < prompt.find("Always mention").unwrap());
     }
 
     #[test]
     fn build_prompt_omits_the_instructions_block_when_empty() {
-        let with_blank = build_prompt(&[], "   ");
-        let without = build_prompt(&[], "");
+        let with_blank = build_prompt(&[], "   ", None);
+        let without = build_prompt(&[], "", None);
         assert_eq!(with_blank, without);
+    }
+
+    #[test]
+    fn build_prompt_places_the_extra_directive_before_user_instructions() {
+        let prompt = build_prompt(&[], "Always mention ABC-123.", Some("Stay on one line."));
+        assert!(prompt.contains("Stay on one line."));
+        assert!(prompt.find("Stay on one line.").unwrap() < prompt.find("Always mention").unwrap());
+    }
+
+    #[test]
+    fn build_prompt_omits_the_extra_directive_when_none() {
+        let prompt = build_prompt(&[], "", None);
+        assert_eq!(prompt, format!("{SYSTEM_PROMPT}\n\nDiff:\n"));
     }
 
     #[test]

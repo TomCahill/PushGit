@@ -105,6 +105,13 @@ fn data_dir() -> Option<PathBuf> {
     )
 }
 
+/// The downloaded local-AI model + engine live here, not under `cache_dir()` — unlike the
+/// derived/regenerable data the cache dir is documented for, these are large, slow-to-refetch
+/// downloads the local-AI feature actively depends on working.
+pub fn local_ai_dir() -> Option<PathBuf> {
+    Some(data_dir()?.join("local-ai"))
+}
+
 fn app_config_path(config_dir: &Path) -> PathBuf {
     config_dir.join("config.json")
 }

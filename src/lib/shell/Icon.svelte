@@ -32,7 +32,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     | "wrench"
     | "bell"
     | "sparkles"
-    | "square";
+    | "square"
+    | "download";
 
   let { name, size = 14 }: { name: IconName; size?: number } = $props();
 </script>
@@ -132,6 +133,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     <path d="M17 5h4" />
   {:else if name === "square"}
     <rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none" />
+  {:else if name === "download"}
+    <path d="M12 3v12" />
+    <path d="M7 10l5 5 5-5" />
+    <path d="M4 19h16" />
   {/if}
 </svg>
 
