@@ -20,6 +20,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     pushRemote,
   } from "$lib/git/api";
   import type { MergeOutcome, RemoteProgress } from "$lib/git/types";
+  import { burstConfetti } from "$lib/shell/confetti.svelte";
   import { confirmAsync } from "$lib/shell/confirmDialog.svelte";
   import Icon from "$lib/shell/Icon.svelte";
   import { notifyError, notifySuccess } from "$lib/shell/toast.svelte";
@@ -51,6 +52,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
   let busy = $state(false);
   let progress = $state<RemoteProgress | null>(null);
+  let pushButtonEl = $state<HTMLButtonElement | null>(null);
 
   let generation = 0;
 
@@ -163,6 +165,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       try {
         await pushRemote(repoPath, REMOTE_NAME, branchName, false, onProgress);
         notifySuccess(`Pushed ${branchName} to ${REMOTE_NAME}.`);
+        if (pushButtonEl) burstConfetti(pushButtonEl.getBoundingClientRect());
       } catch (err) {
         const message = String(err);
         if (
@@ -175,6 +178,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         }
         await pushRemote(repoPath, REMOTE_NAME, branchName, true, onProgress);
         notifySuccess(`Force-pushed ${branchName} to ${REMOTE_NAME}.`);
+        if (pushButtonEl) burstConfetti(pushButtonEl.getBoundingClientRect());
       }
     });
   }
@@ -204,6 +208,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     <button
       type="button"
       class="filled"
+      bind:this={pushButtonEl}
       onclick={handlePush}
       disabled={busy || !currentBranchName}
       title={ahead > 0

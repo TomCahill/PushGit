@@ -25,3 +25,17 @@ export function motionFast(): number {
 export function motionBase(): number {
   return readMs("--motion-base", FALLBACK_MOTION_BASE_MS);
 }
+
+// The `data-reduce-motion`/`@media` mechanism above only zeroes CSS custom properties, which is
+// enough for CSS-only transitions and the JS-driven `transition:` directives that read them via
+// `motionFast()`/`motionBase()`. Anything driven by its own JS loop (e.g. a canvas particle
+// animation) instead needs a plain boolean to decide whether to run at all — this combines both
+// signals (`.private/feature/reduce-motion-setting/PLAN.md`'s "setting OR OS preference"
+// formula) for that case. Defaults to `false` ("don't assume reduced") when the environment can't
+// tell, same defensive posture as `readMs`'s fallback.
+export function prefersReducedMotion(): boolean {
+  if (typeof document === "undefined") return false;
+  if (document.documentElement.hasAttribute("data-reduce-motion")) return true;
+  if (typeof matchMedia !== "function") return false;
+  return matchMedia("(prefers-reduced-motion: reduce)").matches;
+}

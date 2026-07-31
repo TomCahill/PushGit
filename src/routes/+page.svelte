@@ -37,6 +37,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   } from "$lib/repo/repoFolders";
   import ActionRail from "$lib/shell/ActionRail.svelte";
   import Avatar from "$lib/shell/Avatar.svelte";
+  import Confetti from "$lib/shell/Confetti.svelte";
   import ConfirmDialog from "$lib/shell/ConfirmDialog.svelte";
   import ContextMenu from "$lib/shell/ContextMenu.svelte";
   import ResizeHandle from "$lib/shell/ResizeHandle.svelte";
@@ -721,6 +722,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 <ConfirmDialog />
 <ContextMenu />
 <Toast />
+<Confetti />
 <AboutDialog open={showAbout} onClose={() => (showAbout = false)} />
 <CommandPalette
   {repoPath}
