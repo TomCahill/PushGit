@@ -16,6 +16,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import { pickRepositoryFolder } from "$lib/git/api";
   import { confirmAsync, promptAsync } from "$lib/shell/confirmDialog.svelte";
   import { openContextMenu, type ContextMenuItem } from "$lib/shell/contextMenu.svelte";
+  import Button from "$lib/shell/Button.svelte";
   import Icon from "$lib/shell/Icon.svelte";
   import Logo from "$lib/shell/Logo.svelte";
   import NotificationsPanel from "$lib/shell/NotificationsPanel.svelte";
@@ -304,14 +305,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     {/if}
   </div>
 
-  <button
-    type="button"
-    class="open-repo-button"
-    title="Open a repository"
-    onclick={handleOpenClick}
-  >
+  <Button variant="tonal" title="Open a repository" onclick={handleOpenClick}>
     <Icon name="folder" size={14} /> Open
-  </button>
+  </Button>
 
   {#if openError}
     <p class="error" role="alert">{openError}</p>
@@ -458,32 +454,6 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     margin-left: auto;
     font-size: 0.7rem;
     color: var(--text-secondary);
-  }
-
-  .open-repo-button {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.3rem;
-    padding: 0.5rem 0.7rem;
-    font: inherit;
-    font-size: 0.8rem;
-    font-weight: 500;
-    color: var(--btn-tonal-fg);
-    background: var(--btn-tonal-bg);
-    border: none;
-    border-radius: var(--radius-md);
-    cursor: pointer;
-    transition: opacity 0.1s ease;
-  }
-
-  .open-repo-button:hover {
-    opacity: 0.85;
-  }
-
-  .open-repo-button:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: -1px;
   }
 
   .new-folder-button {

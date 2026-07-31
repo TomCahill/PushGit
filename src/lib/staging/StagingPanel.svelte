@@ -27,6 +27,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import DiffStat from "$lib/diff/DiffStat.svelte";
   import FileStatusIcon from "$lib/diff/FileStatusIcon.svelte";
   import { confirmAsync } from "$lib/shell/confirmDialog.svelte";
+  import Button from "$lib/shell/Button.svelte";
   import CopyButton from "$lib/shell/CopyButton.svelte";
   import Icon from "$lib/shell/Icon.svelte";
   import ResizeHandle from "$lib/shell/ResizeHandle.svelte";
@@ -649,9 +650,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         Skip hooks
       </label>
       <span class="staged-count">{stagedFiles.length} file(s) staged</span>
-      <button type="submit" class="filled" disabled={committing || !title.trim()}>
+      <Button variant="filled" type="submit" disabled={committing || !title.trim()}>
         {amend ? "Amend" : "Commit"}
-      </button>
+      </Button>
     </div>
     {#if aiError}
       <p class="error" role="alert">{aiError}</p>
@@ -987,28 +988,6 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     display: flex;
     align-items: center;
     gap: 0.75rem;
-  }
-
-  .commit-actions button.filled {
-    font: inherit;
-    font-size: 0.85rem;
-    font-weight: 500;
-    padding: 0.5rem 1.1rem;
-    color: var(--btn-filled-fg);
-    background: var(--btn-filled-bg);
-    border: none;
-    border-radius: var(--radius-md);
-    cursor: pointer;
-    transition: opacity 0.1s ease;
-  }
-
-  .commit-actions button:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-
-  .commit-actions button:not(:disabled):hover {
-    opacity: 0.9;
   }
 
   .amend,

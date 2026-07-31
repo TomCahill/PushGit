@@ -22,6 +22,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import type { MergeOutcome, RemoteProgress } from "$lib/git/types";
   import { burstConfetti } from "$lib/shell/confetti.svelte";
   import { confirmAsync } from "$lib/shell/confirmDialog.svelte";
+  import Button from "$lib/shell/Button.svelte";
   import Icon from "$lib/shell/Icon.svelte";
   import { notifyError, notifySuccess } from "$lib/shell/toast.svelte";
 
@@ -186,12 +187,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 <div class="remote-panel">
   <div class="remote-actions">
-    <button type="button" class="tonal" onclick={handleFetch} disabled={busy} title="Fetch">
+    <Button variant="tonal" onclick={handleFetch} disabled={busy} title="Fetch">
       <Icon name="refresh-cw" size={13} /> Fetch
-    </button>
-    <button
-      type="button"
-      class="tonal"
+    </Button>
+    <Button
+      variant="tonal"
       onclick={handlePull}
       disabled={busy || !hasUpstream}
       title={hasUpstream
@@ -204,11 +204,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       {#if behind > 0}
         <span class="count-badge">{behind}</span>
       {/if}
-    </button>
-    <button
-      type="button"
-      class="filled"
-      bind:this={pushButtonEl}
+    </Button>
+    <Button
+      variant="filled"
+      bind:ref={pushButtonEl}
       onclick={handlePush}
       disabled={busy || !currentBranchName}
       title={ahead > 0
@@ -219,11 +218,13 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       {#if ahead > 0}
         <span class="count-badge">{ahead}</span>
       {/if}
-    </button>
+    </Button>
     {#if busy}
-      <button type="button" class="outlined cancel" onclick={handleCancel} title="Cancel">
-        <Icon name="x" size={13} /> Cancel
-      </button>
+      <span class="cancel-wrap">
+        <Button variant="outlined" onclick={handleCancel} title="Cancel">
+          <Icon name="x" size={13} /> Cancel
+        </Button>
+      </span>
     {/if}
   </div>
 
@@ -263,56 +264,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     gap: 0.3rem;
   }
 
-  .remote-actions button {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3rem;
-    padding: 0.4rem 0.9rem;
-    font: inherit;
+  .remote-actions :global(.btn) {
     font-size: 0.8rem;
-    font-weight: 500;
-    border-radius: var(--radius-md);
-    border: none;
-    cursor: pointer;
-    transition:
-      background-color 0.1s ease,
-      opacity 0.1s ease;
+    padding: 0.4rem 0.9rem;
   }
 
-  .remote-actions button.filled {
-    color: var(--btn-filled-fg);
-    background: var(--btn-filled-bg);
-  }
-
-  .remote-actions button.filled:not(:disabled):hover {
-    opacity: 0.9;
-  }
-
-  .remote-actions button.tonal {
-    color: var(--btn-tonal-fg);
-    background: var(--btn-tonal-bg);
-  }
-
-  .remote-actions button.tonal:not(:disabled):hover {
-    opacity: 0.85;
-  }
-
-  .remote-actions button.outlined {
-    color: var(--btn-outlined-fg);
-    background: transparent;
-    border: 1px solid var(--btn-outlined-border);
-  }
-
-  .remote-actions button.outlined:not(:disabled):hover {
-    background: var(--accent-bg);
-  }
-
-  .remote-actions button:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-
-  .remote-actions button.cancel {
+  .cancel-wrap :global(.btn-outlined) {
     color: var(--danger);
     border-color: var(--danger);
   }
@@ -332,7 +289,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     border-radius: 999px;
   }
 
-  .remote-actions button.filled .count-badge {
+  :global(.btn-filled) .count-badge {
     color: var(--btn-filled-bg);
     background: var(--btn-filled-fg);
   }

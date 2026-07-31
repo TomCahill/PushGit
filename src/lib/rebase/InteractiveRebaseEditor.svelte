@@ -18,6 +18,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     continueInteractiveRebase,
     startInteractiveRebase,
   } from "$lib/git/api";
+  import Button from "$lib/shell/Button.svelte";
   import type {
     RebaseAction,
     RebaseCommitSummary,
@@ -247,15 +248,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
   {#if !started}
     <div class="footer-actions">
-      <button type="button" onclick={onCancel} disabled={busy}>Cancel</button>
-      <button
-        type="button"
-        class="primary"
-        onclick={handleStart}
-        disabled={busy || rows.length === 0}
-      >
+      <Button variant="outlined" onclick={onCancel} disabled={busy}>Cancel</Button>
+      <Button variant="filled" onclick={handleStart} disabled={busy || rows.length === 0}>
         Start Rebase
-      </button>
+      </Button>
     </div>
   {/if}
 </div>
@@ -398,27 +394,5 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     display: flex;
     justify-content: flex-end;
     gap: 0.5rem;
-  }
-
-  .footer-actions button {
-    padding: 0.4rem 0.9rem;
-    font: inherit;
-    font-size: 0.85rem;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border);
-    background: var(--surface-1);
-    color: var(--text-secondary);
-    cursor: pointer;
-  }
-
-  .footer-actions button.primary {
-    color: var(--btn-filled-fg);
-    background: var(--btn-filled-bg);
-    border-color: transparent;
-  }
-
-  .footer-actions button:disabled {
-    opacity: 0.5;
-    cursor: default;
   }
 </style>

@@ -37,6 +37,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   } from "$lib/repo/repoFolders";
   import ActionRail from "$lib/shell/ActionRail.svelte";
   import Avatar from "$lib/shell/Avatar.svelte";
+  import Button from "$lib/shell/Button.svelte";
   import Confetti from "$lib/shell/Confetti.svelte";
   import ConfirmDialog from "$lib/shell/ConfirmDialog.svelte";
   import ContextMenu from "$lib/shell/ContextMenu.svelte";
@@ -577,9 +578,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       <section class="center-diff" aria-label="Settings">
         <div class="center-diff-header">
           <span class="center-diff-path">Settings</span>
-          <button type="button" class="back-to-graph" onclick={() => (showSettings = false)}>
+          <Button variant="text" onclick={() => (showSettings = false)}>
             ← Back to {viewMode === "blame" ? "blame" : "graph"}
-          </button>
+          </Button>
         </div>
         <div class="center-diff-body">
           <SettingsPanel {repoPath} />
@@ -589,9 +590,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       <section class="center-diff" aria-label="File diff">
         <div class="center-diff-header">
           <span class="center-diff-path">{fileKey(centerDiff.file)}</span>
-          <button type="button" class="back-to-graph" onclick={closeCenterDiff}>
+          <Button variant="text" onclick={closeCenterDiff}>
             ← Back to {viewMode === "blame" ? "blame" : "graph"}
-          </button>
+          </Button>
         </div>
         <div class="center-diff-body">
           <HunkDiff
@@ -910,23 +911,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     flex-shrink: 0;
   }
 
-  .back-to-graph {
+  .center-diff-header :global(.btn) {
     flex-shrink: 0;
-    margin-left: auto;
-    font: inherit;
-    font-size: 0.85rem;
-    padding: 0.4rem 0.8rem;
-    color: var(--text-secondary);
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    transition: background-color 0.1s ease;
-  }
-
-  .back-to-graph:hover {
-    background: var(--surface-2);
-    color: var(--accent);
   }
 
   .center-diff-path {

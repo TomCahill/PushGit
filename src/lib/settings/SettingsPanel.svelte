@@ -28,6 +28,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     settingsState,
   } from "./settings.svelte";
   import { notifyError } from "$lib/shell/toast.svelte";
+  import Button from "$lib/shell/Button.svelte";
+  import Icon from "$lib/shell/Icon.svelte";
+  import Select from "$lib/shell/Select.svelte";
+  import Switch from "$lib/shell/Switch.svelte";
+  import TextField from "$lib/shell/TextField.svelte";
   import type { AiTransport, WorkflowConfig } from "$lib/git/types";
 
   const ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com";
@@ -247,322 +252,289 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 </script>
 
 <div class="settings-panel">
-  <section class="settings-section">
-    <h3>Application</h3>
-    <form onsubmit={handleSubmit}>
-      <label for="max-commits-rendered">Max commits rendered in graph</label>
-      <div class="row">
-        <input
+  <div class="settings-content">
+    <section class="settings-card">
+      <div class="card-header">
+        <Icon name="settings" size={16} />
+        <h3>Application</h3>
+      </div>
+
+      <form onsubmit={handleSubmit}>
+        <TextField
           id="max-commits-rendered"
-          type="text"
+          label="Max commits rendered in graph"
           inputmode="numeric"
           bind:value={draftValue}
           oninput={handleInput}
+          hint={saved ? "Saved." : `A new page of commits loads at most this many rows at a time.`}
         />
-        <button type="submit">Save</button>
-      </div>
-      <p class="hint">
-        {saved ? "Saved." : `A new page of commits loads at most this many rows at a time.`}
-      </p>
-    </form>
-
-    <label class="checkbox-row">
-      <input
-        type="checkbox"
-        bind:checked={settingsState.reduceMotion}
-        onchange={handleReduceMotionChange}
-      />
-      Reduce motion
-    </label>
-  </section>
-
-  <section class="settings-section">
-    <h3>AI</h3>
-
-    <form onsubmit={handleAiTransportSubmit}>
-      <label for="ai-provider">Provider</label>
-      <div class="row">
-        <select
-          id="ai-provider"
-          bind:value={aiProviderKind}
-          onchange={handleAiProviderChange}
-        >
-          <option value="none">None</option>
-          <option value="openAiCompatible">OpenAI-compatible</option>
-          <option value="anthropic">Anthropic</option>
-        </select>
-      </div>
-
-      {#if aiProviderKind !== "none"}
-        <label for="ai-base-url">Base URL</label>
         <div class="row">
-          <input
-            id="ai-base-url"
-            type="text"
-            placeholder="http://localhost:11434/v1"
-            bind:value={aiBaseUrl}
-            oninput={handleAiTransportInput}
-          />
+          <Button variant="tonal" type="submit">Save</Button>
+        </div>
+      </form>
+
+      <label class="switch-row">
+        <div class="switch-row-text">
+          <span>Reduce motion</span>
+        </div>
+        <Switch bind:checked={settingsState.reduceMotion} onchange={handleReduceMotionChange} />
+      </label>
+    </section>
+
+    <section class="settings-card">
+      <div class="card-header">
+        <Icon name="sparkles" size={16} />
+        <h3>AI</h3>
+      </div>
+
+      <form onsubmit={handleAiTransportSubmit}>
+        <div class="ai-transport-fields">
+          <Select
+            id="ai-provider"
+            label="Provider"
+            bind:value={aiProviderKind}
+            onchange={handleAiProviderChange}
+          >
+            <option value="none">None</option>
+            <option value="openAiCompatible">OpenAI-compatible</option>
+            <option value="anthropic">Anthropic</option>
+          </Select>
+
+          {#if aiProviderKind !== "none"}
+            <TextField
+              id="ai-base-url"
+              label="Base URL"
+              placeholder="http://localhost:11434/v1"
+              bind:value={aiBaseUrl}
+              oninput={handleAiTransportInput}
+            />
+
+            <TextField
+              id="ai-model"
+              label="Model"
+              placeholder="llama3.1"
+              bind:value={aiModel}
+              oninput={handleAiTransportInput}
+            />
+          {/if}
         </div>
 
-        <label for="ai-model">Model</label>
         <div class="row">
-          <input
-            id="ai-model"
-            type="text"
-            placeholder="llama3.1"
-            bind:value={aiModel}
-            oninput={handleAiTransportInput}
-          />
+          <Button variant="tonal" type="submit">Save</Button>
         </div>
-      {/if}
+        <p class="hint">
+          {aiTransportSaved
+            ? "Saved."
+            : 'Nothing is sent anywhere until you set a provider here and click "Generate with AI" in the commit box.'}
+        </p>
+      </form>
 
-      <div class="row">
-        <button type="submit">Save</button>
-      </div>
-      <p class="hint">
-        {aiTransportSaved
-          ? "Saved."
-          : "Nothing is sent anywhere until you set a provider here and click \"Generate with AI\" in the commit box."}
-      </p>
-    </form>
-
-    <form onsubmit={handleAiApiKeySubmit}>
-      <label for="ai-api-key">API key (optional for local servers)</label>
-      <div class="row">
-        <input
+      <form onsubmit={handleAiApiKeySubmit}>
+        <TextField
           id="ai-api-key"
+          label="API key (optional for local servers)"
           type="password"
           placeholder={settingsState.hasAiApiKey ? "Key saved — enter a new value to replace it" : "No key saved"}
           bind:value={aiApiKeyDraft}
           oninput={handleAiApiKeyInput}
         />
-        <button type="submit" disabled={!aiApiKeyDraft.trim()}>Save</button>
-        {#if settingsState.hasAiApiKey}
-          <button type="button" onclick={handleAiApiKeyClear}>Clear</button>
-        {/if}
-      </div>
-      <p class="hint">
-        {aiApiKeySaved
-          ? "Saved."
-          : "Stored in your OS keyring, never in this app's plain-text config file."}
-      </p>
-    </form>
-
-    <form onsubmit={handleAiInstructionsSubmit}>
-      <label for="ai-instructions">Custom instructions</label>
-      <textarea
-        id="ai-instructions"
-        rows="3"
-        placeholder={`e.g. "use Conventional Commits", "keep the summary under 50 characters"`}
-        bind:value={aiInstructions}
-        oninput={handleAiInstructionsInput}
-      ></textarea>
-      <div class="row">
-        <button type="submit">Save</button>
-      </div>
-      <p class="hint">
-        {aiInstructionsSaved ? "Saved." : "Appended to every generation prompt."}
-      </p>
-    </form>
-  </section>
-
-  {#if repoPath}
-    <section class="settings-section">
-      <h3>This Repository</h3>
-
-      <label class="checkbox-row">
-        <input type="checkbox" bind:checked={defaultSkipHooks} onchange={handleSkipHooksChange} />
-        Skip hooks by default
-      </label>
-
-      <form onsubmit={handleTemplateSubmit}>
-        <label for="commit-template-path">Commit message template</label>
         <div class="row">
-          <input
-            id="commit-template-path"
-            type="text"
-            placeholder="No template configured"
-            bind:value={commitTemplatePath}
-            oninput={handleTemplateInput}
-          />
-          <button type="submit">Save</button>
+          <Button variant="tonal" type="submit" disabled={!aiApiKeyDraft.trim()}>Save</Button>
+          {#if settingsState.hasAiApiKey}
+            <Button variant="outlined" type="button" onclick={handleAiApiKeyClear}>Clear</Button>
+          {/if}
         </div>
         <p class="hint">
-          {repoSaved
-            ? "Saved."
-            : "Sets this repo's git commit.template path — clear the field to unset it."}
+          {aiApiKeySaved ? "Saved." : "Stored in your OS keyring, never in this app's plain-text config file."}
         </p>
       </form>
 
-      {#if workflowConfig}
-        <div class="workflow-status">
-          <label for="gitflow-status">GitFlow</label>
-          <p id="gitflow-status" class="hint">
-            Configured — main branch "{workflowConfig.main}", develop branch "{workflowConfig.develop}".
-            Start/finish feature, release, and hotfix branches from the Workflow panel.
-          </p>
+      <form onsubmit={handleAiInstructionsSubmit}>
+        <TextField
+          id="ai-instructions"
+          label="Custom instructions"
+          multiline
+          placeholder={`e.g. "use Conventional Commits", "keep the summary under 50 characters"`}
+          bind:value={aiInstructions}
+          oninput={handleAiInstructionsInput}
+          hint={aiInstructionsSaved ? "Saved." : "Appended to every generation prompt."}
+        />
+        <div class="row">
+          <Button variant="tonal" type="submit">Save</Button>
         </div>
-      {:else}
-        <form class="workflow-setup" onsubmit={handleWorkflowSubmit}>
-          <label for="gitflow-main">Set up GitFlow</label>
-          <div class="row">
-            <input
-              id="gitflow-main"
-              type="text"
-              bind:value={workflowMain}
-              placeholder="main"
-              aria-label="Main branch name"
-            />
-            <input
-              type="text"
-              bind:value={workflowDevelop}
-              placeholder="develop"
-              aria-label="Develop branch name"
-            />
-          </div>
-          <div class="row">
-            <input
-              type="text"
-              bind:value={workflowFeaturePrefix}
-              placeholder="feature/"
-              aria-label="Feature branch prefix"
-            />
-            <input
-              type="text"
-              bind:value={workflowReleasePrefix}
-              placeholder="release/"
-              aria-label="Release branch prefix"
-            />
-            <input
-              type="text"
-              bind:value={workflowHotfixPrefix}
-              placeholder="hotfix/"
-              aria-label="Hotfix branch prefix"
-            />
-          </div>
-          <div class="row">
-            <input
-              type="text"
-              bind:value={workflowVersionTagPrefix}
-              placeholder="Version tag prefix (blank for none)"
-              aria-label="Version tag prefix"
-            />
-            <button type="submit">Set up</button>
-          </div>
-          <p class="hint">
-            Reads/writes the same .git/config keys as the git-flow CLI, so a repo set up here also
-            works with git flow directly.
-          </p>
-        </form>
-      {/if}
+      </form>
     </section>
-  {/if}
+
+    {#if repoPath}
+      <section class="settings-card">
+        <div class="card-header">
+          <Icon name="wrench" size={16} />
+          <h3>This Repository</h3>
+        </div>
+
+        <label class="switch-row">
+          <div class="switch-row-text">
+            <span>Skip hooks by default</span>
+          </div>
+          <Switch bind:checked={defaultSkipHooks} onchange={handleSkipHooksChange} />
+        </label>
+
+        <form onsubmit={handleTemplateSubmit}>
+          <TextField
+            id="commit-template-path"
+            label="Commit message template"
+            placeholder="No template configured"
+            bind:value={commitTemplatePath}
+            oninput={handleTemplateInput}
+            hint={repoSaved
+              ? "Saved."
+              : "Sets this repo's git commit.template path — clear the field to unset it."}
+          />
+          <div class="row">
+            <Button variant="tonal" type="submit">Save</Button>
+          </div>
+        </form>
+
+        {#if workflowConfig}
+          <div class="workflow-status">
+            <span class="workflow-label">GitFlow</span>
+            <p class="hint">
+              Configured — main branch "{workflowConfig.main}", develop branch "{workflowConfig.develop}".
+              Start/finish feature, release, and hotfix branches from the Workflow panel.
+            </p>
+          </div>
+        {:else}
+          <form class="workflow-setup" onsubmit={handleWorkflowSubmit}>
+            <span class="workflow-label">Set up GitFlow</span>
+            <div class="row">
+              <TextField bind:value={workflowMain} placeholder="main" ariaLabel="Main branch name" />
+              <TextField
+                bind:value={workflowDevelop}
+                placeholder="develop"
+                ariaLabel="Develop branch name"
+              />
+            </div>
+            <div class="row">
+              <TextField
+                bind:value={workflowFeaturePrefix}
+                placeholder="feature/"
+                ariaLabel="Feature branch prefix"
+              />
+              <TextField
+                bind:value={workflowReleasePrefix}
+                placeholder="release/"
+                ariaLabel="Release branch prefix"
+              />
+              <TextField
+                bind:value={workflowHotfixPrefix}
+                placeholder="hotfix/"
+                ariaLabel="Hotfix branch prefix"
+              />
+            </div>
+            <div class="row">
+              <TextField
+                bind:value={workflowVersionTagPrefix}
+                placeholder="Version tag prefix (blank for none)"
+                ariaLabel="Version tag prefix"
+              />
+              <Button variant="tonal" type="submit">Set up</Button>
+            </div>
+            <p class="hint">
+              Reads/writes the same .git/config keys as the git-flow CLI, so a repo set up here also
+              works with git flow directly.
+            </p>
+          </form>
+        {/if}
+      </section>
+    {/if}
+  </div>
 </div>
 
 <style>
   .settings-panel {
     display: flex;
-    flex-direction: column;
-    gap: 1.25rem;
+    justify-content: center;
     min-width: 14rem;
   }
 
-  .settings-section {
+  .settings-content {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: var(--space-4);
+    width: 100%;
+    max-width: 40rem;
+    padding-bottom: var(--space-4);
   }
 
-  .settings-section h3 {
+  .settings-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    padding: var(--space-5);
+    background: var(--surface-1);
+    border-radius: var(--radius-lg);
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--accent);
+  }
+
+  .card-header h3 {
     margin: 0;
-    font-size: 0.75rem;
+    font-size: 0.95rem;
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    color: var(--text-muted);
+    color: var(--text-primary);
   }
 
   form {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.4rem;
+  }
+
+  .ai-transport-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding-left: var(--space-3);
+    border-left: 2px solid var(--border);
   }
 
   .workflow-status,
   .workflow-setup {
-    margin-top: 0.25rem;
-    padding-top: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding-top: var(--space-3);
     border-top: 1px solid var(--border);
   }
 
-  .workflow-status {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  label {
+  .workflow-label {
     font-size: 0.75rem;
     color: var(--text-muted);
   }
 
-  .checkbox-row {
+  .switch-row {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    font-size: 0.8rem;
+    justify-content: space-between;
+    gap: var(--space-3);
+    font-size: 0.85rem;
     color: var(--text-primary);
+    cursor: pointer;
+  }
+
+  .switch-row-text {
+    display: flex;
+    flex-direction: column;
   }
 
   .row {
     display: flex;
-    gap: 0.35rem;
-  }
-
-  .row input,
-  .row select,
-  textarea {
-    flex: 1 1 auto;
-    min-width: 0;
-    font: inherit;
-    font-size: 0.8rem;
-    padding: 0.3rem 0.5rem;
-    color: var(--text-primary);
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-  }
-
-  textarea {
-    resize: none;
-  }
-
-  .row input:focus-visible,
-  .row select:focus-visible,
-  textarea:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: -1px;
-  }
-
-  .row button {
-    font-size: 0.8rem;
-    padding: 0.3rem 0.6rem;
-    color: var(--text-secondary);
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    transition: background-color 0.1s ease;
-  }
-
-  .row button:hover:not(:disabled) {
-    background: var(--surface-2);
-  }
-
-  .row button:disabled {
-    opacity: 0.5;
-    cursor: default;
+    gap: 0.5rem;
   }
 
   .hint {

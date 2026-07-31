@@ -10,6 +10,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   // instead of hardcoded, so they can't drift from `tauri.conf.json`.
   import { getName, getVersion } from "@tauri-apps/api/app";
   import Logo from "./Logo.svelte";
+  import Button from "./Button.svelte";
 
   let { open, onClose }: { open: boolean; onClose: () => void } = $props();
 
@@ -51,7 +52,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       <p class="license">License: AGPL-3.0-or-later</p>
       <p class="author">© 2026 Tom Cahill</p>
       <div class="actions">
-        <button type="button" class="primary" onclick={onClose}>Close</button>
+        <Button variant="filled" onclick={onClose}>Close</Button>
       </div>
     </div>
   </div>
@@ -120,20 +121,5 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     display: flex;
     justify-content: center;
     margin-top: 1rem;
-  }
-
-  .actions button {
-    padding: 0.4rem 0.9rem;
-    font: inherit;
-    font-size: 0.85rem;
-    font-weight: 500;
-    border-radius: var(--radius-md);
-    cursor: pointer;
-  }
-
-  .primary {
-    color: var(--btn-filled-fg);
-    background: var(--btn-filled-bg);
-    border: none;
   }
 </style>

@@ -11,10 +11,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import { fade, scale } from "svelte/transition";
   import { dialogState } from "./confirmDialog.svelte";
   import { motionBase } from "./motion";
+  import Button from "./Button.svelte";
 
   let inputValue = $state("");
   let inputEl: HTMLInputElement | undefined = $state();
-  let confirmButtonEl: HTMLButtonElement | undefined = $state();
+  let confirmButtonEl: HTMLButtonElement | null = $state(null);
 
   $effect(() => {
     const request = dialogState.request;
@@ -90,25 +91,16 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         <form onsubmit={handleSubmit}>
           <input type="text" bind:value={inputValue} bind:this={inputEl} />
           <div class="actions">
-            <button type="button" class="secondary" onclick={() => respondPrompt(null)}>
-              Cancel
-            </button>
-            <button type="submit" class="primary">OK</button>
+            <Button variant="outlined" onclick={() => respondPrompt(null)}>Cancel</Button>
+            <Button variant="filled" type="submit">OK</Button>
           </div>
         </form>
       {:else}
         <div class="actions">
-          <button type="button" class="secondary" onclick={() => respondConfirm(false)}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            class="primary"
-            bind:this={confirmButtonEl}
-            onclick={() => respondConfirm(true)}
-          >
+          <Button variant="outlined" onclick={() => respondConfirm(false)}>Cancel</Button>
+          <Button variant="filled" bind:ref={confirmButtonEl} onclick={() => respondConfirm(true)}>
             OK
-          </button>
+          </Button>
         </div>
       {/if}
     </div>
@@ -164,34 +156,5 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     justify-content: flex-end;
     gap: 0.5rem;
     margin-top: 0.75rem;
-  }
-
-  .actions button {
-    padding: 0.4rem 0.9rem;
-    font: inherit;
-    font-size: 0.85rem;
-    font-weight: 500;
-    border-radius: var(--radius-md);
-    cursor: pointer;
-  }
-
-  .secondary {
-    color: var(--btn-outlined-fg);
-    background: transparent;
-    border: 1px solid var(--btn-outlined-border);
-  }
-
-  .secondary:hover {
-    background: var(--accent-bg);
-  }
-
-  .primary {
-    color: var(--btn-filled-fg);
-    background: var(--btn-filled-bg);
-    border: none;
-  }
-
-  .primary:hover {
-    opacity: 0.9;
   }
 </style>

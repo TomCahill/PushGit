@@ -14,6 +14,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   // sequence) can't be mixed with the single-commit path's plain "stage then hit Commit".
   import { cherryPickRange, continueCherryPickRange, abortCherryPickRange } from "$lib/git/api";
   import { graphOpen, graphPage, graphClose } from "$lib/git/api";
+  import Button from "$lib/shell/Button.svelte";
   import type { CherryPickOutcome, CommitRow } from "$lib/git/types";
 
   const SEARCH_DEBOUNCE_MS = 200;
@@ -217,15 +218,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
   {#if !started}
     <div class="footer-actions">
-      <button type="button" onclick={onCancel} disabled={busy}>Cancel</button>
-      <button
-        type="button"
-        class="primary"
-        onclick={handleStart}
-        disabled={busy || selectedCount === 0}
-      >
+      <Button variant="outlined" onclick={onCancel} disabled={busy}>Cancel</Button>
+      <Button variant="filled" onclick={handleStart} disabled={busy || selectedCount === 0}>
         Cherry-pick {selectedCount} commit{selectedCount === 1 ? "" : "s"}
-      </button>
+      </Button>
     </div>
   {/if}
 </div>
@@ -350,25 +346,4 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     gap: 0.5rem;
   }
 
-  .footer-actions button {
-    padding: 0.4rem 0.9rem;
-    font: inherit;
-    font-size: 0.85rem;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border);
-    background: var(--surface-1);
-    color: var(--text-secondary);
-    cursor: pointer;
-  }
-
-  .footer-actions button.primary {
-    color: var(--btn-filled-fg);
-    background: var(--btn-filled-bg);
-    border-color: transparent;
-  }
-
-  .footer-actions button:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
 </style>
