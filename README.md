@@ -32,13 +32,12 @@ throws out everything else, by design, from the first commit.
 - **Safety net** - undo/redo across nearly every operation (commits, branch changes, merges, rebases,
   stash actions), backed by full repository snapshots rather than a single HEAD pointer.
 - **Command palette** and light/dark theme following your OS setting.
-- **A pure local git client** - no cloud accounts, no GitHub/GitLab/Jira integrations, no AI features, no
+- **A pure local git client** - no cloud accounts, no GitHub/GitLab/Jira integrations, no
   telemetry. It talks to whatever remote you've configured over plain SSH/HTTPS and nothing else.
 
 ## What it deliberately isn't
 
-Not an all-in-one dev platform. No PR review, no issue tracking, no AI commit messages, no phone-home,
-and it never will be that's a locked, load-bearing design decision, not a temporary gap.
+Not an all-in-one dev platform. No PR review, no issue tracking, no phone-home.
 
 ## Status
 
