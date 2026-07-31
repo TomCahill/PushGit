@@ -36,6 +36,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     type RepoFolder,
   } from "$lib/repo/repoFolders";
   import ActionRail from "$lib/shell/ActionRail.svelte";
+  import Avatar from "$lib/shell/Avatar.svelte";
   import ConfirmDialog from "$lib/shell/ConfirmDialog.svelte";
   import ContextMenu from "$lib/shell/ContextMenu.svelte";
   import ResizeHandle from "$lib/shell/ResizeHandle.svelte";
@@ -697,7 +698,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         <p class="commit-body">{selectedCommit.body}</p>
       {/if}
       <p class="commit-meta">
-        {selectedCommit.shortOid} — {selectedCommit.authorName}{diffModeSuffix}
+        {selectedCommit.shortOid} — <Avatar
+          name={selectedCommit.authorName}
+          email={selectedCommit.authorEmail}
+          size={14}
+        />
+        {diffModeSuffix}
       </p>
       {#if diffError}
         <p class="error" role="alert">{diffError}</p>

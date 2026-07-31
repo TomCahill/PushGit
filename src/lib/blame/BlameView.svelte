@@ -15,6 +15,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   // the same "sidebar picks, center shows" split `StagingPanel` uses.
   import { blameFile, diffCommit, fileHistory } from "$lib/git/api";
   import type { BlameLine, FileDiff, FileDiffSelection, FileHistoryEntry } from "$lib/git/types";
+  import Avatar from "$lib/shell/Avatar.svelte";
 
   let {
     repoPath,
@@ -116,7 +117,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
               >
                 <span class="short-oid">{entry.shortOid}</span>
                 <span class="summary">{entry.summary}</span>
-                <span class="meta">{entry.authorName} · {formatDate(entry.authorTime)}</span>
+                <span class="meta"
+                  ><Avatar name={entry.authorName} size={14} /> · {formatDate(
+                    entry.authorTime,
+                  )}</span
+                >
               </button>
             </li>
           {/each}

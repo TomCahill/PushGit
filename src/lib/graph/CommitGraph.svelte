@@ -57,6 +57,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     openContextMenu,
     type ContextMenuItem,
   } from "$lib/shell/contextMenu.svelte";
+  import Avatar from "$lib/shell/Avatar.svelte";
   import CopyButton from "$lib/shell/CopyButton.svelte";
 
   // Menu-triggered fetch/pull/push always target "origin" — there's no `list_remotes`
@@ -900,7 +901,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
           </div>
           <div class="summary" title={commit.summary}>{commit.summary}</div>
           <div class="meta">
-            <span class="author">{commit.authorName}</span>
+            <Avatar name={commit.authorName} email={commit.authorEmail} />
             <span class="oid" title={commit.oid}>{commit.shortOid}</span>
             <CopyButton text={commit.oid} label="Copy commit SHA" />
             <span class="date">{formatDate(commit.authorTime)}</span>
@@ -1086,6 +1087,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
   .meta {
     display: flex;
+    align-items: center;
     gap: 0.75rem;
     flex-shrink: 0;
     color: var(--text-muted);

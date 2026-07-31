@@ -13,6 +13,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import type { BlameLine } from "$lib/git/types";
   import { highlightSource, splitHighlightedHtml } from "../diff/highlight";
   import { detectLanguage } from "../diff/languages";
+  import Avatar from "$lib/shell/Avatar.svelte";
 
   let { lines, path }: { lines: BlameLine[]; path: string } = $props();
 
@@ -32,7 +33,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     <li>
       <span class="gutter" title={`${line.summary} — ${line.authorName}`}>
         <span class="short-oid">{line.shortOid}</span>
-        <span class="author">{line.authorName}</span>
+        <Avatar name={line.authorName} size={14} />
       </span>
       <span class="line-no">{line.lineNo}</span>
       {#if highlightedLines}
@@ -75,12 +76,6 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
   .gutter .short-oid {
     flex-shrink: 0;
-  }
-
-  .gutter .author {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .line-no {
