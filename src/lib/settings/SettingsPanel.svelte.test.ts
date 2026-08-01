@@ -19,7 +19,7 @@ describe("SettingsPanel", () => {
     settingsState.reduceMotion = false;
     settingsState.ai = { transport: null, instructions: "", cloudWarningAcknowledged: false };
     settingsState.hasAiApiKey = false;
-    settingsState.localAiStatus = { modelPresent: false, enginePresent: false };
+    settingsState.localAiStatus = { modelPresent: false, enginePresent: false, gpuDevice: null };
     settingsState.localAiDownloadProgress = null;
     toastState.toasts = [];
   });
@@ -257,21 +257,26 @@ describe("SettingsPanel", () => {
     describe("Local AI (managed)", () => {
       type DownloadChannel = { channel: { onmessage: (progress: unknown) => void } };
 
+      const NOT_DOWNLOADED = { modelPresent: false, enginePresent: false, gpuDevice: null };
+      const READY = { modelPresent: true, enginePresent: true, gpuDevice: null };
+
       it("shows a Download button with a size estimate when nothing is downloaded yet", async () => {
-        mockIPC(() => {
-          throw new Error("should not be called before Save is clicked");
+        mockIPC((cmd) => {
+          if (cmd === "get_local_ai_status") return NOT_DOWNLOADED;
+          throw new Error(`unexpected command ${cmd} before Save is clicked`);
         });
 
         const { getByLabelText, getByText } = render(SettingsPanel);
         await fireEvent.change(getByLabelText("Provider"), { target: { value: "managedLocal" } });
 
-        expect(getByText("Not downloaded yet (~1.1GB).")).toBeTruthy();
+        expect(await waitFor(() => getByText("Not downloaded yet (~1.1GB)."))).toBeTruthy();
         expect(getByText("Download Local AI Engine")).toBeTruthy();
       });
 
       it("does not show base URL/model fields for the managed local transport", async () => {
-        mockIPC(() => {
-          throw new Error("should not be called before Save is clicked");
+        mockIPC((cmd) => {
+          if (cmd === "get_local_ai_status") return NOT_DOWNLOADED;
+          throw new Error(`unexpected command ${cmd} before Save is clicked`);
         });
 
         const { getByLabelText, queryByLabelText } = render(SettingsPanel);
@@ -281,20 +286,89 @@ describe("SettingsPanel", () => {
         expect(queryByLabelText("Model")).toBeNull();
       });
 
+      it("defaults the Engine choice to CPU and shows it only under Local AI", async () => {
+        mockIPC((cmd) => {
+          if (cmd === "get_local_ai_status") return NOT_DOWNLOADED;
+          throw new Error(`unexpected command ${cmd} before Save is clicked`);
+        });
+
+        const { getByLabelText, queryByLabelText } = render(SettingsPanel);
+        expect(queryByLabelText("Engine")).toBeNull();
+
+        await fireEvent.change(getByLabelText("Provider"), { target: { value: "managedLocal" } });
+
+        expect((getByLabelText("Engine") as HTMLSelectElement).value).toBe("cpu");
+      });
+
       it("shows Ready status when the model and engine are already present", async () => {
-        settingsState.localAiStatus = { modelPresent: true, enginePresent: true };
-        mockIPC(() => {
-          throw new Error("should not be called before Save is clicked");
+        mockIPC((cmd) => {
+          if (cmd === "get_local_ai_status") return READY;
+          throw new Error(`unexpected command ${cmd} before Save is clicked`);
         });
 
         const { getByLabelText, getByText } = render(SettingsPanel);
         await fireEvent.change(getByLabelText("Provider"), { target: { value: "managedLocal" } });
 
-        expect(getByText("Ready", { exact: false })).toBeTruthy();
+        expect(await waitFor(() => getByText("Ready", { exact: false }))).toBeTruthy();
+      });
+
+      it("re-checks status for the Vulkan variant when Engine is switched, without requiring Save", async () => {
+        const requestedVariants: unknown[] = [];
+        mockIPC((cmd, args) => {
+          if (cmd === "get_local_ai_status") {
+            requestedVariants.push((args as { engineVariant: string }).engineVariant);
+            return (args as { engineVariant: string }).engineVariant === "vulkan" ? READY : NOT_DOWNLOADED;
+          }
+          throw new Error(`unexpected command ${cmd} before Save is clicked`);
+        });
+
+        const { getByLabelText, getByText } = render(SettingsPanel);
+        await fireEvent.change(getByLabelText("Provider"), { target: { value: "managedLocal" } });
+        await waitFor(() => expect(requestedVariants).toContain("cpu"));
+
+        await fireEvent.change(getByLabelText("Engine"), { target: { value: "vulkan" } });
+
+        expect(await waitFor(() => getByText("Ready", { exact: false }))).toBeTruthy();
+        expect(requestedVariants).toContain("vulkan");
+      });
+
+      it("shows a GPU reassurance line when a Vulkan device is detected", async () => {
+        mockIPC((cmd, args) => {
+          if (cmd === "get_local_ai_status") {
+            return (args as { engineVariant: string }).engineVariant === "vulkan"
+              ? { ...READY, gpuDevice: "NVIDIA GeForce RTX 3060" }
+              : NOT_DOWNLOADED;
+          }
+          throw new Error(`unexpected command ${cmd} before Save is clicked`);
+        });
+
+        const { getByLabelText, getByText } = render(SettingsPanel);
+        await fireEvent.change(getByLabelText("Provider"), { target: { value: "managedLocal" } });
+        await fireEvent.change(getByLabelText("Engine"), { target: { value: "vulkan" } });
+
+        expect(await waitFor(() => getByText("GPU: NVIDIA GeForce RTX 3060"))).toBeTruthy();
+      });
+
+      it("shows a no-GPU warning line when Vulkan is selected but no device is detected", async () => {
+        mockIPC((cmd, args) => {
+          if (cmd === "get_local_ai_status") {
+            return (args as { engineVariant: string }).engineVariant === "vulkan" ? READY : NOT_DOWNLOADED;
+          }
+          throw new Error(`unexpected command ${cmd} before Save is clicked`);
+        });
+
+        const { getByLabelText, getByText } = render(SettingsPanel);
+        await fireEvent.change(getByLabelText("Provider"), { target: { value: "managedLocal" } });
+        await fireEvent.change(getByLabelText("Engine"), { target: { value: "vulkan" } });
+
+        expect(
+          await waitFor(() => getByText("No Vulkan-capable GPU detected — this will run on CPU.")),
+        ).toBeTruthy();
       });
 
       it("shows a progress bar reflecting the latest reported chunk while downloading", async () => {
         mockIPC((cmd, args) => {
+          if (cmd === "get_local_ai_status") return NOT_DOWNLOADED;
           if (cmd === "download_local_ai") {
             (args as DownloadChannel).channel.onmessage({
               stage: "engine",
@@ -308,6 +382,7 @@ describe("SettingsPanel", () => {
 
         const { getByLabelText, getByText } = render(SettingsPanel);
         await fireEvent.change(getByLabelText("Provider"), { target: { value: "managedLocal" } });
+        await waitFor(() => getByText("Not downloaded yet (~1.1GB)."));
         await fireEvent.click(getByText("Download Local AI Engine"));
 
         expect(await waitFor(() => getByText("Engine: 50%"))).toBeTruthy();
@@ -316,15 +391,13 @@ describe("SettingsPanel", () => {
       it("shows Ready and refreshes status once a download completes", async () => {
         mockIPC((cmd) => {
           if (cmd === "download_local_ai") return null;
-          if (cmd === "get_local_ai_status") {
-            return { modelPresent: true, enginePresent: true };
-          }
+          if (cmd === "get_local_ai_status") return READY;
           throw new Error(`unexpected command ${cmd}`);
         });
 
         const { getByLabelText, getByText } = render(SettingsPanel);
         await fireEvent.change(getByLabelText("Provider"), { target: { value: "managedLocal" } });
-        await fireEvent.click(getByText("Download Local AI Engine"));
+        await fireEvent.click(await waitFor(() => getByText("Download Local AI Engine")));
 
         expect(await waitFor(() => getByText("Ready", { exact: false }))).toBeTruthy();
       });
@@ -332,6 +405,7 @@ describe("SettingsPanel", () => {
       it("cancels an in-progress download", async () => {
         const calls: string[] = [];
         mockIPC((cmd) => {
+          if (cmd === "get_local_ai_status") return NOT_DOWNLOADED;
           if (cmd === "download_local_ai") {
             return new Promise(() => {}); // never resolves — simulates an in-flight download
           }
@@ -344,10 +418,36 @@ describe("SettingsPanel", () => {
 
         const { getByLabelText, getByText } = render(SettingsPanel);
         await fireEvent.change(getByLabelText("Provider"), { target: { value: "managedLocal" } });
+        await waitFor(() => getByText("Not downloaded yet (~1.1GB)."));
         await fireEvent.click(getByText("Download Local AI Engine"));
         await fireEvent.click(await waitFor(() => getByText("Cancel")));
 
         expect(calls).toEqual(["cancel_local_ai_download"]);
+      });
+
+      it("saves the drafted engine variant on submit", async () => {
+        const calls: unknown[] = [];
+        mockIPC((cmd, args) => {
+          if (cmd === "get_local_ai_status") return NOT_DOWNLOADED;
+          if (cmd === "set_ai_transport") {
+            calls.push(args);
+            return { transport: null, instructions: "", cloudWarningAcknowledged: false };
+          }
+          throw new Error(`unexpected command ${cmd}`);
+        });
+
+        const { getByLabelText } = render(SettingsPanel);
+        const providerSelect = getByLabelText("Provider") as HTMLSelectElement;
+        await fireEvent.change(providerSelect, { target: { value: "managedLocal" } });
+        await fireEvent.change(getByLabelText("Engine"), { target: { value: "vulkan" } });
+        const form = within(providerSelect.closest("form")!);
+        await fireEvent.click(form.getByText("Save"));
+
+        await waitFor(() =>
+          expect(calls).toEqual([
+            { transport: { kind: "managedLocal", engineVariant: "vulkan" } },
+          ]),
+        );
       });
     });
   });

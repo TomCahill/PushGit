@@ -85,7 +85,7 @@ pub async fn generate_commit_message(
     }
 
     let extra_directive =
-        matches!(transport, AiTransport::ManagedLocal).then_some(LOCAL_STYLE_DIRECTIVE);
+        matches!(transport, AiTransport::ManagedLocal { .. }).then_some(LOCAL_STYLE_DIRECTIVE);
     let full_prompt = prompt::build_prompt(&staged, &settings.instructions, extra_directive);
     let api_key = super::get_api_key();
 
@@ -115,14 +115,14 @@ pub async fn generate_commit_message(
             )
             .await
         }
-        AiTransport::ManagedLocal => {
+        AiTransport::ManagedLocal { engine_variant } => {
             // Held only long enough to spawn/health-check the engine, then released before
             // streaming — llama-server handles its own request concurrency (n_slots), so a
             // second generation started while this one streams doesn't need to queue behind
             // this lock, only behind the (much shorter) "is it already running" check.
             let base_url = {
                 let mut guard = local_engine.lock().await;
-                local::ensure_local_engine_running(&mut guard, cancel).await?
+                local::ensure_local_engine_running(&mut guard, engine_variant, cancel).await?
             };
             openai::stream(
                 &base_url,

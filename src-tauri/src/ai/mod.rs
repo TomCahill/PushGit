@@ -18,8 +18,10 @@ pub use keys::{clear_api_key, get_api_key, has_api_key, store_api_key};
 
 use serde::{Deserialize, Serialize};
 
-/// `ManagedLocal` carries no fields — unlike the other two variants, its model path and engine
-/// address are fixed and internally managed (see `local`), not user-configured.
+pub use local::EngineVariant;
+
+/// `ManagedLocal`'s model path and engine address are fixed and internally managed (see
+/// `local`), not user-configured — `engine_variant` (CPU or GPU/Vulkan) is its only field.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     rename_all = "camelCase",
@@ -29,7 +31,7 @@ use serde::{Deserialize, Serialize};
 pub enum AiTransport {
     OpenAiCompatible { base_url: String, model: String },
     Anthropic { base_url: String, model: String },
-    ManagedLocal,
+    ManagedLocal { engine_variant: EngineVariant },
 }
 
 /// `transport: None` is the out-of-the-box, feature-inert state. `instructions` and
@@ -71,10 +73,29 @@ mod tests {
     }
 
     #[test]
-    fn managed_local_serializes_as_a_field_less_kind_tag() {
-        let value = serde_json::to_value(AiTransport::ManagedLocal).unwrap();
+    fn managed_local_serializes_with_its_engine_variant() {
+        let value = serde_json::to_value(AiTransport::ManagedLocal {
+            engine_variant: EngineVariant::Cpu,
+        })
+        .unwrap();
 
-        assert_eq!(value, serde_json::json!({ "kind": "managedLocal" }));
+        assert_eq!(
+            value,
+            serde_json::json!({ "kind": "managedLocal", "engineVariant": "cpu" })
+        );
+    }
+
+    #[test]
+    fn managed_local_vulkan_variant_serializes_correctly() {
+        let value = serde_json::to_value(AiTransport::ManagedLocal {
+            engine_variant: EngineVariant::Vulkan,
+        })
+        .unwrap();
+
+        assert_eq!(
+            value,
+            serde_json::json!({ "kind": "managedLocal", "engineVariant": "vulkan" })
+        );
     }
 
     #[test]

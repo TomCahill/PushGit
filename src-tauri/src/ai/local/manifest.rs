@@ -10,6 +10,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use super::EngineVariant;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Manifest {
@@ -19,8 +21,46 @@ pub struct Manifest {
     /// it, so a `.part` left over from a since-changed pin is discarded rather than resumed
     /// into a corrupt splice of two different versions.
     pub model_pending_checksum: Option<String>,
-    pub engine_checksum: Option<String>,
-    pub engine_pending_checksum: Option<String>,
+    /// Named per-variant fields, not a generic map — two variants this pass (see the feature
+    /// plan's "Decided scope"), not a hypothetical N.
+    pub engine_cpu_checksum: Option<String>,
+    pub engine_cpu_pending_checksum: Option<String>,
+    pub engine_vulkan_checksum: Option<String>,
+    pub engine_vulkan_pending_checksum: Option<String>,
+}
+
+impl Manifest {
+    pub fn engine_checksum(&self, variant: EngineVariant) -> Option<&str> {
+        match variant {
+            EngineVariant::Cpu => self.engine_cpu_checksum.as_deref(),
+            EngineVariant::Vulkan => self.engine_vulkan_checksum.as_deref(),
+        }
+    }
+
+    pub fn set_engine_checksum(&mut self, variant: EngineVariant, checksum: Option<String>) {
+        match variant {
+            EngineVariant::Cpu => self.engine_cpu_checksum = checksum,
+            EngineVariant::Vulkan => self.engine_vulkan_checksum = checksum,
+        }
+    }
+
+    pub fn engine_pending_checksum(&self, variant: EngineVariant) -> Option<&str> {
+        match variant {
+            EngineVariant::Cpu => self.engine_cpu_pending_checksum.as_deref(),
+            EngineVariant::Vulkan => self.engine_vulkan_pending_checksum.as_deref(),
+        }
+    }
+
+    pub fn set_engine_pending_checksum(
+        &mut self,
+        variant: EngineVariant,
+        checksum: Option<String>,
+    ) {
+        match variant {
+            EngineVariant::Cpu => self.engine_cpu_pending_checksum = checksum,
+            EngineVariant::Vulkan => self.engine_vulkan_pending_checksum = checksum,
+        }
+    }
 }
 
 fn manifest_path(dir: &Path) -> std::path::PathBuf {
@@ -74,12 +114,47 @@ mod tests {
         let manifest = Manifest {
             model_checksum: Some("abc".to_string()),
             model_pending_checksum: None,
-            engine_checksum: None,
-            engine_pending_checksum: Some("def".to_string()),
+            engine_cpu_checksum: None,
+            engine_cpu_pending_checksum: Some("def".to_string()),
+            engine_vulkan_checksum: Some("ghi".to_string()),
+            engine_vulkan_pending_checksum: None,
         };
 
         save(dir.path(), &manifest);
 
         assert_eq!(load(dir.path()), manifest);
+    }
+
+    #[test]
+    fn engine_checksum_accessors_are_keyed_by_variant() {
+        let mut manifest = Manifest::default();
+
+        manifest.set_engine_checksum(EngineVariant::Cpu, Some("cpu-sum".to_string()));
+        manifest.set_engine_checksum(EngineVariant::Vulkan, Some("vulkan-sum".to_string()));
+
+        assert_eq!(
+            manifest.engine_checksum(EngineVariant::Cpu),
+            Some("cpu-sum")
+        );
+        assert_eq!(
+            manifest.engine_checksum(EngineVariant::Vulkan),
+            Some("vulkan-sum")
+        );
+    }
+
+    #[test]
+    fn engine_pending_checksum_accessors_are_keyed_by_variant() {
+        let mut manifest = Manifest::default();
+
+        manifest.set_engine_pending_checksum(EngineVariant::Cpu, Some("cpu-pending".to_string()));
+
+        assert_eq!(
+            manifest.engine_pending_checksum(EngineVariant::Cpu),
+            Some("cpu-pending")
+        );
+        assert_eq!(
+            manifest.engine_pending_checksum(EngineVariant::Vulkan),
+            None
+        );
     }
 }

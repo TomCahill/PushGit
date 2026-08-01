@@ -22,6 +22,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     cancelLocalAiDownload,
     clearAiApiKey,
     downloadLocalAi,
+    fetchLocalAiStatus,
     setAiApiKey,
     setAiInstructions,
     setAiTransport,
@@ -35,7 +36,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import Select from "$lib/shell/Select.svelte";
   import Switch from "$lib/shell/Switch.svelte";
   import TextField from "$lib/shell/TextField.svelte";
-  import type { AiTransport, WorkflowConfig } from "$lib/git/types";
+  import type { AiTransport, EngineVariant, LocalAiStatus, WorkflowConfig } from "$lib/git/types";
 
   const ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com";
 
@@ -177,7 +178,36 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   let aiProviderKind = $state<AiProviderKind>(initialTransport?.kind ?? "none");
   let aiBaseUrl = $state(initialTransport && "baseUrl" in initialTransport ? initialTransport.baseUrl : "");
   let aiModel = $state(initialTransport && "model" in initialTransport ? initialTransport.model : "");
+  // Defaults to "cpu" the first time a user selects "Local AI" — guaranteed to work everywhere,
+  // never auto-picked into Vulkan on their behalf.
+  let aiEngineVariant = $state<EngineVariant>(
+    initialTransport?.kind === "managedLocal" ? initialTransport.engineVariant : "cpu",
+  );
   let aiTransportSaved = $state(false);
+
+  // Local-AI status for the *drafted* engine variant, previewed independently of the saved
+  // transport (`settingsState.localAiStatus`) — switching CPU/GPU in this form updates its own
+  // status line without requiring Save first, per the feature plan's "operate on the draft, not
+  // last-saved state" rule (the same pattern the base-URL/model fields already follow).
+  let draftLocalAiStatus = $state<LocalAiStatus>({
+    modelPresent: false,
+    enginePresent: false,
+    gpuDevice: null,
+  });
+
+  async function refreshDraftLocalAiStatus(variant: EngineVariant) {
+    try {
+      draftLocalAiStatus = await fetchLocalAiStatus(variant);
+    } catch {
+      // Leave the previous value; this is a preview convenience only.
+    }
+  }
+
+  $effect(() => {
+    if (aiProviderKind === "managedLocal") {
+      void refreshDraftLocalAiStatus(aiEngineVariant);
+    }
+  });
 
   let aiInstructions = $state(settingsState.ai.instructions);
   let aiInstructionsSaved = $state(false);
@@ -205,7 +235,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     if (aiProviderKind === "none") {
       transport = null;
     } else if (aiProviderKind === "managedLocal") {
-      transport = { kind: "managedLocal" };
+      transport = { kind: "managedLocal", engineVariant: aiEngineVariant };
     } else {
       transport = { kind: aiProviderKind, baseUrl: aiBaseUrl.trim(), model: aiModel.trim() };
     }
@@ -230,14 +260,19 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   async function handleDownloadLocalAi() {
     downloadingLocalAi = true;
     try {
-      await downloadLocalAi();
+      await downloadLocalAi(aiEngineVariant);
     } catch (err) {
       if (!CANCELLED_PATTERN.test(String(err))) {
         notifyError(String(err));
       }
     } finally {
       downloadingLocalAi = false;
+      void refreshDraftLocalAiStatus(aiEngineVariant);
     }
+  }
+
+  function handleAiEngineVariantChange() {
+    aiTransportSaved = false;
   }
 
   function handleCancelLocalAiDownload() {
@@ -357,6 +392,22 @@ SPDX-License-Identifier: AGPL-3.0-or-later
             />
           {:else if aiProviderKind === "managedLocal"}
             <div class="local-ai-status">
+              <Select
+                id="ai-engine-variant"
+                label="Engine"
+                bind:value={aiEngineVariant}
+                onchange={handleAiEngineVariantChange}
+              >
+                <option value="cpu">CPU</option>
+                <option value="vulkan">GPU (Vulkan)</option>
+              </Select>
+              {#if aiEngineVariant === "vulkan"}
+                <p class="hint">
+                  Requires a working Vulkan driver — most desktop Linux installs with a GPU already
+                  have one. Falls back to no speedup, not an error, if none is found.
+                </p>
+              {/if}
+
               {#if downloadingLocalAi}
                 {#if settingsState.localAiDownloadProgress}
                   {@const p = settingsState.localAiDownloadProgress}
@@ -382,8 +433,15 @@ SPDX-License-Identifier: AGPL-3.0-or-later
                     Cancel
                   </Button>
                 </div>
-              {:else if settingsState.localAiStatus.modelPresent && settingsState.localAiStatus.enginePresent}
+              {:else if draftLocalAiStatus.modelPresent && draftLocalAiStatus.enginePresent}
                 <p class="hint">Ready — Qwen2.5-Coder-1.5B running locally via llama.cpp.</p>
+                {#if aiEngineVariant === "vulkan"}
+                  {#if draftLocalAiStatus.gpuDevice}
+                    <p class="hint">GPU: {draftLocalAiStatus.gpuDevice}</p>
+                  {:else}
+                    <p class="hint">No Vulkan-capable GPU detected — this will run on CPU.</p>
+                  {/if}
+                {/if}
               {:else}
                 <p class="hint">Not downloaded yet (~1.1GB).</p>
                 <div class="row">

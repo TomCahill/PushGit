@@ -244,11 +244,14 @@ export interface RepoHealth {
   packedSizeKib: number;
 }
 
+// Mirror of `src-tauri/src/ai/local/mod.rs::EngineVariant`.
+export type EngineVariant = "cpu" | "vulkan";
+
 // Mirror of `src-tauri/src/ai/mod.rs`.
 export type AiTransport =
   | { kind: "openAiCompatible"; baseUrl: string; model: string }
   | { kind: "anthropic"; baseUrl: string; model: string }
-  | { kind: "managedLocal" };
+  | { kind: "managedLocal"; engineVariant: EngineVariant };
 
 export interface AiSettings {
   transport: AiTransport | null;
@@ -265,6 +268,9 @@ export interface AiChunk {
 export interface LocalAiStatus {
   modelPresent: boolean;
   enginePresent: boolean;
+  /** The GPU device `llama-server --list-devices` reports — set only when the queried variant
+   *  is `"vulkan"` and its engine is present; `null` otherwise, or when none was found. */
+  gpuDevice: string | null;
 }
 
 // Mirror of `src-tauri/src/ai/local/download.rs::DownloadProgress`.

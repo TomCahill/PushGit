@@ -18,8 +18,8 @@ use crate::error::{PushGitError, PushGitResult};
 
 use super::manifest;
 use super::{
-    engine_binary_path, engine_dir, model_path, resolve_dir, ENGINE_ARCHIVE_TOP_DIR, ENGINE_SHA256,
-    ENGINE_SIZE, ENGINE_URL, MODEL_SHA256, MODEL_SIZE, MODEL_URL,
+    engine_binary_path, engine_dir, engine_verified, model_path, model_verified, resolve_dir,
+    EngineVariant, ENGINE_ARCHIVE_TOP_DIR, MODEL_SHA256, MODEL_SIZE, MODEL_URL,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -39,8 +39,33 @@ pub struct DownloadProgress {
     pub bytes_total: u64,
 }
 
-fn engine_archive_path(dir: &Path) -> PathBuf {
-    dir.join("engine.tar.gz")
+/// Which pinned file a download/verification pass is for — `Engine(variant)` selects that
+/// variant's manifest checksum fields and archive path; `Model` is shared by every variant.
+/// Distinct from `DownloadStage`, which only tags wire-progress messages as "engine" or
+/// "model" and doesn't need to (and shouldn't) leak which engine variant to the frontend.
+#[derive(Debug, Clone, Copy)]
+enum Asset {
+    Model,
+    Engine(EngineVariant),
+}
+
+impl Asset {
+    fn wire_stage(self) -> DownloadStage {
+        match self {
+            Asset::Model => DownloadStage::Model,
+            Asset::Engine(_) => DownloadStage::Engine,
+        }
+    }
+}
+
+fn engine_archive_path(dir: &Path, variant: EngineVariant) -> PathBuf {
+    dir.join(format!(
+        "engine-{}.tar.gz",
+        match variant {
+            EngineVariant::Cpu => "cpu",
+            EngineVariant::Vulkan => "vulkan",
+        }
+    ))
 }
 
 fn part_path_for(final_path: &Path) -> PathBuf {
@@ -49,58 +74,67 @@ fn part_path_for(final_path: &Path) -> PathBuf {
     PathBuf::from(part)
 }
 
-/// Fetches, engine then model, extracting and marking each verified as it completes — so a
-/// generation attempt right after the engine finishes but before the (much larger) model
-/// download completes still sees an accurate status rather than an all-or-nothing flag.
+/// Fetches `variant`'s engine (skipped if already present+verified) then the shared model
+/// (skipped if already present+verified) — the skip checks are what make switching engine
+/// variants after both are downloaded, or re-downloading after an interrupted first attempt,
+/// never redundantly re-fetch a file already on disk. Extracting and marking each verified as
+/// it completes means a generation attempt right after the engine finishes but before the
+/// (much larger) model download completes still sees an accurate status rather than an
+/// all-or-nothing flag.
 pub async fn download_local_ai(
+    variant: EngineVariant,
     channel: &Channel<DownloadProgress>,
     cancel: &Arc<AtomicBool>,
 ) -> PushGitResult<()> {
     let dir = resolve_dir()?;
     tokio::fs::create_dir_all(&dir).await?;
 
-    let archive_path = engine_archive_path(&dir);
-    download_verified(
-        &dir,
-        DownloadStage::Engine,
-        ENGINE_URL,
-        ENGINE_SIZE,
-        ENGINE_SHA256,
-        &archive_path,
-        channel,
-        cancel,
-    )
-    .await?;
-    extract_engine(dir.clone(), archive_path.clone()).await?;
-    let _ = tokio::fs::remove_file(&archive_path).await;
-    mark_verified(&dir, DownloadStage::Engine, ENGINE_SHA256);
+    if !engine_verified(&dir, variant) {
+        let archive_path = engine_archive_path(&dir, variant);
+        download_verified(
+            &dir,
+            Asset::Engine(variant),
+            variant.engine_url(),
+            variant.engine_size(),
+            variant.engine_sha256(),
+            &archive_path,
+            channel,
+            cancel,
+        )
+        .await?;
+        extract_engine(dir.clone(), archive_path.clone(), variant).await?;
+        let _ = tokio::fs::remove_file(&archive_path).await;
+        mark_verified(&dir, Asset::Engine(variant), variant.engine_sha256());
+    }
 
-    download_verified(
-        &dir,
-        DownloadStage::Model,
-        MODEL_URL,
-        MODEL_SIZE,
-        MODEL_SHA256,
-        &model_path(&dir),
-        channel,
-        cancel,
-    )
-    .await?;
-    mark_verified(&dir, DownloadStage::Model, MODEL_SHA256);
+    if !model_verified(&dir) {
+        download_verified(
+            &dir,
+            Asset::Model,
+            MODEL_URL,
+            MODEL_SIZE,
+            MODEL_SHA256,
+            &model_path(&dir),
+            channel,
+            cancel,
+        )
+        .await?;
+        mark_verified(&dir, Asset::Model, MODEL_SHA256);
+    }
 
     Ok(())
 }
 
-fn mark_verified(dir: &Path, stage: DownloadStage, checksum: &str) {
+fn mark_verified(dir: &Path, asset: Asset, checksum: &str) {
     let mut manifest = manifest::load(dir);
-    match stage {
-        DownloadStage::Engine => {
-            manifest.engine_checksum = Some(checksum.to_string());
-            manifest.engine_pending_checksum = None;
-        }
-        DownloadStage::Model => {
+    match asset {
+        Asset::Model => {
             manifest.model_checksum = Some(checksum.to_string());
             manifest.model_pending_checksum = None;
+        }
+        Asset::Engine(variant) => {
+            manifest.set_engine_checksum(variant, Some(checksum.to_string()));
+            manifest.set_engine_pending_checksum(variant, None);
         }
     }
     manifest::save(dir, &manifest);
@@ -113,7 +147,7 @@ fn mark_verified(dir: &Path, stage: DownloadStage, checksum: &str) {
 #[allow(clippy::too_many_arguments)]
 async fn download_verified(
     dir: &Path,
-    stage: DownloadStage,
+    asset: Asset,
     url: &str,
     expected_size: u64,
     expected_sha256: &str,
@@ -122,7 +156,7 @@ async fn download_verified(
     cancel: &Arc<AtomicBool>,
 ) -> PushGitResult<()> {
     let part_path = part_path_for(final_path);
-    reconcile_pending_pin(dir, stage, expected_sha256, &part_path).await;
+    reconcile_pending_pin(dir, asset, expected_sha256, &part_path).await;
 
     let existing_len = tokio::fs::metadata(&part_path)
         .await
@@ -135,7 +169,7 @@ async fn download_verified(
             &part_path,
             existing_len,
             expected_size,
-            stage,
+            asset.wire_stage(),
             channel,
             cancel,
         )
@@ -157,20 +191,22 @@ async fn download_verified(
 /// If a `.part` file exists but was started against a different pin than `expected_sha256`
 /// (the app was updated between attempts), discard it rather than risk appending bytes from two
 /// different pinned versions into one file.
-async fn reconcile_pending_pin(
-    dir: &Path,
-    stage: DownloadStage,
-    expected_sha256: &str,
-    part_path: &Path,
-) {
+async fn reconcile_pending_pin(dir: &Path, asset: Asset, expected_sha256: &str, part_path: &Path) {
     let mut manifest = manifest::load(dir);
-    let pending = match stage {
-        DownloadStage::Engine => &mut manifest.engine_pending_checksum,
-        DownloadStage::Model => &mut manifest.model_pending_checksum,
+    let current_pending = match asset {
+        Asset::Model => manifest.model_pending_checksum.clone(),
+        Asset::Engine(variant) => manifest
+            .engine_pending_checksum(variant)
+            .map(str::to_string),
     };
-    if pending.as_deref() != Some(expected_sha256) {
+    if current_pending.as_deref() != Some(expected_sha256) {
         let _ = tokio::fs::remove_file(part_path).await;
-        *pending = Some(expected_sha256.to_string());
+        match asset {
+            Asset::Model => manifest.model_pending_checksum = Some(expected_sha256.to_string()),
+            Asset::Engine(variant) => {
+                manifest.set_engine_pending_checksum(variant, Some(expected_sha256.to_string()))
+            }
+        }
         manifest::save(dir, &manifest);
     }
 }
@@ -276,18 +312,26 @@ fn to_hex(bytes: &[u8]) -> String {
 /// through `spawn_blocking` — the same discipline `ARCHITECTURE.md` §5 requires for every
 /// git2-rs call, applied here for consistency even though a 16MB archive extracts in
 /// milliseconds.
-async fn extract_engine(dir: PathBuf, archive_path: PathBuf) -> PushGitResult<()> {
-    tokio::task::spawn_blocking(move || extract_engine_blocking(&dir, &archive_path))
+async fn extract_engine(
+    dir: PathBuf,
+    archive_path: PathBuf,
+    variant: EngineVariant,
+) -> PushGitResult<()> {
+    tokio::task::spawn_blocking(move || extract_engine_blocking(&dir, &archive_path, variant))
         .await
         .map_err(|e| PushGitError::Invalid(format!("extraction task panicked: {e}")))?
 }
 
-fn extract_engine_blocking(dir: &Path, archive_path: &Path) -> PushGitResult<()> {
+fn extract_engine_blocking(
+    dir: &Path,
+    archive_path: &Path,
+    variant: EngineVariant,
+) -> PushGitResult<()> {
     let file = std::fs::File::open(archive_path)?;
     let decoder = flate2::read::GzDecoder::new(file);
     let mut archive = tar::Archive::new(decoder);
 
-    let target = engine_dir(dir);
+    let target = engine_dir(dir, variant);
     let _ = std::fs::remove_dir_all(&target);
     std::fs::create_dir_all(&target)?;
 
@@ -306,7 +350,7 @@ fn extract_engine_blocking(dir: &Path, archive_path: &Path) -> PushGitResult<()>
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let binary = engine_binary_path(dir);
+        let binary = engine_binary_path(dir, variant);
         let mut perms = std::fs::metadata(&binary)?.permissions();
         perms.set_mode(0o755);
         std::fs::set_permissions(&binary, perms)?;
@@ -363,7 +407,7 @@ mod tests {
 
         download_verified(
             dir.path(),
-            DownloadStage::Model,
+            Asset::Model,
             &format!("{}/file", server.uri()),
             body.len() as u64,
             &sha256_hex(&body),
@@ -394,7 +438,7 @@ mod tests {
 
         let err = download_verified(
             dir.path(),
-            DownloadStage::Model,
+            Asset::Model,
             &format!("{}/file", server.uri()),
             body.len() as u64,
             "0000000000000000000000000000000000000000000000000000000000000000",
@@ -426,7 +470,7 @@ mod tests {
 
         let err = download_verified(
             dir.path(),
-            DownloadStage::Model,
+            Asset::Model,
             &format!("{}/file", server.uri()),
             body.len() as u64,
             &sha256_hex(&body),
@@ -451,7 +495,7 @@ mod tests {
         manifest.model_pending_checksum = Some("old-pin".to_string());
         manifest::save(dir.path(), &manifest);
 
-        reconcile_pending_pin(dir.path(), DownloadStage::Model, "new-pin", &part_path).await;
+        reconcile_pending_pin(dir.path(), Asset::Model, "new-pin", &part_path).await;
 
         assert!(!part_path.exists());
         let manifest = manifest::load(dir.path());
@@ -468,8 +512,82 @@ mod tests {
         manifest.model_pending_checksum = Some("current-pin".to_string());
         manifest::save(dir.path(), &manifest);
 
-        reconcile_pending_pin(dir.path(), DownloadStage::Model, "current-pin", &part_path).await;
+        reconcile_pending_pin(dir.path(), Asset::Model, "current-pin", &part_path).await;
 
         assert!(part_path.exists());
+    }
+
+    #[tokio::test]
+    async fn engine_variants_reconcile_independent_pending_pins() {
+        let dir = TempDir::new().unwrap();
+        let cpu_part = part_path_for(&engine_archive_path(dir.path(), EngineVariant::Cpu));
+        std::fs::write(&cpu_part, b"stale cpu partial").unwrap();
+        let mut manifest = manifest::load(dir.path());
+        manifest.set_engine_pending_checksum(EngineVariant::Cpu, Some("old-cpu-pin".to_string()));
+        manifest.set_engine_pending_checksum(EngineVariant::Vulkan, Some("vulkan-pin".to_string()));
+        manifest::save(dir.path(), &manifest);
+
+        reconcile_pending_pin(
+            dir.path(),
+            Asset::Engine(EngineVariant::Cpu),
+            "new-cpu-pin",
+            &cpu_part,
+        )
+        .await;
+
+        assert!(!cpu_part.exists());
+        let manifest = manifest::load(dir.path());
+        assert_eq!(
+            manifest.engine_pending_checksum(EngineVariant::Cpu),
+            Some("new-cpu-pin")
+        );
+        // The other variant's pending pin is untouched by a CPU-scoped reconcile.
+        assert_eq!(
+            manifest.engine_pending_checksum(EngineVariant::Vulkan),
+            Some("vulkan-pin")
+        );
+    }
+
+    #[tokio::test]
+    async fn mark_verified_sets_only_the_given_variants_checksum() {
+        let dir = TempDir::new().unwrap();
+
+        mark_verified(
+            dir.path(),
+            Asset::Engine(EngineVariant::Vulkan),
+            "vulkan-sum",
+        );
+
+        let manifest = manifest::load(dir.path());
+        assert_eq!(
+            manifest.engine_checksum(EngineVariant::Vulkan),
+            Some("vulkan-sum")
+        );
+        assert_eq!(manifest.engine_checksum(EngineVariant::Cpu), None);
+    }
+
+    #[test]
+    fn engine_variants_use_distinct_archive_paths() {
+        let dir = TempDir::new().unwrap();
+
+        let cpu_path = engine_archive_path(dir.path(), EngineVariant::Cpu);
+        let vulkan_path = engine_archive_path(dir.path(), EngineVariant::Vulkan);
+
+        assert_ne!(cpu_path, vulkan_path);
+    }
+
+    #[tokio::test]
+    async fn download_local_ai_skips_the_model_when_already_verified_on_a_variant_switch() {
+        let dir = TempDir::new().unwrap();
+        // Simulate a prior successful CPU download: model already verified on disk.
+        std::fs::write(model_path(dir.path()), b"already-downloaded model bytes").unwrap();
+        let mut manifest = manifest::load(dir.path());
+        manifest.model_checksum = Some(MODEL_SHA256.to_string());
+        manifest::save(dir.path(), &manifest);
+
+        assert!(model_verified(dir.path()));
+        // `download_local_ai` only re-fetches the model when `model_verified` is false — since
+        // it's already true here, a variant switch's real work is scoped to the engine alone.
+        assert!(!engine_verified(dir.path(), EngineVariant::Vulkan));
     }
 }

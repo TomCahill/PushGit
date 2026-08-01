@@ -26,7 +26,13 @@ import {
   setMaxCommitsRendered as setMaxCommitsRenderedCommand,
   setReduceMotion as setReduceMotionCommand,
 } from "$lib/git/api";
-import type { AiSettings, AiTransport, DownloadProgress, LocalAiStatus } from "$lib/git/types";
+import type {
+  AiSettings,
+  AiTransport,
+  DownloadProgress,
+  EngineVariant,
+  LocalAiStatus,
+} from "$lib/git/types";
 
 export const DEFAULT_MAX_COMMITS_RENDERED = 500;
 export const MIN_MAX_COMMITS_RENDERED = 50;
@@ -40,7 +46,16 @@ const DEFAULT_AI_SETTINGS: AiSettings = {
 const DEFAULT_LOCAL_AI_STATUS: LocalAiStatus = {
   modelPresent: false,
   enginePresent: false,
+  gpuDevice: null,
 };
+
+/** The saved `ManagedLocal` transport's engine variant, or the default (`"cpu"`) when no
+ *  transport is saved or a different provider is active — used to know which variant's status
+ *  `settingsState.localAiStatus` should reflect for `StagingPanel`'s readiness check. */
+function savedEngineVariant(): EngineVariant {
+  const transport = settingsState.ai.transport;
+  return transport?.kind === "managedLocal" ? transport.engineVariant : "cpu";
+}
 
 interface SettingsState {
   maxCommitsRendered: number;
@@ -86,23 +101,35 @@ export async function loadAppConfig(): Promise<void> {
   await refreshLocalAiStatus();
 }
 
-/** Re-reads local-AI download/readiness status from the backend — called at startup and again
- *  after a download finishes (success or failure), since either can change what's on disk. */
+/** Re-reads local-AI download/readiness status from the backend for the currently *saved*
+ *  transport's engine variant — called at startup and again after a download finishes (success
+ *  or failure), since either can change what's on disk. Drives `StagingPanel`'s readiness
+ *  check, which only cares about the saved variant, not whatever the Settings form is
+ *  previewing — see `fetchLocalAiStatus` for that. */
 export async function refreshLocalAiStatus(): Promise<void> {
   try {
-    settingsState.localAiStatus = await getLocalAiStatus();
+    settingsState.localAiStatus = await getLocalAiStatus(savedEngineVariant());
   } catch {
     // Keep the previous value — an unresolvable data dir reads the same as "not downloaded."
   }
 }
 
-/** Downloads and verifies the local-AI model/engine, updating `localAiDownloadProgress` as
- *  chunks arrive and refreshing `localAiStatus` once it settles either way. Rethrows on
- *  failure/cancellation so the calling UI can surface the error. */
-export async function downloadLocalAi(): Promise<void> {
+/** Reads local-AI status for an arbitrary `engineVariant` without touching
+ *  `settingsState.localAiStatus` — used by the Settings panel to preview a drafted (not yet
+ *  saved) engine-variant selection, so switching CPU/GPU in the form updates its own status
+ *  line without requiring Save first or clobbering the saved variant's status elsewhere. */
+export async function fetchLocalAiStatus(engineVariant: EngineVariant): Promise<LocalAiStatus> {
+  return getLocalAiStatus(engineVariant);
+}
+
+/** Downloads and verifies the local-AI engine for `engineVariant` and the (shared) model,
+ *  updating `localAiDownloadProgress` as chunks arrive and refreshing `localAiStatus` once it
+ *  settles either way. Rethrows on failure/cancellation so the calling UI can surface the
+ *  error. */
+export async function downloadLocalAi(engineVariant: EngineVariant): Promise<void> {
   settingsState.localAiDownloadProgress = null;
   try {
-    await downloadLocalAiCommand((progress) => {
+    await downloadLocalAiCommand(engineVariant, (progress) => {
       settingsState.localAiDownloadProgress = progress;
     });
   } finally {
@@ -131,9 +158,13 @@ export async function setReduceMotion(value: boolean): Promise<void> {
 }
 
 /** Persists the chosen AI transport (`null` clears it); `settingsState.ai` is updated from
- *  the backend's response. */
+ *  the backend's response, and `localAiStatus` is re-synced to whatever variant is now saved
+ *  — otherwise it'd keep reflecting whichever variant was saved before this call (or the
+ *  `cpu` fallback), leaving `StagingPanel`'s readiness check stale after switching providers
+ *  or CPU/GPU variants. */
 export async function setAiTransport(transport: AiTransport | null): Promise<void> {
   settingsState.ai = await setAiTransportCommand(transport);
+  await refreshLocalAiStatus();
 }
 
 /** Persists the free-text instructions appended to every generation prompt. */

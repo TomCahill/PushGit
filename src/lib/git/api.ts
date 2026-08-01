@@ -19,6 +19,7 @@ import type {
   CommitGraphPage,
   ConflictSides,
   DownloadProgress,
+  EngineVariant,
   FileDiff,
   FileHistoryEntry,
   FinishOutcome,
@@ -591,19 +592,20 @@ export function cancelAiGeneration(repoPath: string): Promise<void> {
   return invoke("cancel_ai_generation", { repoPath });
 }
 
-/** Whether the pinned local-AI model/engine are downloaded and verified. */
-export function getLocalAiStatus(): Promise<LocalAiStatus> {
-  return invoke("get_local_ai_status");
+/** Whether the pinned local-AI model/engine are downloaded and verified for `engineVariant`. */
+export function getLocalAiStatus(engineVariant: EngineVariant): Promise<LocalAiStatus> {
+  return invoke("get_local_ai_status", { engineVariant });
 }
 
-/** Downloads and verifies the pinned local-AI engine and model, calling `onProgress` with each
- *  update as it arrives. */
+/** Downloads and verifies the pinned local-AI engine for `engineVariant` and the (shared)
+ *  model, calling `onProgress` with each update as it arrives. */
 export function downloadLocalAi(
+  engineVariant: EngineVariant,
   onProgress: (progress: DownloadProgress) => void,
 ): Promise<void> {
   const channel = new Channel<DownloadProgress>();
   channel.onmessage = onProgress;
-  return invoke("download_local_ai", { channel });
+  return invoke("download_local_ai", { engineVariant, channel });
 }
 
 /** Cancels whatever local-AI download is currently in progress, if any. */

@@ -15,7 +15,7 @@ type AiChannel = { channel: { onmessage: (chunk: { text: string }) => void } };
 describe("StagingPanel", () => {
   afterEach(() => {
     settingsState.ai = { transport: null, instructions: "", cloudWarningAcknowledged: false };
-    settingsState.localAiStatus = { modelPresent: false, enginePresent: false };
+    settingsState.localAiStatus = { modelPresent: false, enginePresent: false, gpuDevice: null };
   });
 
   it("does nothing when no repo is open", () => {
@@ -808,8 +808,8 @@ describe("StagingPanel", () => {
     });
 
     it("is disabled pointing at Settings when the managed local engine isn't downloaded yet", async () => {
-      settingsState.ai.transport = { kind: "managedLocal" };
-      settingsState.localAiStatus = { modelPresent: false, enginePresent: false };
+      settingsState.ai.transport = { kind: "managedLocal", engineVariant: "cpu" };
+      settingsState.localAiStatus = { modelPresent: false, enginePresent: false, gpuDevice: null };
       mockIPC((cmd) => {
         if (cmd === "diff_unstaged") return [];
         if (cmd === "diff_staged") return [makeFileDiff({ newPath: "a.txt" })];
@@ -825,8 +825,8 @@ describe("StagingPanel", () => {
     });
 
     it("is enabled for the managed local transport once the engine and model are downloaded", async () => {
-      settingsState.ai.transport = { kind: "managedLocal" };
-      settingsState.localAiStatus = { modelPresent: true, enginePresent: true };
+      settingsState.ai.transport = { kind: "managedLocal", engineVariant: "cpu" };
+      settingsState.localAiStatus = { modelPresent: true, enginePresent: true, gpuDevice: null };
       mockIPC((cmd) => {
         if (cmd === "diff_unstaged") return [];
         if (cmd === "diff_staged") return [makeFileDiff({ newPath: "a.txt" })];
@@ -884,8 +884,8 @@ describe("StagingPanel", () => {
     });
 
     it("streams generated text for the managed local transport with no cloud-warning dialog", async () => {
-      settingsState.ai.transport = { kind: "managedLocal" };
-      settingsState.localAiStatus = { modelPresent: true, enginePresent: true };
+      settingsState.ai.transport = { kind: "managedLocal", engineVariant: "cpu" };
+      settingsState.localAiStatus = { modelPresent: true, enginePresent: true, gpuDevice: null };
       mockIPC((cmd, args) => {
         if (cmd === "diff_unstaged") return [];
         if (cmd === "diff_staged") return [makeFileDiff({ newPath: "a.txt" })];
@@ -907,8 +907,8 @@ describe("StagingPanel", () => {
     });
 
     it("strips a markdown code fence a weaker model wraps its output in", async () => {
-      settingsState.ai.transport = { kind: "managedLocal" };
-      settingsState.localAiStatus = { modelPresent: true, enginePresent: true };
+      settingsState.ai.transport = { kind: "managedLocal", engineVariant: "cpu" };
+      settingsState.localAiStatus = { modelPresent: true, enginePresent: true, gpuDevice: null };
       mockIPC((cmd, args) => {
         if (cmd === "diff_unstaged") return [];
         if (cmd === "diff_staged") return [makeFileDiff({ newPath: "a.txt" })];
@@ -936,8 +936,8 @@ describe("StagingPanel", () => {
     });
 
     it("freezes at 4 bullets and cancels generation once the model tries to write a 5th", async () => {
-      settingsState.ai.transport = { kind: "managedLocal" };
-      settingsState.localAiStatus = { modelPresent: true, enginePresent: true };
+      settingsState.ai.transport = { kind: "managedLocal", engineVariant: "cpu" };
+      settingsState.localAiStatus = { modelPresent: true, enginePresent: true, gpuDevice: null };
       const cancelCalls: string[] = [];
       mockIPC((cmd, args) => {
         if (cmd === "diff_unstaged") return [];

@@ -1193,25 +1193,28 @@ pub async fn cancel_ai_generation(
     Ok(())
 }
 
-/// Whether the pinned local-AI model/engine are downloaded and verified — checked on Settings
-/// load and again after a download completes.
+/// Whether the pinned local-AI model/engine are downloaded and verified for `engine_variant` —
+/// checked on Settings load and again after a download completes. The Settings UI asks about
+/// whichever variant is currently *drafted* (not yet saved), so previewing/downloading a
+/// variant never requires clicking Save first.
 #[tauri::command]
-pub fn get_local_ai_status() -> ai::local::LocalAiStatus {
-    ai::local::get_local_ai_status()
+pub async fn get_local_ai_status(engine_variant: ai::EngineVariant) -> ai::local::LocalAiStatus {
+    ai::local::get_local_ai_status(engine_variant).await
 }
 
-/// Downloads and verifies the pinned local-AI engine and model, registering a fresh
-/// cancellation token first — `cancel_local_ai_download` sets it. Registering also doubles as
-/// the guard against two concurrent downloads racing on the same `.part` files; the token is
-/// cleared once this call finishes, however it finishes, so a later download isn't rejected by
-/// a token nothing will ever clear.
+/// Downloads and verifies the pinned local-AI engine for `engine_variant` and the (shared)
+/// model, registering a fresh cancellation token first — `cancel_local_ai_download` sets it.
+/// Registering also doubles as the guard against two concurrent downloads racing on the same
+/// `.part` files; the token is cleared once this call finishes, however it finishes, so a later
+/// download isn't rejected by a token nothing will ever clear.
 #[tauri::command]
 pub async fn download_local_ai(
+    engine_variant: ai::EngineVariant,
     channel: Channel<ai::local::DownloadProgress>,
     state: State<'_, AppState>,
 ) -> PushGitResult<()> {
     let cancel = state.local_ai_cancellation.register().await?;
-    let result = ai::local::download_local_ai(&channel, &cancel).await;
+    let result = ai::local::download_local_ai(engine_variant, &channel, &cancel).await;
     state.local_ai_cancellation.clear().await;
     result
 }

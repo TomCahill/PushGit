@@ -94,6 +94,33 @@ describe("settingsState", () => {
     expect(settingsState.ai.transport).toEqual(transport);
   });
 
+  it("setAiTransport refreshes localAiStatus for the newly saved engine variant", async () => {
+    // Regression test: switching to (or between variants of) managedLocal used to leave
+    // `localAiStatus` stuck on whatever variant was saved before, so `StagingPanel`'s
+    // readiness check kept reporting "not downloaded" for an engine that was actually ready.
+    settingsState.localAiStatus = { modelPresent: false, enginePresent: false, gpuDevice: null };
+    const transport = { kind: "managedLocal" as const, engineVariant: "vulkan" as const };
+    mockIPC((cmd, args) => {
+      if (cmd === "set_ai_transport") {
+        expect(args).toEqual({ transport });
+        return { transport, instructions: "", cloudWarningAcknowledged: false };
+      }
+      if (cmd === "get_local_ai_status") {
+        expect(args).toEqual({ engineVariant: "vulkan" });
+        return { modelPresent: true, enginePresent: true, gpuDevice: "Radeon RX 7900" };
+      }
+      throw new Error(`unexpected command ${cmd}`);
+    });
+
+    await setAiTransport(transport);
+
+    expect(settingsState.localAiStatus).toEqual({
+      modelPresent: true,
+      enginePresent: true,
+      gpuDevice: "Radeon RX 7900",
+    });
+  });
+
   it("setAiInstructions persists through the backend and updates settingsState.ai from its response", async () => {
     mockIPC((cmd, args) => {
       if (cmd === "set_ai_instructions") {
