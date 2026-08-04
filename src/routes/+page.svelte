@@ -154,6 +154,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     blameLines = null;
   });
 
+  function formatDateTime(unixSeconds: number): string {
+    return new Date(unixSeconds * 1000).toLocaleString();
+  }
+
   function closeCenterDiff() {
     workingSelectedFile = null;
     selectedCommitFilePath = null;
@@ -705,6 +709,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
           email={selectedCommit.authorEmail}
           size={14}
         />
+        · {formatDateTime(selectedCommit.authorTime)}
         {diffModeSuffix}
       </p>
       {#if diffError}
