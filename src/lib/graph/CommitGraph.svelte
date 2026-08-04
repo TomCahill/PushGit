@@ -274,12 +274,28 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     return lane * LANE_WIDTH + LANE_WIDTH / 2;
   }
 
+  // A row's commit dot sits at the row's vertical midpoint (see `cy={ROW_HEIGHT / 2}` below),
+  // not at its top/bottom edge — so a curve must be anchored at that midpoint on whichever end
+  // touches this row's own commit, or it visibly crosses through the straight line between
+  // dots instead of meeting them.
   function railPath(rail: Rail): string {
     const x1 = laneX(rail.fromLane);
     const x2 = laneX(rail.toLane);
     if (x1 === x2) return `M ${x1} 0 L ${x1} ${ROW_HEIGHT}`;
+
     const midY = ROW_HEIGHT / 2;
-    return `M ${x1} 0 C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${ROW_HEIGHT}`;
+    if (rail.kind === "merge_edge") {
+      // Originates at this row's own dot (fromLane is always this row's own lane for a merge
+      // edge) and curves down to the next row's lane by the bottom edge. The segment above the
+      // dot is already drawn by this row's own straight parent-edge rail.
+      const ctrlY = (midY + ROW_HEIGHT) / 2;
+      return `M ${x1} ${midY} C ${x1} ${ctrlY}, ${x2} ${ctrlY}, ${x2} ${ROW_HEIGHT}`;
+    }
+    // A converging lane — `passThrough` only has differing lanes when another lane merges into
+    // this row's own commit — curves up from the row's top edge and ends exactly at this row's
+    // dot (toLane is always this row's own lane here), not past it.
+    const ctrlY = midY / 2;
+    return `M ${x1} 0 C ${x1} ${ctrlY}, ${x2} ${ctrlY}, ${x2} ${midY}`;
   }
 
   let containerEl: HTMLDivElement | undefined;

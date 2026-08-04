@@ -189,9 +189,17 @@ impl GraphSession {
                                 rails: Vec::new(),
                             }
                         } else {
-                            lane_tracker.process(oid, &parent_ids, |candidate| {
-                                color_assigner.color_for(branch_key_for(candidate, refs_by_oid))
-                            })
+                            lane_tracker.process(
+                                oid,
+                                &parent_ids,
+                                |candidate| {
+                                    color_assigner.color_for(branch_key_for(candidate, refs_by_oid))
+                                },
+                                |first_parent, candidate| {
+                                    repo.graph_descendant_of(first_parent, candidate)
+                                        .unwrap_or(false)
+                                },
+                            )
                         };
 
                         let oid_string = oid.to_string();
@@ -220,9 +228,14 @@ impl GraphSession {
                         }
                     }
                     GraphEntry::Workdir { parent, file_count } => {
-                        let layout = lane_tracker.process(Oid::zero(), &[parent], |candidate| {
-                            color_assigner.color_for(branch_key_for(candidate, refs_by_oid))
-                        });
+                        let layout = lane_tracker.process(
+                            Oid::zero(),
+                            &[parent],
+                            |candidate| {
+                                color_assigner.color_for(branch_key_for(candidate, refs_by_oid))
+                            },
+                            |_, _| false,
+                        );
 
                         CommitRow {
                             oid: WORKDIR_OID.to_string(),
@@ -246,9 +259,14 @@ impl GraphSession {
                     }
                     GraphEntry::Stash { oid, parent, index } => {
                         let commit = repo.find_commit(oid)?;
-                        let layout = lane_tracker.process(oid, &[parent], |candidate| {
-                            color_assigner.color_for(branch_key_for(candidate, refs_by_oid))
-                        });
+                        let layout = lane_tracker.process(
+                            oid,
+                            &[parent],
+                            |candidate| {
+                                color_assigner.color_for(branch_key_for(candidate, refs_by_oid))
+                            },
+                            |_, _| false,
+                        );
 
                         let oid_string = oid.to_string();
                         let short_oid = oid_string.chars().take(7).collect();
@@ -569,6 +587,7 @@ fn evict_idle(sessions: &mut HashMap<String, GraphSession>, now: Instant, idle_t
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::graph::lane::RailKind;
     use crate::test_support::repo_init;
 
     fn commit_file(
@@ -695,6 +714,108 @@ mod tests {
             .find(|r| r.oid == a.id().to_string())
             .unwrap();
         assert!(!single_parent_row.is_merge);
+    }
+
+    #[test]
+    fn a_merge_row_does_not_draw_a_spurious_extra_line_for_its_own_new_lane() {
+        // Mirrors a real "Merge branch 'origin/develop'" commit: two branches with real,
+        // distinct history on both sides. The merge row must draw exactly one rail for the
+        // freshly allocated second-parent lane (its `MergeEdge`) — not a `MergeEdge` plus a
+        // `PassThrough` for the same lane, which would render as two overlapping green lines
+        // at the merge row, one of them a stub with nothing above it to connect to.
+        let (dir, repo) = repo_init();
+        let base = repo.head().unwrap().peel_to_commit().unwrap();
+        let a = repo
+            .find_commit(commit_file(&repo, "a.txt", "a", &[&base]))
+            .unwrap();
+        let b = repo
+            .find_commit(commit_file(&repo, "b.txt", "b", &[&base]))
+            .unwrap();
+        let merge = commit_file(&repo, "merged", "m", &[&a, &b]);
+        repo.reference("refs/heads/main", merge, true, "").unwrap();
+        repo.set_head("refs/heads/main").unwrap();
+
+        let mut session = GraphSession::open(dir.path(), &GraphFilter::default()).unwrap();
+        let page = session.next_page(10).unwrap();
+
+        let merge_row = page
+            .rows
+            .iter()
+            .find(|r| r.oid == merge.to_string())
+            .unwrap();
+        let new_lane = merge_row
+            .rails
+            .iter()
+            .find(|r| r.kind == RailKind::MergeEdge)
+            .unwrap()
+            .to_lane;
+        let rails_touching_new_lane = merge_row
+            .rails
+            .iter()
+            .filter(|r| r.from_lane == new_lane || r.to_lane == new_lane)
+            .count();
+        assert_eq!(rails_touching_new_lane, 1);
+    }
+
+    #[test]
+    fn a_trivial_merge_does_not_leave_a_persistent_extra_lane() {
+        let (dir, repo) = repo_init();
+        let root = repo.head().unwrap().peel_to_commit().unwrap();
+        let second = repo
+            .find_commit(commit_file(&repo, "a.txt", "a", &[&root]))
+            .unwrap();
+        let third = repo
+            .find_commit(commit_file(&repo, "b.txt", "b", &[&second]))
+            .unwrap();
+
+        // Merges the repo's own root commit back in as a second parent — already an ancestor
+        // of the first parent, so this is a fully trivial/no-op merge with zero unique commits
+        // of its own. Before the redundant-merge-parent fix, this second parent would spawn a
+        // lane that draws an empty `PassThrough` rail on every row between the merge and the
+        // root, several rows down — an uninformative "tail" with no commits ever assigned to it.
+        let sig = repo.signature().unwrap();
+        let merge = repo
+            .commit(
+                None,
+                &sig,
+                &sig,
+                "Merge already-contained history",
+                &third.tree().unwrap(),
+                &[&third, &root],
+            )
+            .unwrap();
+        repo.reference("refs/heads/main", merge, true, "").unwrap();
+        repo.set_head("refs/heads/main").unwrap();
+
+        let mut session = GraphSession::open(dir.path(), &GraphFilter::default()).unwrap();
+        let page = session.next_page(10).unwrap();
+
+        let merge_row = page
+            .rows
+            .iter()
+            .find(|r| r.oid == merge.to_string())
+            .unwrap();
+        assert!(merge_row.is_merge);
+        let merge_edge = merge_row
+            .rails
+            .iter()
+            .find(|r| r.kind == RailKind::MergeEdge)
+            .unwrap();
+        assert_eq!(
+            merge_edge.to_lane, merge_row.lane,
+            "the redundant merge parent should converge straight back into the merge \
+             commit's own lane rather than spawning a new one"
+        );
+
+        // Every row between the merge and the root is untouched by a second lane — no
+        // `PassThrough` rail should appear anywhere in this page.
+        for row in &page.rows {
+            assert!(
+                row.rails.iter().all(|r| r.kind != RailKind::PassThrough),
+                "row {} unexpectedly has a pass-through rail from a phantom lane",
+                row.oid
+            );
+        }
     }
 
     #[test]

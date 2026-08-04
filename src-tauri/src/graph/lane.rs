@@ -64,11 +64,21 @@ impl LaneTracker {
     /// starting a *new* lane (the current commit itself, if nothing was waiting for it, or a
     /// merge parent that no active lane already awaits) so the caller can resolve a stable
     /// `BranchKey` for it.
+    ///
+    /// `is_redundant_merge_parent(first_parent, candidate)` is consulted only when a merge's
+    /// non-first parent would otherwise need a brand-new lane (§below) — it should answer
+    /// whether `candidate` is already an ancestor of `first_parent`, i.e. whether the merged-in
+    /// side contributes no commits of its own. Trivial/no-op merges (an already-up-to-date
+    /// branch merged again, a branch merged with zero unique commits) are extremely common, and
+    /// without this check they'd each spawn a lane that does nothing but draw an empty
+    /// `PassThrough` tail all the way down to wherever the shared ancestor happens to be —
+    /// visually indistinguishable from a real branch, but carrying no information.
     pub fn process(
         &mut self,
         oid: Oid,
         parents: &[Oid],
         mut color_for: impl FnMut(Oid) -> u16,
+        mut is_redundant_merge_parent: impl FnMut(Oid, Oid) -> bool,
     ) -> RowLayout {
         let waiting: Vec<usize> = self
             .lanes
@@ -125,6 +135,7 @@ impl LaneTracker {
 
         // Route additional parents (merges): reuse an already-waiting lane if one exists,
         // otherwise allocate a new one.
+        let mut freshly_allocated: Vec<usize> = Vec::new();
         for &parent in parents.iter().skip(1) {
             let existing = self
                 .lanes
@@ -133,6 +144,7 @@ impl LaneTracker {
 
             let (target_lane, target_color) = match existing {
                 Some(lane) => (lane, self.lanes[lane].as_ref().unwrap().color_id),
+                None if is_redundant_merge_parent(parents[0], parent) => (own_lane, color_id),
                 None => {
                     let new_lane = self.allocate_free_lane();
                     let new_color = color_for(parent);
@@ -140,6 +152,7 @@ impl LaneTracker {
                         awaited_oid: parent,
                         color_id: new_color,
                     });
+                    freshly_allocated.push(new_lane);
                     (new_lane, new_color)
                 }
             };
@@ -152,9 +165,13 @@ impl LaneTracker {
             });
         }
 
-        // Every other still-active lane simply continues straight down through this row.
+        // Every other still-active lane simply continues straight down through this row —
+        // except a lane just allocated above by this same row's merge-parent routing: its
+        // `MergeEdge` rail already carries it from this row's top (at `own_lane`) down to its
+        // new column, so a second `PassThrough` for it here would draw a spurious extra stub
+        // with nothing above it to connect to.
         for (i, lane) in self.lanes.iter().enumerate() {
-            if i == own_lane || waiting.contains(&i) {
+            if i == own_lane || waiting.contains(&i) || freshly_allocated.contains(&i) {
                 continue;
             }
             if let Some(state) = lane {
@@ -203,14 +220,35 @@ mod tests {
         }
     }
 
+    /// Most tests below don't exercise redundant-merge-parent collapsing — this stands in for
+    /// `is_redundant_merge_parent` wherever every merge parent should get a real lane.
+    fn no_redundant_merge_parents(_first_parent: Oid, _candidate: Oid) -> bool {
+        false
+    }
+
     #[test]
     fn linear_history_stays_on_a_single_lane() {
         let mut tracker = LaneTracker::new();
         let mut colors = 0u16;
 
-        let c1 = tracker.process(oid(3), &[oid(2)], next_color(&mut colors));
-        let c2 = tracker.process(oid(2), &[oid(1)], next_color(&mut colors));
-        let c3 = tracker.process(oid(1), &[], next_color(&mut colors));
+        let c1 = tracker.process(
+            oid(3),
+            &[oid(2)],
+            next_color(&mut colors),
+            no_redundant_merge_parents,
+        );
+        let c2 = tracker.process(
+            oid(2),
+            &[oid(1)],
+            next_color(&mut colors),
+            no_redundant_merge_parents,
+        );
+        let c3 = tracker.process(
+            oid(1),
+            &[],
+            next_color(&mut colors),
+            no_redundant_merge_parents,
+        );
 
         assert_eq!(c1.lane, 0);
         assert_eq!(c2.lane, 0);
@@ -224,7 +262,12 @@ mod tests {
         let mut tracker = LaneTracker::new();
         let mut colors = 0u16;
 
-        tracker.process(oid(1), &[], next_color(&mut colors));
+        tracker.process(
+            oid(1),
+            &[],
+            next_color(&mut colors),
+            no_redundant_merge_parents,
+        );
 
         assert_eq!(tracker.active_lane_count(), 0);
     }
@@ -236,11 +279,26 @@ mod tests {
 
         // A merge commit `m` with two parents `a` and `b` that never converge in this
         // fragment: `b` should get its own lane distinct from `m`'s.
-        let m = tracker.process(oid(10), &[oid(1), oid(2)], next_color(&mut colors));
+        let m = tracker.process(
+            oid(10),
+            &[oid(1), oid(2)],
+            next_color(&mut colors),
+            no_redundant_merge_parents,
+        );
         assert_eq!(tracker.active_lane_count(), 2);
 
-        let a = tracker.process(oid(1), &[], next_color(&mut colors));
-        let b = tracker.process(oid(2), &[], next_color(&mut colors));
+        let a = tracker.process(
+            oid(1),
+            &[],
+            next_color(&mut colors),
+            no_redundant_merge_parents,
+        );
+        let b = tracker.process(
+            oid(2),
+            &[],
+            next_color(&mut colors),
+            no_redundant_merge_parents,
+        );
 
         assert_ne!(a.lane, b.lane);
         assert_eq!(
@@ -253,16 +311,123 @@ mod tests {
     }
 
     #[test]
+    fn a_freshly_allocated_merge_parent_lane_gets_no_spurious_pass_through_on_its_own_row() {
+        // A merge that allocates a brand-new lane for its second parent must emit exactly one
+        // rail touching that lane on this row (the `MergeEdge` carrying it from `own_lane`
+        // down into its new column) — not a second `PassThrough` for the same lane, which
+        // would draw an extra stub starting from nothing above it (the lane didn't exist
+        // before this row).
+        let mut tracker = LaneTracker::new();
+        let mut colors = 0u16;
+
+        let m = tracker.process(
+            oid(10),
+            &[oid(1), oid(2)],
+            next_color(&mut colors),
+            no_redundant_merge_parents,
+        );
+
+        let new_lane = m
+            .rails
+            .iter()
+            .find(|r| r.kind == RailKind::MergeEdge)
+            .unwrap()
+            .to_lane;
+        let rails_touching_new_lane = m
+            .rails
+            .iter()
+            .filter(|r| r.from_lane == new_lane || r.to_lane == new_lane)
+            .count();
+        assert_eq!(
+            rails_touching_new_lane, 1,
+            "the freshly allocated lane should only have its MergeEdge, no extra PassThrough"
+        );
+    }
+
+    #[test]
+    fn a_redundant_merge_parent_gets_no_new_lane() {
+        let mut tracker = LaneTracker::new();
+        let mut colors = 0u16;
+
+        // `m` merges `a` (first parent) with `b` — but `b` is already an ancestor of `a`'s
+        // chain (a trivial/no-op merge), so it shouldn't spawn a second lane.
+        let is_redundant = |_first_parent: Oid, candidate: Oid| candidate == oid(9);
+        let m = tracker.process(
+            oid(10),
+            &[oid(1), oid(9)],
+            next_color(&mut colors),
+            is_redundant,
+        );
+
+        assert_eq!(tracker.active_lane_count(), 1);
+        let merge_edge = m
+            .rails
+            .iter()
+            .find(|r| r.kind == RailKind::MergeEdge)
+            .unwrap();
+        assert_eq!(
+            merge_edge.to_lane, m.lane,
+            "a redundant merge parent's edge converges straight back into the commit's own \
+             lane instead of spawning one"
+        );
+    }
+
+    #[test]
+    fn a_redundant_merge_parent_does_not_leave_a_persistent_tail() {
+        let mut tracker = LaneTracker::new();
+        let mut colors = 0u16;
+        let is_redundant = |_first_parent: Oid, candidate: Oid| candidate == oid(1);
+
+        // `oid(1)` is already reachable via the first-parent chain several rows down — without
+        // the redundant-merge-parent check this would spawn a lane that draws an empty
+        // `PassThrough` on every row until `oid(1)` is finally reached (the "tail that carries
+        // on" a merged, already-contained branch shouldn't leave behind).
+        tracker.process(
+            oid(10),
+            &[oid(3), oid(1)],
+            next_color(&mut colors),
+            is_redundant,
+        );
+        let mid = tracker.process(
+            oid(3),
+            &[oid(2)],
+            next_color(&mut colors),
+            no_redundant_merge_parents,
+        );
+
+        assert_eq!(tracker.active_lane_count(), 1);
+        assert!(
+            mid.rails.iter().all(|r| r.kind != RailKind::PassThrough),
+            "no phantom lane should pass through rows between the merge and the real ancestor"
+        );
+    }
+
+    #[test]
     fn converging_branches_free_the_extra_lane() {
         let mut tracker = LaneTracker::new();
         let mut colors = 0u16;
 
         // Two independent tips (`a`, `b`) both awaiting the same ancestor `base`.
-        tracker.process(oid(1), &[oid(3)], next_color(&mut colors));
-        tracker.process(oid(2), &[oid(3)], next_color(&mut colors));
+        tracker.process(
+            oid(1),
+            &[oid(3)],
+            next_color(&mut colors),
+            no_redundant_merge_parents,
+        );
+        tracker.process(
+            oid(2),
+            &[oid(3)],
+            next_color(&mut colors),
+            no_redundant_merge_parents,
+        );
         assert_eq!(tracker.active_lane_count(), 2);
 
-        let base = tracker.process(oid(3), &[], next_color(&mut colors));
+        let base = tracker.process(
+            oid(3),
+            &[],
+            next_color(&mut colors),
+            no_redundant_merge_parents,
+        );
 
         // One lane converges into the other; only one lane should remain (then terminate).
         assert_eq!(tracker.active_lane_count(), 0);
@@ -281,7 +446,12 @@ mod tests {
         let mut tracker = LaneTracker::new();
         let mut colors = 0u16;
 
-        let row = tracker.process(oid(2), &[oid(1)], next_color(&mut colors));
+        let row = tracker.process(
+            oid(2),
+            &[oid(1)],
+            next_color(&mut colors),
+            no_redundant_merge_parents,
+        );
 
         assert_eq!(row.rails.len(), 1);
         assert_eq!(row.rails[0].kind, RailKind::ParentEdge);
@@ -292,8 +462,18 @@ mod tests {
         let mut tracker = LaneTracker::new();
         let mut colors = 0u16;
 
-        tracker.process(oid(1), &[oid(2)], next_color(&mut colors));
-        let unrelated = tracker.process(oid(9), &[oid(8)], next_color(&mut colors));
+        tracker.process(
+            oid(1),
+            &[oid(2)],
+            next_color(&mut colors),
+            no_redundant_merge_parents,
+        );
+        let unrelated = tracker.process(
+            oid(9),
+            &[oid(8)],
+            next_color(&mut colors),
+            no_redundant_merge_parents,
+        );
 
         // Processing an unrelated root commit should emit a pass-through rail for lane 0
         // (still awaiting oid(2)) without disturbing its state.
@@ -317,7 +497,7 @@ mod tests {
             let mut colors_seen = Vec::with_capacity(length);
             for i in 0..length {
                 let parents: Vec<Oid> = if i + 1 < length { vec![oids[i + 1]] } else { vec![] };
-                let layout = tracker.process(oids[i], &parents, next_color(&mut colors));
+                let layout = tracker.process(oids[i], &parents, next_color(&mut colors), no_redundant_merge_parents);
                 lanes_seen.push(layout.lane);
                 colors_seen.push(layout.color_id);
             }
@@ -351,7 +531,7 @@ mod tests {
                 let mut colors = 0u16;
                 rows.iter()
                     .map(|(oid, parents)| {
-                        let layout = tracker.process(*oid, parents, next_color(&mut colors));
+                        let layout = tracker.process(*oid, parents, next_color(&mut colors), no_redundant_merge_parents);
                         (layout.lane, layout.color_id)
                     })
                     .collect::<Vec<_>>()
