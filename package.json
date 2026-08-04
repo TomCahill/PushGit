@@ -1,6 +1,6 @@
 {
   "name": "pushgit",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "A fast, lightweight git GUI with a proper visual commit graph.",
   "type": "module",
   "scripts": {
