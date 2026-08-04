@@ -527,6 +527,16 @@ export function setReduceMotion(value: boolean): Promise<AppConfig> {
   return invoke("set_reduce_motion", { value });
 }
 
+/** Persists whether the periodic auto-fetch timer is enabled, returning the resulting config. */
+export function setAutoFetchEnabled(value: boolean): Promise<AppConfig> {
+  return invoke("set_auto_fetch_enabled", { value });
+}
+
+/** Clamps and persists the auto-fetch interval in minutes, returning the resulting config. */
+export function setAutoFetchIntervalMinutes(value: number): Promise<AppConfig> {
+  return invoke("set_auto_fetch_interval_minutes", { value });
+}
+
 /** This repo's settings. Never rejects, same
  *  degrade-to-default behavior as `getAppConfig`. */
 export function getRepoConfig(repoPath: string): Promise<RepoConfig> {

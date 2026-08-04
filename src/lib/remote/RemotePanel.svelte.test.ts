@@ -1,13 +1,14 @@
 // Copyright (C) 2026 Tom Cahill
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, waitFor } from "@testing-library/svelte";
 import { within } from "@testing-library/dom";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import ConfirmDialog from "$lib/shell/ConfirmDialog.svelte";
 import RemotePanel from "./RemotePanel.svelte";
 import { makeBranchInfo } from "$lib/git/testFixtures";
+import { settingsState } from "$lib/settings/settings.svelte";
 import { toastState } from "$lib/shell/toast.svelte";
 import type { RemoteProgress } from "$lib/git/types";
 
@@ -20,6 +21,8 @@ function toastMessages(): string[] {
 describe("RemotePanel", () => {
   beforeEach(() => {
     toastState.toasts = [];
+    settingsState.autoFetchEnabled = false;
+    settingsState.autoFetchIntervalMinutes = 5;
   });
 
   it("shows a warning when the installed git predates the CVE-2024-32002 fix", async () => {
@@ -397,5 +400,101 @@ describe("RemotePanel", () => {
       ),
     );
     expect(queryByRole("alertdialog")).toBeNull();
+  });
+
+  describe("auto-fetch", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("does not fetch on a timer when the setting is off (the default)", async () => {
+      const fetchCalls: unknown[] = [];
+      mockIPC((cmd, args) => {
+        switch (cmd) {
+          case "check_git_version":
+            return { version: "2.45.1", isPatched: true };
+          case "list_branches":
+            return [makeBranchInfo({ name: "main", isHead: true })];
+          case "fetch":
+            fetchCalls.push(args);
+            return null;
+          default:
+            throw new Error(`unexpected command ${cmd}`);
+        }
+      });
+
+      vi.useFakeTimers();
+      render(RemotePanel, { props: { repoPath: "/repo", refreshKey: 0 } });
+      await vi.advanceTimersByTimeAsync(60 * 60_000); // well past any configurable interval
+
+      expect(fetchCalls).toEqual([]);
+    });
+
+    it("fetches on the configured interval when enabled, silently on success", async () => {
+      settingsState.autoFetchEnabled = true;
+      settingsState.autoFetchIntervalMinutes = 5;
+      const fetchCalls: unknown[] = [];
+      mockIPC((cmd, args) => {
+        switch (cmd) {
+          case "check_git_version":
+            return { version: "2.45.1", isPatched: true };
+          case "list_branches":
+            return [makeBranchInfo({ name: "main", isHead: true, behind: fetchCalls.length })];
+          case "fetch": {
+            const { repoPath, remoteName } = args as { repoPath: string; remoteName: string };
+            fetchCalls.push({ repoPath, remoteName });
+            return null;
+          }
+          default:
+            throw new Error(`unexpected command ${cmd}`);
+        }
+      });
+
+      vi.useFakeTimers();
+      render(RemotePanel, { props: { repoPath: "/repo", refreshKey: 0 } });
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+      expect(fetchCalls).toEqual([{ repoPath: "/repo", remoteName: "origin" }]);
+      expect(toastMessages()).toEqual([]);
+    });
+
+    it("skips a tick while a manual fetch is already in flight", async () => {
+      settingsState.autoFetchEnabled = true;
+      settingsState.autoFetchIntervalMinutes = 5;
+      let resolveManualFetch = () => {};
+      const manualFetchGate = new Promise<void>((resolve) => {
+        resolveManualFetch = resolve;
+      });
+      const fetchCalls: unknown[] = [];
+      let manualFetchInFlight = false;
+      mockIPC(async (cmd, args) => {
+        switch (cmd) {
+          case "check_git_version":
+            return { version: "2.45.1", isPatched: true };
+          case "list_branches":
+            return [makeBranchInfo({ name: "main", isHead: true })];
+          case "fetch": {
+            const { repoPath, remoteName } = args as { repoPath: string; remoteName: string };
+            fetchCalls.push({ repoPath, remoteName });
+            if (manualFetchInFlight) await manualFetchGate;
+            return null;
+          }
+          default:
+            throw new Error(`unexpected command ${cmd}`);
+        }
+      });
+
+      vi.useFakeTimers();
+      const { findByText } = render(RemotePanel, { props: { repoPath: "/repo", refreshKey: 0 } });
+      manualFetchInFlight = true;
+      await fireEvent.click(await findByText("Fetch"));
+
+      // The auto-fetch tick lands while the manual fetch above is still pending.
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(fetchCalls).toHaveLength(1); // the manual fetch only — the tick was skipped
+
+      resolveManualFetch();
+      await waitFor(() => expect(toastMessages()).toContain("Fetched from origin."));
+    });
   });
 });

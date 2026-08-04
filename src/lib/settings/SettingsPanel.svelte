@@ -26,6 +26,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     setAiApiKey,
     setAiInstructions,
     setAiTransport,
+    setAutoFetchEnabled,
+    setAutoFetchIntervalMinutes,
     setMaxCommitsRendered,
     setReduceMotion,
     settingsState,
@@ -164,6 +166,30 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     } catch (err) {
       settingsState.reduceMotion = !value; // revert the optimistic checkbox toggle
       notifyError(String(err));
+    }
+  }
+
+  async function handleAutoFetchEnabledChange() {
+    const value = settingsState.autoFetchEnabled;
+    try {
+      await setAutoFetchEnabled(value);
+    } catch (err) {
+      settingsState.autoFetchEnabled = !value; // revert the optimistic checkbox toggle
+      notifyError(String(err));
+    }
+  }
+
+  // Draft, not bound straight to `settingsState`, since `Select`'s value is a string and the
+  // backend field is a number — same "local draft, save on change" shape as `aiEngineVariant`.
+  let autoFetchIntervalDraft = $state(String(settingsState.autoFetchIntervalMinutes));
+
+  async function handleAutoFetchIntervalChange() {
+    try {
+      await setAutoFetchIntervalMinutes(Number(autoFetchIntervalDraft));
+    } catch (err) {
+      notifyError(String(err));
+    } finally {
+      autoFetchIntervalDraft = String(settingsState.autoFetchIntervalMinutes);
     }
   }
 
@@ -352,6 +378,35 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         </div>
         <Switch bind:checked={settingsState.reduceMotion} onchange={handleReduceMotionChange} />
       </label>
+
+      <label class="switch-row">
+        <div class="switch-row-text">
+          <span>Auto-fetch</span>
+        </div>
+        <Switch
+          bind:checked={settingsState.autoFetchEnabled}
+          onchange={handleAutoFetchEnabledChange}
+        />
+      </label>
+      <p class="hint">
+        Periodically fetches the current repo's "origin" in the background. Off by default — no
+        network activity unless you turn this on.
+      </p>
+
+      {#if settingsState.autoFetchEnabled}
+        <Select
+          id="auto-fetch-interval"
+          label="Auto-fetch interval"
+          bind:value={autoFetchIntervalDraft}
+          onchange={handleAutoFetchIntervalChange}
+        >
+          <option value="5">Every 5 minutes</option>
+          <option value="10">Every 10 minutes</option>
+          <option value="15">Every 15 minutes</option>
+          <option value="30">Every 30 minutes</option>
+          <option value="60">Every 60 minutes</option>
+        </Select>
+      {/if}
     </section>
 
     <section class="settings-card">

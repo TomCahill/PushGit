@@ -23,6 +23,8 @@ import {
   setAiApiKey as setAiApiKeyCommand,
   setAiInstructions as setAiInstructionsCommand,
   setAiTransport as setAiTransportCommand,
+  setAutoFetchEnabled as setAutoFetchEnabledCommand,
+  setAutoFetchIntervalMinutes as setAutoFetchIntervalMinutesCommand,
   setMaxCommitsRendered as setMaxCommitsRenderedCommand,
   setReduceMotion as setReduceMotionCommand,
 } from "$lib/git/api";
@@ -36,6 +38,11 @@ import type {
 
 export const DEFAULT_MAX_COMMITS_RENDERED = 500;
 export const MIN_MAX_COMMITS_RENDERED = 50;
+
+// Mirror of `src-tauri/src/config/mod.rs`'s auto-fetch constants.
+export const DEFAULT_AUTO_FETCH_INTERVAL_MINUTES = 5;
+export const MIN_AUTO_FETCH_INTERVAL_MINUTES = 1;
+export const MAX_AUTO_FETCH_INTERVAL_MINUTES = 60;
 
 const DEFAULT_AI_SETTINGS: AiSettings = {
   transport: null,
@@ -61,6 +68,9 @@ interface SettingsState {
   maxCommitsRendered: number;
   reduceMotion: boolean;
   ai: AiSettings;
+  /** Off by default — no background network until the user opts in. */
+  autoFetchEnabled: boolean;
+  autoFetchIntervalMinutes: number;
   /** Whether an AI provider API key is currently saved — the key's value itself is never
    *  read back into the frontend, see `hasAiApiKey`. */
   hasAiApiKey: boolean;
@@ -75,6 +85,8 @@ export const settingsState: SettingsState = $state({
   maxCommitsRendered: DEFAULT_MAX_COMMITS_RENDERED,
   reduceMotion: false,
   ai: { ...DEFAULT_AI_SETTINGS },
+  autoFetchEnabled: false,
+  autoFetchIntervalMinutes: DEFAULT_AUTO_FETCH_INTERVAL_MINUTES,
   hasAiApiKey: false,
   localAiStatus: { ...DEFAULT_LOCAL_AI_STATUS },
   localAiDownloadProgress: null,
@@ -90,6 +102,8 @@ export async function loadAppConfig(): Promise<void> {
     settingsState.maxCommitsRendered = config.maxCommitsRendered;
     settingsState.reduceMotion = config.reduceMotion;
     settingsState.ai = config.ai;
+    settingsState.autoFetchEnabled = config.autoFetchEnabled;
+    settingsState.autoFetchIntervalMinutes = config.autoFetchIntervalMinutes;
   } catch {
     // Keep the hardcoded defaults.
   }
@@ -155,6 +169,21 @@ export async function setMaxCommitsRendered(value: number): Promise<void> {
 export async function setReduceMotion(value: boolean): Promise<void> {
   const config = await setReduceMotionCommand(value);
   settingsState.reduceMotion = config.reduceMotion;
+}
+
+/** Persists whether the periodic auto-fetch timer is enabled; `settingsState` is updated from
+ *  the backend's response. */
+export async function setAutoFetchEnabled(value: boolean): Promise<void> {
+  const config = await setAutoFetchEnabledCommand(value);
+  settingsState.autoFetchEnabled = config.autoFetchEnabled;
+}
+
+/** Persists a new auto-fetch interval; the backend clamps it to
+ *  `[MIN_AUTO_FETCH_INTERVAL_MINUTES, MAX_AUTO_FETCH_INTERVAL_MINUTES]`, and `settingsState` is
+ *  updated from its (clamped) response. */
+export async function setAutoFetchIntervalMinutes(value: number): Promise<void> {
+  const config = await setAutoFetchIntervalMinutesCommand(value);
+  settingsState.autoFetchIntervalMinutes = config.autoFetchIntervalMinutes;
 }
 
 /** Persists the chosen AI transport (`null` clears it); `settingsState.ai` is updated from

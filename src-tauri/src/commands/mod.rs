@@ -1058,6 +1058,31 @@ pub fn set_reduce_motion(value: bool) -> config::AppConfig {
     config
 }
 
+/// Persists whether the frontend's periodic auto-fetch timer is enabled, returning the
+/// resulting config. Loads the existing config first, same reasoning as
+/// `set_max_commits_rendered`.
+#[tauri::command]
+pub fn set_auto_fetch_enabled(value: bool) -> config::AppConfig {
+    let config = config::AppConfig {
+        auto_fetch_enabled: value,
+        ..config::load_app_config()
+    };
+    config::save_app_config(&config);
+    config
+}
+
+/// Clamps and persists the auto-fetch interval (minutes), returning the resulting config so
+/// the frontend doesn't need a second round-trip to see the clamped value.
+#[tauri::command]
+pub fn set_auto_fetch_interval_minutes(value: u32) -> config::AppConfig {
+    let config = config::AppConfig {
+        auto_fetch_interval_minutes: config::clamp_auto_fetch_interval_minutes(value),
+        ..config::load_app_config()
+    };
+    config::save_app_config(&config);
+    config
+}
+
 /// This repo's settings, e.g. whether commits
 /// skip hooks by default. Never fails, same degrade-to-default behavior as `get_app_config`.
 #[tauri::command]

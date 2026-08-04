@@ -7,6 +7,7 @@ import { within } from "@testing-library/dom";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import SettingsPanel from "./SettingsPanel.svelte";
 import {
+  DEFAULT_AUTO_FETCH_INTERVAL_MINUTES,
   DEFAULT_MAX_COMMITS_RENDERED,
   MIN_MAX_COMMITS_RENDERED,
   settingsState,
@@ -18,6 +19,8 @@ describe("SettingsPanel", () => {
     settingsState.maxCommitsRendered = DEFAULT_MAX_COMMITS_RENDERED;
     settingsState.reduceMotion = false;
     settingsState.ai = { transport: null, instructions: "", cloudWarningAcknowledged: false };
+    settingsState.autoFetchEnabled = false;
+    settingsState.autoFetchIntervalMinutes = DEFAULT_AUTO_FETCH_INTERVAL_MINUTES;
     settingsState.hasAiApiKey = false;
     settingsState.localAiStatus = { modelPresent: false, enginePresent: false, gpuDevice: null };
     settingsState.localAiDownloadProgress = null;
@@ -113,6 +116,81 @@ describe("SettingsPanel", () => {
 
     await waitFor(() => expect(checkbox.checked).toBe(false));
     expect(toastState.toasts.map((t) => t.message)).toContain("disk full");
+  });
+
+  describe("auto-fetch", () => {
+    it("hides the interval field until auto-fetch is turned on", () => {
+      mockIPC(() => {
+        throw new Error("should not be called when no repo is open");
+      });
+
+      const { queryByLabelText } = render(SettingsPanel);
+
+      expect(queryByLabelText("Auto-fetch interval")).toBeNull();
+    });
+
+    it("saves the auto-fetch preference and reveals the interval field", async () => {
+      mockIPC((cmd, args) => {
+        if (cmd === "set_auto_fetch_enabled") {
+          expect(args).toEqual({ value: true });
+          return {
+            maxCommitsRendered: DEFAULT_MAX_COMMITS_RENDERED,
+            reduceMotion: false,
+            autoFetchEnabled: true,
+            autoFetchIntervalMinutes: DEFAULT_AUTO_FETCH_INTERVAL_MINUTES,
+          };
+        }
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const { getByLabelText, queryByLabelText } = render(SettingsPanel);
+      const checkbox = getByLabelText("Auto-fetch") as HTMLInputElement;
+
+      await fireEvent.click(checkbox);
+
+      expect(checkbox.checked).toBe(true);
+      expect(
+        (await waitFor(() => queryByLabelText("Auto-fetch interval"))) as HTMLSelectElement,
+      ).toBeTruthy();
+    });
+
+    it("reverts the auto-fetch checkbox and shows an error toast when the save fails", async () => {
+      mockIPC((cmd) => {
+        if (cmd === "set_auto_fetch_enabled") throw "disk full";
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const { getByLabelText } = render(SettingsPanel);
+      const checkbox = getByLabelText("Auto-fetch") as HTMLInputElement;
+
+      await fireEvent.click(checkbox);
+
+      await waitFor(() => expect(checkbox.checked).toBe(false));
+      expect(toastState.toasts.map((t) => t.message)).toContain("disk full");
+    });
+
+    it("persists a new interval selection", async () => {
+      settingsState.autoFetchEnabled = true;
+      mockIPC((cmd, args) => {
+        if (cmd === "set_auto_fetch_interval_minutes") {
+          expect(args).toEqual({ value: 30 });
+          return {
+            maxCommitsRendered: DEFAULT_MAX_COMMITS_RENDERED,
+            reduceMotion: false,
+            autoFetchEnabled: true,
+            autoFetchIntervalMinutes: 30,
+          };
+        }
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const { getByLabelText } = render(SettingsPanel);
+      const select = getByLabelText("Auto-fetch interval") as HTMLSelectElement;
+
+      await fireEvent.change(select, { target: { value: "30" } });
+
+      await waitFor(() => expect(settingsState.autoFetchIntervalMinutes).toBe(30));
+    });
   });
 
   describe("AI section", () => {

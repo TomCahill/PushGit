@@ -285,6 +285,8 @@ export interface AppConfig {
   maxCommitsRendered: number;
   reduceMotion: boolean;
   ai: AiSettings;
+  autoFetchEnabled: boolean;
+  autoFetchIntervalMinutes: number;
 }
 
 export interface RepoConfig {

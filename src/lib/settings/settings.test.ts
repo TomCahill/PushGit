@@ -6,11 +6,14 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 import {
   acknowledgeAiCloudWarning,
   clearAiApiKey,
+  DEFAULT_AUTO_FETCH_INTERVAL_MINUTES,
   DEFAULT_MAX_COMMITS_RENDERED,
   loadAppConfig,
   setAiApiKey,
   setAiInstructions,
   setAiTransport,
+  setAutoFetchEnabled,
+  setAutoFetchIntervalMinutes,
   setMaxCommitsRendered,
   setReduceMotion,
   settingsState,
@@ -28,6 +31,8 @@ describe("settingsState", () => {
     settingsState.maxCommitsRendered = DEFAULT_MAX_COMMITS_RENDERED;
     settingsState.reduceMotion = false;
     settingsState.ai = { ...DEFAULT_AI_SETTINGS };
+    settingsState.autoFetchEnabled = false;
+    settingsState.autoFetchIntervalMinutes = DEFAULT_AUTO_FETCH_INTERVAL_MINUTES;
     settingsState.hasAiApiKey = false;
   });
 
@@ -38,7 +43,15 @@ describe("settingsState", () => {
       cloudWarningAcknowledged: true,
     };
     mockIPC((cmd) => {
-      if (cmd === "get_app_config") return { maxCommitsRendered: 1000, reduceMotion: true, ai };
+      if (cmd === "get_app_config") {
+        return {
+          maxCommitsRendered: 1000,
+          reduceMotion: true,
+          ai,
+          autoFetchEnabled: true,
+          autoFetchIntervalMinutes: 15,
+        };
+      }
       if (cmd === "has_ai_api_key") return true;
       throw new Error(`unexpected command ${cmd}`);
     });
@@ -48,6 +61,8 @@ describe("settingsState", () => {
     expect(settingsState.maxCommitsRendered).toBe(1000);
     expect(settingsState.reduceMotion).toBe(true);
     expect(settingsState.ai).toEqual(ai);
+    expect(settingsState.autoFetchEnabled).toBe(true);
+    expect(settingsState.autoFetchIntervalMinutes).toBe(15);
     expect(settingsState.hasAiApiKey).toBe(true);
   });
 
@@ -77,6 +92,44 @@ describe("settingsState", () => {
     await setReduceMotion(true);
 
     expect(settingsState.reduceMotion).toBe(true);
+  });
+
+  it("setAutoFetchEnabled persists through the backend and updates settingsState from its response", async () => {
+    mockIPC((cmd, args) => {
+      if (cmd === "set_auto_fetch_enabled") {
+        expect(args).toEqual({ value: true });
+        return {
+          maxCommitsRendered: DEFAULT_MAX_COMMITS_RENDERED,
+          reduceMotion: false,
+          autoFetchEnabled: true,
+          autoFetchIntervalMinutes: DEFAULT_AUTO_FETCH_INTERVAL_MINUTES,
+        };
+      }
+      throw new Error(`unexpected command ${cmd}`);
+    });
+
+    await setAutoFetchEnabled(true);
+
+    expect(settingsState.autoFetchEnabled).toBe(true);
+  });
+
+  it("setAutoFetchIntervalMinutes persists through the backend and updates settingsState from its (clamped) response", async () => {
+    mockIPC((cmd, args) => {
+      if (cmd === "set_auto_fetch_interval_minutes") {
+        expect(args).toEqual({ value: 999 });
+        return {
+          maxCommitsRendered: DEFAULT_MAX_COMMITS_RENDERED,
+          reduceMotion: false,
+          autoFetchEnabled: false,
+          autoFetchIntervalMinutes: 60,
+        };
+      }
+      throw new Error(`unexpected command ${cmd}`);
+    });
+
+    await setAutoFetchIntervalMinutes(999);
+
+    expect(settingsState.autoFetchIntervalMinutes).toBe(60);
   });
 
   it("setAiTransport persists through the backend and updates settingsState.ai from its response", async () => {

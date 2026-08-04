@@ -218,6 +218,8 @@ pub fn run() {
         commands::get_app_config,
         commands::set_max_commits_rendered,
         commands::set_reduce_motion,
+        commands::set_auto_fetch_enabled,
+        commands::set_auto_fetch_interval_minutes,
         commands::get_repo_config,
         commands::set_repo_default_skip_hooks,
         commands::get_commit_template_path,

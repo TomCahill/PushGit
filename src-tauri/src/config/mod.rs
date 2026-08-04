@@ -18,6 +18,14 @@ use crate::ai::AiSettings;
 pub const DEFAULT_MAX_COMMITS_RENDERED: u32 = 500;
 pub const MIN_MAX_COMMITS_RENDERED: u32 = 50;
 
+pub const DEFAULT_AUTO_FETCH_INTERVAL_MINUTES: u32 = 5;
+pub const MIN_AUTO_FETCH_INTERVAL_MINUTES: u32 = 1;
+pub const MAX_AUTO_FETCH_INTERVAL_MINUTES: u32 = 60;
+
+fn default_auto_fetch_interval_minutes() -> u32 {
+    DEFAULT_AUTO_FETCH_INTERVAL_MINUTES
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
@@ -26,6 +34,11 @@ pub struct AppConfig {
     pub reduce_motion: bool,
     #[serde(default)]
     pub ai: AiSettings,
+    /// Off by default — no background network until the user opts in.
+    #[serde(default)]
+    pub auto_fetch_enabled: bool,
+    #[serde(default = "default_auto_fetch_interval_minutes")]
+    pub auto_fetch_interval_minutes: u32,
 }
 
 impl Default for AppConfig {
@@ -34,6 +47,8 @@ impl Default for AppConfig {
             max_commits_rendered: DEFAULT_MAX_COMMITS_RENDERED,
             reduce_motion: false,
             ai: AiSettings::default(),
+            auto_fetch_enabled: false,
+            auto_fetch_interval_minutes: DEFAULT_AUTO_FETCH_INTERVAL_MINUTES,
         }
     }
 }
@@ -48,6 +63,13 @@ pub struct RepoConfig {
 /// when it lived in the frontend's `localStorage`.
 pub fn clamp_max_commits_rendered(value: u32) -> u32 {
     value.max(MIN_MAX_COMMITS_RENDERED)
+}
+
+pub fn clamp_auto_fetch_interval_minutes(value: u32) -> u32 {
+    value.clamp(
+        MIN_AUTO_FETCH_INTERVAL_MINUTES,
+        MAX_AUTO_FETCH_INTERVAL_MINUTES,
+    )
 }
 
 pub fn load_app_config() -> AppConfig {
@@ -181,6 +203,8 @@ mod tests {
                 instructions: "Use Conventional Commits.".to_string(),
                 cloud_warning_acknowledged: true,
             },
+            auto_fetch_enabled: true,
+            auto_fetch_interval_minutes: 15,
         };
 
         save_app_config_to(dir.path(), &config);
@@ -206,7 +230,22 @@ mod tests {
                 max_commits_rendered: 1234,
                 reduce_motion: false,
                 ai: AiSettings::default(),
+                auto_fetch_enabled: false,
+                auto_fetch_interval_minutes: DEFAULT_AUTO_FETCH_INTERVAL_MINUTES,
             }
+        );
+    }
+
+    #[test]
+    fn clamp_auto_fetch_interval_minutes_bounds_to_the_documented_range() {
+        assert_eq!(
+            clamp_auto_fetch_interval_minutes(0),
+            MIN_AUTO_FETCH_INTERVAL_MINUTES
+        );
+        assert_eq!(clamp_auto_fetch_interval_minutes(5), 5);
+        assert_eq!(
+            clamp_auto_fetch_interval_minutes(999),
+            MAX_AUTO_FETCH_INTERVAL_MINUTES
         );
     }
 

@@ -20,6 +20,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     pushRemote,
   } from "$lib/git/api";
   import type { MergeOutcome, RemoteProgress } from "$lib/git/types";
+  import { settingsState } from "$lib/settings/settings.svelte";
   import { burstConfetti } from "$lib/shell/confetti.svelte";
   import { confirmAsync } from "$lib/shell/confirmDialog.svelte";
   import Button from "$lib/shell/Button.svelte";
@@ -72,6 +73,41 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         // Best-effort: an unparseable/missing git version shouldn't block the UI.
       });
   });
+
+  // Opt-in periodic fetch (off by default, `SettingsPanel`'s "Auto-fetch" toggle). Re-runs
+  // whenever the repo, the toggle, or the interval changes — switching repos or turning it off
+  // clears the previous interval via this effect's own teardown, so there's never more than one
+  // timer alive, and never one pointed at a stale repo path.
+  $effect(() => {
+    const path = repoPath;
+    const enabled = settingsState.autoFetchEnabled;
+    const intervalMinutes = settingsState.autoFetchIntervalMinutes;
+    if (!enabled || !path) return;
+
+    const id = setInterval(() => void autoFetchTick(path), intervalMinutes * 60_000);
+    return () => clearInterval(id);
+  });
+
+  /** A tick of the auto-fetch timer: skipped outright (never queued) if a manual op or a
+   *  previous tick is still in flight, or the window isn't visible. Silent on success — just
+   *  refreshes ahead/behind and lets the graph pick up any new remote refs via `onChanged` —
+   *  and logged rather than toasted on failure, since "could not resolve host" every few
+   *  minutes while offline is noise, not signal. */
+  async function autoFetchTick(path: string) {
+    if (busy || document.visibilityState !== "visible") return;
+    busy = true;
+    progress = null;
+    try {
+      await fetchRemote(path, REMOTE_NAME, onProgress);
+      await reload(path, refreshKey);
+      onChanged?.();
+    } catch (err) {
+      console.error("Auto-fetch failed:", err);
+    } finally {
+      busy = false;
+      progress = null;
+    }
+  }
 
   async function reload(path: string, _refreshKey: number) {
     const myGeneration = ++generation;
