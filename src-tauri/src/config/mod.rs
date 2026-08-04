@@ -26,6 +26,10 @@ fn default_auto_fetch_interval_minutes() -> u32 {
     DEFAULT_AUTO_FETCH_INTERVAL_MINUTES
 }
 
+fn default_auto_fetch_enabled() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
@@ -34,8 +38,9 @@ pub struct AppConfig {
     pub reduce_motion: bool,
     #[serde(default)]
     pub ai: AiSettings,
-    /// Off by default — no background network until the user opts in.
-    #[serde(default)]
+    /// On by default — it only talks to the remote the repo already has configured, the same
+    /// one a manual Fetch click would use.
+    #[serde(default = "default_auto_fetch_enabled")]
     pub auto_fetch_enabled: bool,
     #[serde(default = "default_auto_fetch_interval_minutes")]
     pub auto_fetch_interval_minutes: u32,
@@ -47,7 +52,7 @@ impl Default for AppConfig {
             max_commits_rendered: DEFAULT_MAX_COMMITS_RENDERED,
             reduce_motion: false,
             ai: AiSettings::default(),
-            auto_fetch_enabled: false,
+            auto_fetch_enabled: true,
             auto_fetch_interval_minutes: DEFAULT_AUTO_FETCH_INTERVAL_MINUTES,
         }
     }
@@ -230,7 +235,7 @@ mod tests {
                 max_commits_rendered: 1234,
                 reduce_motion: false,
                 ai: AiSettings::default(),
-                auto_fetch_enabled: false,
+                auto_fetch_enabled: true,
                 auto_fetch_interval_minutes: DEFAULT_AUTO_FETCH_INTERVAL_MINUTES,
             }
         );

@@ -74,7 +74,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       });
   });
 
-  // Opt-in periodic fetch (off by default, `SettingsPanel`'s "Auto-fetch" toggle). Re-runs
+  // Periodic fetch, on by default (`SettingsPanel`'s "Auto-fetch" toggle can turn it off). Re-runs
   // whenever the repo, the toggle, or the interval changes — switching repos or turning it off
   // clears the previous interval via this effect's own teardown, so there's never more than one
   // timer alive, and never one pointed at a stale repo path.

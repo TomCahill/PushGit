@@ -389,8 +389,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         />
       </label>
       <p class="hint">
-        Periodically fetches the current repo's "origin" in the background. Off by default — no
-        network activity unless you turn this on.
+        Periodically fetches the current repo's "origin" in the background — the same remote a
+        manual Fetch click would use.
       </p>
 
       {#if settingsState.autoFetchEnabled}

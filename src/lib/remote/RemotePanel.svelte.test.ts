@@ -407,7 +407,7 @@ describe("RemotePanel", () => {
       vi.useRealTimers();
     });
 
-    it("does not fetch on a timer when the setting is off (the default)", async () => {
+    it("does not fetch on a timer when the setting is turned off", async () => {
       const fetchCalls: unknown[] = [];
       mockIPC((cmd, args) => {
         switch (cmd) {

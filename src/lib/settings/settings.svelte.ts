@@ -68,7 +68,8 @@ interface SettingsState {
   maxCommitsRendered: number;
   reduceMotion: boolean;
   ai: AiSettings;
-  /** Off by default — no background network until the user opts in. */
+  /** On by default — it only talks to the remote the repo already has configured, the same
+   *  one a manual Fetch click would use. */
   autoFetchEnabled: boolean;
   autoFetchIntervalMinutes: number;
   /** Whether an AI provider API key is currently saved — the key's value itself is never
@@ -85,7 +86,7 @@ export const settingsState: SettingsState = $state({
   maxCommitsRendered: DEFAULT_MAX_COMMITS_RENDERED,
   reduceMotion: false,
   ai: { ...DEFAULT_AI_SETTINGS },
-  autoFetchEnabled: false,
+  autoFetchEnabled: true,
   autoFetchIntervalMinutes: DEFAULT_AUTO_FETCH_INTERVAL_MINUTES,
   hasAiApiKey: false,
   localAiStatus: { ...DEFAULT_LOCAL_AI_STATUS },
