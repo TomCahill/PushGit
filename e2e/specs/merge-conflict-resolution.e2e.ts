@@ -52,7 +52,11 @@ describe("merge conflict resolution golden path", () => {
     await openButton.waitForExist({ timeout: 20_000 });
     await openButton.click();
 
-    const mergeButton = await browser.$('button[title="Merge feature into the current branch"]');
+    const branchMenuButton = await browser.$('button[title="Actions for feature"]');
+    await branchMenuButton.waitForExist({ timeout: 15_000 });
+    await branchMenuButton.click();
+
+    const mergeButton = await browser.$('button[role="menuitem"]=Merge into current branch');
     await mergeButton.waitForExist({ timeout: 15_000 });
     await mergeButton.click();
 

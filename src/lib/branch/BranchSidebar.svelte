@@ -34,7 +34,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     repositoryState,
   } from "$lib/git/api";
   import { confirmAsync, promptAsync } from "$lib/shell/confirmDialog.svelte";
+  import { openContextMenu, type ContextMenuItem } from "$lib/shell/contextMenu.svelte";
   import CopyButton from "$lib/shell/CopyButton.svelte";
+  import Icon from "$lib/shell/Icon.svelte";
   import { notifyError, notifySuccess } from "$lib/shell/toast.svelte";
   import type {
     BranchInfo,
@@ -171,8 +173,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     });
   }
 
-  async function handleDelete(branch: BranchInfo, event: MouseEvent) {
-    event.stopPropagation();
+  async function handleDelete(branch: BranchInfo) {
     if (!(await confirmAsync(`Delete branch "${branch.name}"?`))) return;
     void runAction(async () => {
       await deleteBranch(repoPath, branch.name);
@@ -180,8 +181,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     });
   }
 
-  async function handleRename(branch: BranchInfo, event: MouseEvent) {
-    event.stopPropagation();
+  async function handleRename(branch: BranchInfo) {
     const newName = (await promptAsync(`Rename branch "${branch.name}" to:`, branch.name))?.trim();
     if (!newName || newName === branch.name) return;
     void runAction(async () => {
@@ -190,8 +190,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     });
   }
 
-  function handleMerge(branch: BranchInfo, event: MouseEvent) {
-    event.stopPropagation();
+  function handleMerge(branch: BranchInfo) {
     void runAction(async () => {
       const outcome = await mergeBranch(repoPath, branch.name);
       notifySuccess(describeMergeOutcome(branch.name, outcome));
@@ -199,8 +198,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     });
   }
 
-  function handleRebase(branch: BranchInfo, event: MouseEvent) {
-    event.stopPropagation();
+  function handleRebase(branch: BranchInfo) {
     void runAction(async () => {
       const outcome = await rebaseBranch(repoPath, branch.name);
       notifySuccess(describeRebaseOutcome(outcome));
@@ -208,12 +206,40 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     });
   }
 
-  function handleInteractiveRebase(branch: BranchInfo, event: MouseEvent) {
-    event.stopPropagation();
+  function handleInteractiveRebase(branch: BranchInfo) {
     void runAction(async () => {
       const commits = await listRebaseCommits(repoPath, branch.name);
       onInteractiveRebase?.(branch.name, commits);
     });
+  }
+
+  function openBranchMenu(branch: BranchInfo, event: MouseEvent) {
+    event.stopPropagation();
+    const items: ContextMenuItem[] = [
+      { label: "Rename", onSelect: () => void handleRename(branch), disabled: busy },
+    ];
+    if (!branch.isHead) {
+      items.push(
+        { label: "Merge into current branch", onSelect: () => handleMerge(branch), disabled: busy },
+        {
+          label: "Rebase current branch onto this",
+          onSelect: () => handleRebase(branch),
+          disabled: busy,
+        },
+      );
+      if (onInteractiveRebase) {
+        items.push({
+          label: "Rebase (interactive)",
+          onSelect: () => handleInteractiveRebase(branch),
+          disabled: busy,
+        });
+      }
+      items.push(
+        { separator: true },
+        { label: "Delete", danger: true, onSelect: () => void handleDelete(branch), disabled: busy },
+      );
+    }
+    openContextMenu(event.clientX, event.clientY, items);
   }
 
   function handleContinueRebase() {
@@ -350,52 +376,16 @@ SPDX-License-Identifier: AGPL-3.0-or-later
             {/if}
           </button>
           <CopyButton text={branch.name} label={`Copy branch name ${branch.name}`} />
-          <div class="branch-actions">
-            <button
-              type="button"
-              title={`Rename ${branch.name}`}
-              onclick={(event) => handleRename(branch, event)}
-              disabled={busy}
-            >
-              Rename
-            </button>
-            {#if !branch.isHead}
-              <button
-                type="button"
-                title={`Merge ${branch.name} into the current branch`}
-                onclick={(event) => handleMerge(branch, event)}
-                disabled={busy}
-              >
-                Merge
-              </button>
-              <button
-                type="button"
-                title={`Rebase the current branch onto ${branch.name}`}
-                onclick={(event) => handleRebase(branch, event)}
-                disabled={busy}
-              >
-                Rebase
-              </button>
-              {#if onInteractiveRebase}
-                <button
-                  type="button"
-                  title={`Interactively rebase the current branch onto ${branch.name}`}
-                  onclick={(event) => handleInteractiveRebase(branch, event)}
-                  disabled={busy}
-                >
-                  Rebase (interactive)
-                </button>
-              {/if}
-              <button
-                type="button"
-                title={`Delete ${branch.name}`}
-                onclick={(event) => handleDelete(branch, event)}
-                disabled={busy}
-              >
-                Delete
-              </button>
-            {/if}
-          </div>
+          <button
+            type="button"
+            class="branch-menu-trigger"
+            title={`Actions for ${branch.name}`}
+            aria-label={`Actions for ${branch.name}`}
+            onclick={(event) => openBranchMenu(branch, event)}
+            disabled={busy}
+          >
+            <Icon name="more-vertical" size={14} />
+          </button>
         </li>
       {/each}
     </ul>
@@ -515,25 +505,31 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     color: var(--text-muted);
   }
 
-  .branch-actions {
-    display: flex;
-    gap: 0.15rem;
+  .branch-menu-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     flex-shrink: 0;
-  }
-
-  .branch-actions button {
-    font-size: 0.7rem;
-    padding: 0.2rem 0.4rem;
-    color: var(--text-secondary);
+    padding: 0.15rem;
+    color: var(--text-muted);
+    background: none;
+    border: none;
     border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
-    background: var(--surface-1);
+    opacity: 0.55;
     cursor: pointer;
-    transition: background-color 0.1s ease;
+    transition:
+      opacity 0.1s ease,
+      color 0.1s ease;
   }
 
-  .branch-actions button:hover {
-    background: var(--surface-2);
+  .branch-menu-trigger:hover,
+  .branch-menu-trigger:focus-visible {
+    opacity: 1;
+    color: var(--accent);
+  }
+
+  .branch-menu-trigger:disabled {
+    cursor: default;
   }
 
   .create-branch {
