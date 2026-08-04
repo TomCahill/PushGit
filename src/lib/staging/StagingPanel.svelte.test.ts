@@ -50,6 +50,27 @@ describe("StagingPanel", () => {
     expect(await findByText("Changes (1)")).toBeTruthy();
   });
 
+  it("shows the old and new path for a renamed or copied file", async () => {
+    mockIPC((cmd) => {
+      switch (cmd) {
+        case "diff_unstaged":
+          return [
+            makeFileDiff({ oldPath: "old.txt", newPath: "new.txt", status: "renamed" }),
+            makeFileDiff({ oldPath: "src.txt", newPath: "copy.txt", status: "copied" }),
+          ];
+        case "diff_staged":
+          return [];
+        default:
+          throw new Error(`unexpected command ${cmd}`);
+      }
+    });
+
+    const { findByText } = render(StagingPanel, { props: { repoPath: "/repo", refreshKey: 0 } });
+
+    expect(await findByText("old.txt → new.txt")).toBeTruthy();
+    expect(await findByText("src.txt → copy.txt")).toBeTruthy();
+  });
+
   it("shows insertion/deletion counts per file and as a section total", async () => {
     mockIPC((cmd) => {
       switch (cmd) {

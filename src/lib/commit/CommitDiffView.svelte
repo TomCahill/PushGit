@@ -23,6 +23,18 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     return file.newPath ?? file.oldPath ?? "";
   }
 
+  function fileLabel(file: FileDiff): string {
+    if (
+      (file.status === "renamed" || file.status === "copied") &&
+      file.oldPath &&
+      file.newPath &&
+      file.oldPath !== file.newPath
+    ) {
+      return `${file.oldPath} → ${file.newPath}`;
+    }
+    return fileKey(file);
+  }
+
   const totalStats = $derived(
     files.reduce(
       (acc, f) => ({
@@ -44,7 +56,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       <li class:selected={selectedPath === fileKey(file)}>
         <button type="button" class="file-row" onclick={() => (selectedPath = fileKey(file))}>
           <FileStatusIcon status={file.status} />
-          <span class="path">{fileKey(file)}</span>
+          <span class="path">{fileLabel(file)}</span>
           <DiffStat insertions={file.insertions} deletions={file.deletions} />
         </button>
         <CopyButton text={fileKey(file)} label={`Copy path ${fileKey(file)}`} />
