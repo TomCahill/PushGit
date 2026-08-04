@@ -118,7 +118,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
                 <span class="short-oid">{entry.shortOid}</span>
                 <span class="summary">{entry.summary}</span>
                 <span class="meta"
-                  ><Avatar name={entry.authorName} size={14} /> · {formatDate(
+                  ><Avatar name={entry.authorName} size={14} /> - {formatDate(
                     entry.authorTime,
                   )}</span
                 >

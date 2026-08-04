@@ -251,11 +251,11 @@ describe("app shell", () => {
       findByText,
       findByRole,
       findByLabelText,
-      findByTitle,
     } = render(Page);
     await fireEvent.click(getByTitle("Open a repository"));
 
-    await fireEvent.click(await findByTitle("Blame"));
+    await fireEvent.contextMenu(await findByText("README.md"));
+    await fireEvent.click(await findByRole("menuitem", { name: "Blame" }));
 
     // The graph is replaced by the annotated file, not tucked into the (now history-only) sidebar.
     expect(queryByLabelText("Commit graph")).toBeNull();

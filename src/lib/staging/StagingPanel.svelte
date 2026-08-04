@@ -28,7 +28,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import FileStatusIcon from "$lib/diff/FileStatusIcon.svelte";
   import { confirmAsync } from "$lib/shell/confirmDialog.svelte";
   import Button from "$lib/shell/Button.svelte";
-  import CopyButton from "$lib/shell/CopyButton.svelte";
+  import { openContextMenu, type ContextMenuItem } from "$lib/shell/contextMenu.svelte";
   import Icon from "$lib/shell/Icon.svelte";
   import ResizeHandle from "$lib/shell/ResizeHandle.svelte";
   import { acknowledgeAiCloudWarning, settingsState } from "$lib/settings/settings.svelte";
@@ -402,6 +402,44 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     selectedFile = { path: fileKey(file), staged };
   }
 
+  async function copyText(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Clipboard access can be denied — a silent no-op beats an error banner for a purely
+      // cosmetic convenience action, matching `CopyButton.svelte`'s own handling.
+    }
+  }
+
+  function buildUnstagedMenu(file: FileDiff): ContextMenuItem[] {
+    const path = fileKey(file);
+    const items: ContextMenuItem[] = [
+      { label: "Copy file path", onSelect: () => void copyText(path) },
+    ];
+    if (onBlame) items.push({ label: "Blame", onSelect: () => onBlame?.(path) });
+    if (file.status === "conflicted") return items;
+    items.push({ separator: true });
+    items.push({ label: "Stash", onSelect: () => void handleStashFile(file) });
+    items.push({ label: "Discard changes", danger: true, onSelect: () => void handleDiscardFile(file) });
+    return items;
+  }
+
+  function handleUnstagedContextMenu(event: MouseEvent, file: FileDiff) {
+    event.preventDefault();
+    selectFile(file, false);
+    openContextMenu(event.clientX, event.clientY, buildUnstagedMenu(file));
+  }
+
+  function buildStagedMenu(file: FileDiff): ContextMenuItem[] {
+    return [{ label: "Copy file path", onSelect: () => void copyText(fileKey(file)) }];
+  }
+
+  function handleStagedContextMenu(event: MouseEvent, file: FileDiff) {
+    event.preventDefault();
+    selectFile(file, true);
+    openContextMenu(event.clientX, event.clientY, buildStagedMenu(file));
+  }
+
   async function handleStageFile(file: FileDiff, event: MouseEvent) {
     event.stopPropagation();
     try {
@@ -423,8 +461,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     }
   }
 
-  async function handleDiscardFile(file: FileDiff, event: MouseEvent) {
-    event.stopPropagation();
+  async function handleDiscardFile(file: FileDiff) {
     const path = fileKey(file);
     if (
       !(await confirmAsync(
@@ -442,8 +479,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     }
   }
 
-  async function handleStashFile(file: FileDiff, event: MouseEvent) {
-    event.stopPropagation();
+  async function handleStashFile(file: FileDiff) {
     const path = fileKey(file);
     try {
       await createStashForPaths(repoPath, [path]);
@@ -558,6 +594,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         {#each unstagedFiles as file (fileKey(file))}
           <li
             class:selected={selectedFile?.staged === false && selectedFile.path === fileKey(file)}
+            oncontextmenu={(event) => handleUnstagedContextMenu(event, file)}
           >
             <button type="button" class="file-row" onclick={() => selectFile(file, false)}>
               <FileStatusIcon status={file.status} />
@@ -565,20 +602,6 @@ SPDX-License-Identifier: AGPL-3.0-or-later
               <DiffStat insertions={file.insertions} deletions={file.deletions} />
             </button>
             <div class="file-actions">
-              <CopyButton text={fileKey(file)} label={`Copy path ${fileKey(file)}`} />
-              {#if onBlame}
-                <button
-                  type="button"
-                  class="blame-file"
-                  title="Blame"
-                  onclick={(event) => {
-                    event.stopPropagation();
-                    onBlame?.(fileKey(file));
-                  }}
-                >
-                  Blame
-                </button>
-              {/if}
               {#if file.status === "conflicted" && onResolveConflict}
                 <button
                   type="button"
@@ -592,22 +615,6 @@ SPDX-License-Identifier: AGPL-3.0-or-later
                   Resolve
                 </button>
               {:else}
-                <button
-                  type="button"
-                  class="stash-file"
-                  title="Stash this file"
-                  onclick={(event) => handleStashFile(file, event)}
-                >
-                  Stash
-                </button>
-                <button
-                  type="button"
-                  class="discard-file"
-                  title="Discard changes"
-                  onclick={(event) => handleDiscardFile(file, event)}
-                >
-                  ⨯
-                </button>
                 <button
                   type="button"
                   class="stage-toggle"
@@ -639,14 +646,16 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       </h3>
       <ul>
         {#each stagedFiles as file (fileKey(file))}
-          <li class:selected={selectedFile?.staged === true && selectedFile.path === fileKey(file)}>
+          <li
+            class:selected={selectedFile?.staged === true && selectedFile.path === fileKey(file)}
+            oncontextmenu={(event) => handleStagedContextMenu(event, file)}
+          >
             <button type="button" class="file-row" onclick={() => selectFile(file, true)}>
               <FileStatusIcon status={file.status} />
               <span class="path">{fileKey(file)}</span>
               <DiffStat insertions={file.insertions} deletions={file.deletions} />
             </button>
             <div class="file-actions">
-              <CopyButton text={fileKey(file)} label={`Copy path ${fileKey(file)}`} />
               <button
                 type="button"
                 class="stage-toggle"
@@ -867,6 +876,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     width: 1.6rem;
     height: 1.6rem;
     line-height: 1;
+    margin-right: 8px;
     color: var(--text-secondary);
     border-radius: var(--radius-sm);
     border: 1px solid var(--border);
@@ -878,58 +888,6 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   .stage-toggle:hover {
     background: var(--surface-2);
     color: var(--accent);
-  }
-
-  .stash-file {
-    flex-shrink: 0;
-    padding: 0.15rem 0.5rem;
-    font-size: 0.72rem;
-    line-height: 1.3;
-    color: var(--text-secondary);
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
-    background: var(--surface-1);
-    cursor: pointer;
-    transition: background-color 0.1s ease;
-  }
-
-  .stash-file:hover {
-    background: var(--surface-2);
-  }
-
-  .discard-file {
-    flex-shrink: 0;
-    width: 1.6rem;
-    height: 1.6rem;
-    line-height: 1;
-    color: var(--text-secondary);
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
-    background: var(--surface-1);
-    cursor: pointer;
-    transition: background-color 0.1s ease;
-  }
-
-  .discard-file:hover {
-    background: var(--danger-bg);
-    color: var(--danger);
-  }
-
-  .blame-file {
-    flex-shrink: 0;
-    padding: 0.15rem 0.5rem;
-    font-size: 0.72rem;
-    line-height: 1.3;
-    color: var(--text-secondary);
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
-    background: var(--surface-1);
-    cursor: pointer;
-    transition: background-color 0.1s ease;
-  }
-
-  .blame-file:hover {
-    background: var(--surface-2);
   }
 
   .resolve-conflict {

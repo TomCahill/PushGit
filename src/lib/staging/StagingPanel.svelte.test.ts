@@ -6,6 +6,7 @@ import { fireEvent, render, waitFor } from "@testing-library/svelte";
 import { within } from "@testing-library/dom";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import ConfirmDialog from "$lib/shell/ConfirmDialog.svelte";
+import ContextMenu from "$lib/shell/ContextMenu.svelte";
 import StagingPanel from "./StagingPanel.svelte";
 import { makeFileDiff, makeHunk } from "$lib/git/testFixtures";
 import { settingsState } from "$lib/settings/settings.svelte";
@@ -77,7 +78,7 @@ describe("StagingPanel", () => {
     expect(await findByText("-3")).toBeTruthy();
   });
 
-  it("copies a file's path without selecting it", async () => {
+  it("copies a file's path from its right-click menu", async () => {
     mockIPC((cmd) => {
       switch (cmd) {
         case "diff_unstaged":
@@ -90,19 +91,18 @@ describe("StagingPanel", () => {
     });
 
     const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
-    const onDiffChange = vi.fn();
+    render(ContextMenu);
     const { findByRole, findByText } = render(StagingPanel, {
-      props: { repoPath: "/repo", refreshKey: 0, onDiffChange },
+      props: { repoPath: "/repo", refreshKey: 0 },
     });
 
-    await findByText("a.txt");
-    await fireEvent.click(await findByRole("button", { name: "Copy path a.txt" }));
+    await fireEvent.contextMenu(await findByText("a.txt"));
+    await fireEvent.click(await findByRole("menuitem", { name: "Copy file path" }));
 
     expect(writeText).toHaveBeenCalledWith("a.txt");
-    expect(onDiffChange).toHaveBeenLastCalledWith(null);
   });
 
-  it("calls onBlame with the file's path when its Blame button is clicked", async () => {
+  it("calls onBlame with the file's path when Blame is chosen from the right-click menu", async () => {
     mockIPC((cmd) => {
       switch (cmd) {
         case "diff_unstaged":
@@ -115,16 +115,18 @@ describe("StagingPanel", () => {
     });
 
     const onBlame = vi.fn();
-    const { findByTitle } = render(StagingPanel, {
+    render(ContextMenu);
+    const { findByRole, findByText } = render(StagingPanel, {
       props: { repoPath: "/repo", refreshKey: 0, onBlame },
     });
 
-    await fireEvent.click(await findByTitle("Blame"));
+    await fireEvent.contextMenu(await findByText("a.txt"));
+    await fireEvent.click(await findByRole("menuitem", { name: "Blame" }));
 
     expect(onBlame).toHaveBeenCalledWith("a.txt");
   });
 
-  it("stashes a single file when its Stash button is clicked, and notifies the parent", async () => {
+  it("stashes a single file from its right-click menu, and notifies the parent", async () => {
     let stashed = false;
     const calls: unknown[] = [];
     mockIPC((cmd, args) => {
@@ -143,12 +145,13 @@ describe("StagingPanel", () => {
     });
 
     const onChanged = vi.fn();
-    const { findByTitle, findByText } = render(StagingPanel, {
+    render(ContextMenu);
+    const { findByRole, findByText } = render(StagingPanel, {
       props: { repoPath: "/repo", refreshKey: 0, onChanged },
     });
 
-    await findByText("Changes (1)");
-    await fireEvent.click(await findByTitle("Stash this file"));
+    await fireEvent.contextMenu(await findByText("a.txt"));
+    await fireEvent.click(await findByRole("menuitem", { name: "Stash" }));
 
     await waitFor(() =>
       expect(calls).toEqual([{ repoPath: "/repo", message: null, paths: ["a.txt"] }]),
@@ -184,7 +187,7 @@ describe("StagingPanel", () => {
     expect(await findByText("Changes (0)")).toBeTruthy();
   });
 
-  it("discards a file's changes after confirmation, and notifies the parent", async () => {
+  it("discards a file's changes from its right-click menu after confirmation, and notifies the parent", async () => {
     let discarded = false;
     const discardCalls: unknown[] = [];
     mockIPC((cmd, args) => {
@@ -203,13 +206,14 @@ describe("StagingPanel", () => {
     });
 
     render(ConfirmDialog);
+    render(ContextMenu);
     const onChanged = vi.fn();
-    const { findByTitle, findByText, findByRole } = render(StagingPanel, {
+    const { findByText, findByRole } = render(StagingPanel, {
       props: { repoPath: "/repo", refreshKey: 0, onChanged },
     });
 
-    await findByText("Changes (1)");
-    await fireEvent.click(await findByTitle("Discard changes"));
+    await fireEvent.contextMenu(await findByText("a.txt"));
+    await fireEvent.click(await findByRole("menuitem", { name: "Discard changes" }));
     await fireEvent.click(
       within(await findByRole("alertdialog")).getByRole("button", { name: "OK" }),
     );
@@ -232,16 +236,19 @@ describe("StagingPanel", () => {
     });
 
     render(ConfirmDialog);
-    const { findByTitle, findByRole } = render(StagingPanel, {
+    render(ContextMenu);
+    const { findByText, findByRole } = render(StagingPanel, {
       props: { repoPath: "/repo", refreshKey: 0 },
     });
 
-    await fireEvent.click(await findByTitle("Discard changes"));
+    await fireEvent.contextMenu(await findByText("a.txt"));
+    await fireEvent.click(await findByRole("menuitem", { name: "Discard changes" }));
     await fireEvent.click(
       within(await findByRole("alertdialog")).getByRole("button", { name: "Cancel" }),
     );
 
-    expect(await findByTitle("Discard changes")).toBeTruthy();
+    await fireEvent.contextMenu(await findByText("a.txt"));
+    expect(await findByRole("menuitem", { name: "Discard changes" })).toBeTruthy();
   });
 
   it("stages every unstaged file when Stage All is clicked", async () => {
