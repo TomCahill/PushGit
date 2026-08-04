@@ -593,8 +593,9 @@ describe("StagingPanel", () => {
     mockIPC((cmd) => {
       switch (cmd) {
         case "diff_unstaged":
-        case "diff_staged":
           return [];
+        case "diff_staged":
+          return [makeFileDiff({ newPath: "a.txt" })];
         default:
           throw new Error(`unexpected command ${cmd}`);
       }
@@ -611,6 +612,40 @@ describe("StagingPanel", () => {
 
     await fireEvent.input(titleInput, { target: { value: "a title" } });
     expect(commitButton.disabled).toBe(false);
+  });
+
+  it("keeps Commit disabled with a title but nothing staged, unless amending", async () => {
+    mockIPC((cmd) => {
+      switch (cmd) {
+        case "diff_unstaged":
+        case "diff_staged":
+          return [];
+        case "head_commit_message":
+          return "previous commit message";
+        default:
+          throw new Error(`unexpected command ${cmd}`);
+      }
+    });
+
+    const { findByLabelText, findByRole, getByRole } = render(StagingPanel, {
+      props: { repoPath: "/repo", refreshKey: 0 },
+    });
+
+    const titleInput = (await findByLabelText("Commit title")) as HTMLInputElement;
+    await fireEvent.input(titleInput, { target: { value: "a title" } });
+
+    const commitButton = getByRole("button", { name: "Commit" }) as HTMLButtonElement;
+    expect(commitButton.disabled).toBe(true);
+    expect(commitButton.title).toBe("Stage changes first");
+
+    // Toggling amend with a title already typed would trigger the overwrite-confirmation
+    // dialog (covered separately below) — clear it first so this test stays focused on the
+    // staged-files gating.
+    await fireEvent.input(titleInput, { target: { value: "" } });
+    await fireEvent.click(getByRole("checkbox", { name: "Amend last commit" }));
+    await waitFor(() => expect(titleInput.value).toBe("previous commit message"));
+    const amendButton = await findByRole("button", { name: "Amend" });
+    expect((amendButton as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("combines the title and optional description into the commit message", async () => {
@@ -679,6 +714,65 @@ describe("StagingPanel", () => {
     expect(descriptionInput.value).toBe("With a body line.");
   });
 
+  it("asks for confirmation before amend overwrites an already-typed commit message", async () => {
+    mockIPC((cmd) => {
+      switch (cmd) {
+        case "diff_unstaged":
+        case "diff_staged":
+          return [];
+        case "head_commit_message":
+          return "previous commit message";
+        default:
+          throw new Error(`unexpected command ${cmd}`);
+      }
+    });
+
+    render(ConfirmDialog);
+    const { findByLabelText, findByRole, getByRole } = render(StagingPanel, {
+      props: { repoPath: "/repo", refreshKey: 0 },
+    });
+
+    const titleInput = (await findByLabelText("Commit title")) as HTMLInputElement;
+    await fireEvent.input(titleInput, { target: { value: "my draft title" } });
+
+    await fireEvent.click(getByRole("checkbox", { name: "Amend last commit" }));
+    await fireEvent.click(
+      within(await findByRole("alertdialog")).getByRole("button", { name: "OK" }),
+    );
+
+    await waitFor(() => expect(titleInput.value).toBe("previous commit message"));
+  });
+
+  it("cancelling the amend confirmation leaves the draft untouched and amend off", async () => {
+    mockIPC((cmd) => {
+      switch (cmd) {
+        case "diff_unstaged":
+        case "diff_staged":
+          return [];
+        default:
+          throw new Error(`unexpected command ${cmd} — cancelling should make no other backend call`);
+      }
+    });
+
+    render(ConfirmDialog);
+    const { findByLabelText, findByRole, getByRole } = render(StagingPanel, {
+      props: { repoPath: "/repo", refreshKey: 0 },
+    });
+
+    const titleInput = (await findByLabelText("Commit title")) as HTMLInputElement;
+    await fireEvent.input(titleInput, { target: { value: "my draft title" } });
+
+    await fireEvent.click(getByRole("checkbox", { name: "Amend last commit" }));
+    await fireEvent.click(
+      within(await findByRole("alertdialog")).getByRole("button", { name: "Cancel" }),
+    );
+
+    expect(titleInput.value).toBe("my draft title");
+    expect((getByRole("checkbox", { name: "Amend last commit" }) as HTMLInputElement).checked).toBe(
+      false,
+    );
+  });
+
   it("pre-fills the title and description from commit.template on open", async () => {
     mockIPC((cmd) => {
       switch (cmd) {
@@ -739,9 +833,9 @@ describe("StagingPanel", () => {
     mockIPC((cmd) => {
       switch (cmd) {
         case "diff_unstaged":
-          return [makeFileDiff({ newPath: "a.txt" })];
-        case "diff_staged":
           return [];
+        case "diff_staged":
+          return [makeFileDiff({ newPath: "a.txt" })];
         case "commit_message_template":
           templateCalls += 1;
           return "Template title";

@@ -39,11 +39,16 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     refreshKey,
     onChanged,
     onConflicts,
+    onBusyChange,
+    onProgressChange,
   }: {
     repoPath: string;
     refreshKey: number;
     onChanged?: () => void;
     onConflicts?: () => void;
+    /** Lets `ActionRail` render fetch/pull/push progress as the graph's top border bar. */
+    onBusyChange?: (busy: boolean) => void;
+    onProgressChange?: (progress: RemoteProgress | null) => void;
   } = $props();
 
   let versionWarning = $state<string | null>(null);
@@ -60,6 +65,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
   $effect(() => {
     void reload(repoPath, refreshKey);
+  });
+
+  $effect(() => {
+    onBusyChange?.(busy);
+  });
+
+  $effect(() => {
+    onProgressChange?.(progress);
   });
 
   $effect(() => {
@@ -265,12 +278,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   </div>
 
   {#if busy && progress}
-    <div class="progress" role="status">
-      <div class="progress-track">
-        <div class="progress-fill" style={`width: ${progress.percent}%`}></div>
-      </div>
-      <p class="progress-label">{progressLabel(progress)}</p>
-    </div>
+    <p class="progress-label" role="status">{progressLabel(progress)}</p>
   {/if}
 
   {#if versionWarning}
@@ -330,28 +338,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     background: var(--btn-filled-fg);
   }
 
-  .progress {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .progress-track {
-    flex: 1 1 auto;
-    height: 0.3rem;
-    background: var(--surface-2);
-    border-radius: var(--radius-sm);
-    overflow: hidden;
-  }
-
-  .progress-fill {
-    height: 100%;
-    background: var(--accent);
-    transition: width 0.15s ease;
-  }
-
   .progress-label {
-    flex-shrink: 0;
     margin: 0;
     font-size: 0.72rem;
     color: var(--text-secondary);

@@ -543,8 +543,23 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     }
   }
 
-  async function handleAmendToggle() {
-    amend = !amend;
+  async function handleAmendToggle(event: Event) {
+    // Captured synchronously — `event.currentTarget` is nulled out once dispatch finishes,
+    // so it's unusable after the `await confirmAsync` below.
+    const checkbox = event.currentTarget as HTMLInputElement;
+    const turningOn = !amend;
+    if (turningOn && (title !== "" || description !== "")) {
+      const confirmed = await confirmAsync(
+        "Replace the current commit title/description with the last commit's message?",
+      );
+      if (!confirmed) {
+        // The click already flipped the native checkbox before this async confirm resolved —
+        // revert it to match `amend`, which we're about to leave unchanged.
+        checkbox.checked = amend;
+        return;
+      }
+    }
+    amend = turningOn;
     if (!amend) return;
     try {
       const split = splitMessage((await headCommitMessage(repoPath)) ?? "");
@@ -555,9 +570,22 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     }
   }
 
+  function handleFormKeydown(event: KeyboardEvent) {
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      (event.currentTarget as HTMLFormElement).requestSubmit();
+    }
+  }
+
+  const commitDisabledReason = $derived.by(() => {
+    if (!title.trim()) return "Enter a commit title";
+    if (!amend && stagedFiles.length === 0) return "Stage changes first";
+    return null;
+  });
+
   async function handleCommit(event: SubmitEvent) {
     event.preventDefault();
-    if (committing || !title.trim()) return;
+    if (committing || commitDisabledReason !== null) return;
     committing = true;
     commitError = null;
     try {
@@ -702,6 +730,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
           onclick={generating ? handleStopGeneration : handleGenerateWithAi}
         >
           <Icon name={generating ? "square" : "sparkles"} size={12} />
+          {generating ? "Stop" : "Generate"}
         </button>
         <span class="char-count" class:over={title.length >= TITLE_MAX_LENGTH}>
           {title.length}/{TITLE_MAX_LENGTH}
@@ -713,6 +742,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       type="text"
       bind:value={title}
       oninput={handleTitleInputWhileGenerating}
+      onkeydown={handleFormKeydown}
       maxlength={TITLE_MAX_LENGTH}
       placeholder="Summarize this change"
       required
@@ -722,6 +752,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       id="commit-description"
       bind:value={description}
       oninput={handleDescriptionInputWhileGenerating}
+      onkeydown={handleFormKeydown}
       rows="3"
       placeholder="Add more detail"></textarea>
     <div class="commit-actions">
@@ -729,14 +760,20 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         <input type="checkbox" checked={amend} onchange={handleAmendToggle} />
         Amend last commit
       </label>
-      <label class="skip-hooks">
+      <label class="skip-hooks" class:active={skipHooks}>
         <input type="checkbox" bind:checked={skipHooks} onchange={handleSkipHooksChange} />
         Skip hooks
       </label>
-      <span class="staged-count">{stagedFiles.length} file(s) staged</span>
-      <Button variant="filled" type="submit" disabled={committing || !title.trim()}>
-        {amend ? "Amend" : "Commit"}
-      </Button>
+      <div class="commit-submit">
+        <Button
+          variant="filled"
+          type="submit"
+          disabled={committing || commitDisabledReason !== null}
+          title={commitDisabledReason ?? undefined}
+        >
+          {amend ? "Amend" : "Commit"}
+        </Button>
+      </div>
     </div>
     {#if aiError}
       <p class="error" role="alert">{aiError}</p>
@@ -956,33 +993,35 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   .generate-ai {
     display: inline-flex;
     align-items: center;
-    justify-content: center;
+    gap: 0.3rem;
     flex-shrink: 0;
-    padding: 0.1rem;
-    color: var(--text-muted);
-    background: none;
-    border: none;
+    font: inherit;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 0.2rem 0.5rem;
+    color: var(--text-secondary);
+    background: var(--surface-1);
+    border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    opacity: 0.55;
     cursor: pointer;
     transition:
-      opacity 0.1s ease,
+      background-color 0.1s ease,
       color 0.1s ease;
   }
 
   .generate-ai:hover:not(:disabled),
   .generate-ai:focus-visible {
-    opacity: 1;
+    background: var(--surface-2);
     color: var(--accent);
   }
 
   .generate-ai.generating {
-    opacity: 1;
     color: var(--danger);
+    border-color: var(--danger);
   }
 
   .generate-ai:disabled {
-    opacity: 0.3;
+    opacity: 0.5;
     cursor: default;
   }
 
@@ -1008,7 +1047,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   }
 
   .commit-box textarea {
-    resize: none;
+    resize: vertical;
+    min-height: 3.6rem;
   }
 
   .commit-box input[type="text"]:focus-visible,
@@ -1020,7 +1060,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   .commit-actions {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 0.75rem;
+    row-gap: 0.4rem;
   }
 
   .amend,
@@ -1032,9 +1074,15 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     color: var(--text-secondary);
   }
 
-  .staged-count {
-    font-size: 0.8rem;
+  .skip-hooks {
     color: var(--text-muted);
-    margin-right: auto;
+  }
+
+  .skip-hooks.active {
+    color: var(--danger);
+  }
+
+  .commit-submit {
+    margin-left: auto;
   }
 </style>
