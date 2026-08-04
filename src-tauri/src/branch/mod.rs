@@ -161,7 +161,32 @@ pub fn merge_branch(repo: &Repository, branch_name: &str) -> PushGitResult<Merge
         return Ok(MergeOutcome::FastForward);
     }
 
-    repo.merge(&[&their_annotated], None, None)?;
+    commit_merge(repo, branch_name, their_oid, &their_annotated)
+}
+
+/// Like `merge_branch`, but never fast-forwards — always leaves a real two-parent merge
+/// commit (mirrors `git merge --no-ff`), so GitFlow release/hotfix finishes visibly show
+/// the branch as a fork+merge in the graph even when a fast-forward was possible.
+pub fn merge_branch_no_ff(repo: &Repository, branch_name: &str) -> PushGitResult<MergeOutcome> {
+    let their_oid = resolve_branch_oid(repo, branch_name)?;
+    let their_annotated = repo.find_annotated_commit(their_oid)?;
+
+    let (analysis, _preference) = repo.merge_analysis(&[&their_annotated])?;
+
+    if analysis.is_up_to_date() {
+        return Ok(MergeOutcome::AlreadyUpToDate);
+    }
+
+    commit_merge(repo, branch_name, their_oid, &their_annotated)
+}
+
+fn commit_merge(
+    repo: &Repository,
+    branch_name: &str,
+    their_oid: git2::Oid,
+    their_annotated: &git2::AnnotatedCommit<'_>,
+) -> PushGitResult<MergeOutcome> {
+    repo.merge(&[their_annotated], None, None)?;
 
     let mut index = repo.index()?;
     if index.has_conflicts() {
