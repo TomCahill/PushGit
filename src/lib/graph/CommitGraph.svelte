@@ -707,6 +707,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       return [
         { label: "Rename tag", onSelect: () => handleRenameTag(ref.name) },
         { label: "Delete tag", danger: true, onSelect: () => handleDeleteTag(ref.name) },
+        { separator: true },
+        { label: `Push tag to ${REMOTE_NAME}`, onSelect: () => handlePush(ref.name) },
       ];
     }
 

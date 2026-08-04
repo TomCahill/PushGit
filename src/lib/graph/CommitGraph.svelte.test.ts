@@ -603,7 +603,54 @@ describe("CommitGraph", () => {
 
       expect(await findByRole("menuitem", { name: "Rename tag" })).toBeTruthy();
       expect(await findByRole("menuitem", { name: "Delete tag" })).toBeTruthy();
+      expect(await findByRole("menuitem", { name: "Push tag to origin" })).toBeTruthy();
       expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ oid: "a" }));
+    });
+
+    it("pushes a tag from its badge's menu", async () => {
+      const calls: unknown[] = [];
+      mockIPC((cmd, args) => {
+        switch (cmd) {
+          case "graph_open":
+            return "session-1";
+          case "graph_page":
+            return {
+              rows: [
+                makeCommitRow({
+                  oid: "a",
+                  summary: "A commit",
+                  refs: [{ name: "v1.0.0", kind: "tag", isHead: false }],
+                }),
+              ],
+              hasMore: false,
+            };
+          case "graph_close":
+            return null;
+          case "push":
+            calls.push(args);
+            return null;
+          default:
+            throw new Error(`unexpected command ${cmd}`);
+        }
+      });
+
+      render(ContextMenu);
+      const { findByText, findByRole } = render(CommitGraph, { props: { repoPath: "/repo" } });
+
+      await fireEvent.contextMenu(await findByText("v1.0.0"));
+      await fireEvent.click(await findByRole("menuitem", { name: "Push tag to origin" }));
+
+      await waitFor(() =>
+        expect(calls).toEqual([
+          {
+            repoPath: "/repo",
+            remoteName: "origin",
+            branchName: "v1.0.0",
+            force: false,
+            progress: expect.anything(),
+          },
+        ]),
+      );
     });
 
     it("renames a tag from its badge's menu", async () => {
