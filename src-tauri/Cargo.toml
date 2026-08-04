@@ -60,3 +60,8 @@ wiremock = "0.6.5"
 name = "graph_layout"
 harness = false
 
+# Dependency debug info dominates link time on this dep tree (tauri/webkit2gtk/reqwest);
+# own-crate debug info is kept via the profile.dev default.
+[profile.dev.package."*"]
+debug = 0
+
