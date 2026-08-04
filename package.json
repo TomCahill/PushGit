@@ -1,6 +1,6 @@
 {
   "name": "pushgit",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "A fast, lightweight git GUI with a proper visual commit graph.",
   "type": "module",
   "scripts": {
@@ -21,12 +21,13 @@
     "rust:build": "cd src-tauri && cargo build",
     "rust:build:release": "cd src-tauri && cargo build --release",
     "rust:test": "cd src-tauri && cargo test",
+    "rust:test:nextest": "cd src-tauri && cargo nextest run",
     "rust:fmt": "cd src-tauri && cargo fmt",
     "rust:fmt:check": "cd src-tauri && cargo fmt -- --check",
     "rust:clippy": "cd src-tauri && cargo clippy --all-targets --all-features -- -D warnings",
     "rust:bench": "cd src-tauri && cargo bench",
     "rust:coverage": "cd src-tauri && cargo llvm-cov --html",
-    "rust:coverage:ci": "cd src-tauri && cargo llvm-cov --lcov --output-path coverage.lcov",
+    "rust:coverage:ci": "cd src-tauri && cargo llvm-cov nextest --lcov --output-path coverage.lcov",
     "rust:insta:review": "cd src-tauri && cargo insta review",
     "rust:mutants": "cd src-tauri && cargo mutants",
     "test:e2e:build": "npm run tauri build -- --debug --no-bundle --features e2e --config src-tauri/tauri.e2e.conf.json",

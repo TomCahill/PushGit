@@ -704,12 +704,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         <p class="commit-body">{selectedCommit.body}</p>
       {/if}
       <p class="commit-meta">
-        {selectedCommit.shortOid} — <Avatar
+        {selectedCommit.shortOid} - <Avatar
           name={selectedCommit.authorName}
           email={selectedCommit.authorEmail}
           size={14}
         />
-        · {formatDateTime(selectedCommit.authorTime)}
+        - {formatDateTime(selectedCommit.authorTime)}
         {diffModeSuffix}
       </p>
       {#if diffError}

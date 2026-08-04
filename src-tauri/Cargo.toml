@@ -1,6 +1,6 @@
 [package]
 name = "pushgit"
-version = "1.1.1"
+version = "1.1.2"
 description = "A fast, lightweight git GUI with a proper visual commit graph."
 authors = ["Tom Cahill"]
 license = "AGPL-3.0-or-later"
@@ -59,4 +59,9 @@ wiremock = "0.6.5"
 [[bench]]
 name = "graph_layout"
 harness = false
+
+# Dependency debug info dominates link time on this dep tree (tauri/webkit2gtk/reqwest);
+# own-crate debug info is kept via the profile.dev default.
+[profile.dev.package."*"]
+debug = 0
 

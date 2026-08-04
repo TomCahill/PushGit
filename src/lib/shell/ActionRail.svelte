@@ -20,7 +20,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import WorkflowPanel from "$lib/workflow/WorkflowPanel.svelte";
   import Icon from "./Icon.svelte";
   import Popover from "./Popover.svelte";
-  import type { RebaseCommitSummary } from "$lib/git/types";
+  import type { RebaseCommitSummary, RemoteProgress } from "$lib/git/types";
 
   let {
     repoPath,
@@ -46,6 +46,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   let tagCount = $state(0);
   let stashCount = $state(0);
   let searchQuery = $state("");
+  let remoteBusy = $state(false);
+  let remoteProgress = $state<RemoteProgress | null>(null);
 
   function handleSearchInput(event: Event & { currentTarget: HTMLInputElement }) {
     searchQuery = event.currentTarget.value;
@@ -133,11 +135,29 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     aria-label="Search commit graph"
   />
 
-  <RemotePanel {repoPath} {refreshKey} {onChanged} {onConflicts} />
+  <RemotePanel
+    {repoPath}
+    {refreshKey}
+    {onChanged}
+    {onConflicts}
+    onBusyChange={(busy) => (remoteBusy = busy)}
+    onProgressChange={(progress) => (remoteProgress = progress)}
+  />
+
+  {#if remoteBusy}
+    <div class="top-progress" role="status" aria-label="Remote operation progress">
+      <div
+        class="top-progress-fill"
+        class:indeterminate={!remoteProgress}
+        style={remoteProgress ? `width: ${remoteProgress.percent}%` : undefined}
+      ></div>
+    </div>
+  {/if}
 </div>
 
 <style>
   .action-rail {
+    position: relative;
     display: flex;
     align-items: flex-start;
     flex-wrap: wrap;
@@ -145,6 +165,36 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     padding: 0.6rem 0.75rem;
     background: var(--surface-1);
     border-bottom: 1px solid var(--border);
+  }
+
+  .top-progress {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 2px;
+    overflow: hidden;
+    background: var(--surface-2);
+  }
+
+  .top-progress-fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.15s ease;
+  }
+
+  .top-progress-fill.indeterminate {
+    width: 30% !important;
+    animation: top-progress-slide 1.1s ease-in-out infinite;
+  }
+
+  @keyframes top-progress-slide {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(333%);
+    }
   }
 
   .search-box {

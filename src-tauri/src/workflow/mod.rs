@@ -111,9 +111,12 @@ pub fn start_branch(
 }
 
 /// Merges `<prefix><name>` into its finish target(s) and deletes it:
-/// - **feature**: merge into `develop`, delete.
+/// - **feature**: merge into `develop` (fast-forwarding when possible), delete.
 /// - **release**/**hotfix**: merge into `main`, tag `main` at that point with
-///   `version_tag_prefix + name`, merge into `develop` too, then delete.
+///   `version_tag_prefix + name`, merge into `develop` too, then delete. These two merges
+///   always produce a real merge commit (`merge_branch_no_ff`), even when a fast-forward
+///   would be possible, so the graph always shows the release/hotfix branch as a visible
+///   fork+merge rather than silently collapsing into the target's history.
 ///
 /// If any merge step conflicts, returns early with `FinishOutcome::Conflicts` and leaves the
 /// branch and remaining steps untouched — the caller resolves via the existing
@@ -129,20 +132,26 @@ pub fn finish_branch(
     name: &str,
 ) -> PushGitResult<FinishOutcome> {
     let branch_name = format!("{}{name}", prefix_for(config, kind));
-
-    if matches!(
+    let is_release_or_hotfix = matches!(
         kind,
         WorkflowBranchKind::Release | WorkflowBranchKind::Hotfix
-    ) {
+    );
+
+    if is_release_or_hotfix {
         branch::checkout_branch(repo, &config.main)?;
-        if let MergeOutcome::Conflicts(paths) = branch::merge_branch(repo, &branch_name)? {
+        if let MergeOutcome::Conflicts(paths) = branch::merge_branch_no_ff(repo, &branch_name)? {
             return Ok(FinishOutcome::Conflicts(paths));
         }
         create_tag_if_absent(repo, config, name)?;
     }
 
     branch::checkout_branch(repo, &config.develop)?;
-    if let MergeOutcome::Conflicts(paths) = branch::merge_branch(repo, &branch_name)? {
+    let develop_outcome = if is_release_or_hotfix {
+        branch::merge_branch_no_ff(repo, &branch_name)?
+    } else {
+        branch::merge_branch(repo, &branch_name)?
+    };
+    if let MergeOutcome::Conflicts(paths) = develop_outcome {
         return Ok(FinishOutcome::Conflicts(paths));
     }
 
@@ -304,6 +313,46 @@ mod tests {
             assert!(
                 tree.get_path(Path::new("CHANGELOG.md")).is_ok(),
                 "{name} should contain the release's changes"
+            );
+        }
+    }
+
+    #[test]
+    fn finish_branch_hotfix_creates_merge_commit_on_main_even_when_ff_possible() {
+        let (_dir, repo) = repo_init();
+        let config = init_default(&repo);
+        start_branch(&repo, &config, WorkflowBranchKind::Hotfix, "1.0.1").unwrap();
+        commit_file(&repo, "hotfix.txt", "hotfix\n");
+
+        let outcome = finish_branch(&repo, &config, WorkflowBranchKind::Hotfix, "1.0.1").unwrap();
+
+        assert!(matches!(outcome, FinishOutcome::Finished));
+        let main = repo.find_branch("main", BranchType::Local).unwrap();
+        let main_tip = repo.find_commit(main.get().target().unwrap()).unwrap();
+        assert_eq!(
+            main_tip.parent_count(),
+            2,
+            "main should have a real merge commit, not a fast-forward"
+        );
+    }
+
+    #[test]
+    fn finish_branch_release_creates_merge_commits_on_main_and_develop_even_when_ff_possible() {
+        let (_dir, repo) = repo_init();
+        let config = init_default(&repo);
+        start_branch(&repo, &config, WorkflowBranchKind::Release, "1.0.0").unwrap();
+        commit_file(&repo, "CHANGELOG.md", "1.0.0\n");
+
+        let outcome = finish_branch(&repo, &config, WorkflowBranchKind::Release, "1.0.0").unwrap();
+
+        assert!(matches!(outcome, FinishOutcome::Finished));
+        for name in ["main", "develop"] {
+            let branch = repo.find_branch(name, BranchType::Local).unwrap();
+            let tip = repo.find_commit(branch.get().target().unwrap()).unwrap();
+            assert_eq!(
+                tip.parent_count(),
+                2,
+                "{name} should have a real merge commit, not a fast-forward"
             );
         }
     }

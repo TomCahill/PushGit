@@ -19,6 +19,14 @@ describe("CommitDiffView", () => {
     expect(await findByText("b.txt")).toBeTruthy();
   });
 
+  it("shows the old and new path for a renamed file", async () => {
+    const files = [makeFileDiff({ oldPath: "old.txt", newPath: "new.txt", status: "renamed" })];
+
+    const { findByText } = render(CommitDiffView, { props: { files } });
+
+    expect(await findByText("old.txt → new.txt")).toBeTruthy();
+  });
+
   it("shows insertion/deletion counts per file and as a header total", async () => {
     const files = [
       makeFileDiff({ newPath: "a.txt", insertions: 5, deletions: 2 }),

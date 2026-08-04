@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci:
+  rust:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,6 +32,9 @@ jobs:
             wget \
             file
 
+      - name: Speed up linking with mold
+        uses: rui314/setup-mold@v1
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -42,8 +45,39 @@ jobs:
         with:
           workspaces: src-tauri -> target
 
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Install cargo-llvm-cov and cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov,cargo-nextest
+
+      - name: Rust fmt check
+        run: cargo fmt -- --check
+        working-directory: src-tauri
+
+      - name: Rust clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        working-directory: src-tauri
+
+      - name: Rust test (nextest)
+        run: cargo nextest run
+        working-directory: src-tauri
+
+      - name: Rust coverage (main only)
+        if: github.event_name == 'push'
+        run: cargo llvm-cov nextest --lcov --output-path coverage.lcov
+        working-directory: src-tauri
+
+      - name: Upload coverage report
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-coverage-lcov
+          path: src-tauri/coverage.lcov
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -54,14 +88,8 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Run gate (fmt, clippy, rust tests, svelte check, vitest)
-        run: npm run ci
+      - name: Svelte check
+        run: npm run check
 
-      - name: Rust coverage (report only, not gated)
-        run: npm run rust:coverage:ci
-
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4
-        with:
-          name: rust-coverage-lcov
-          path: src-tauri/coverage.lcov
+      - name: Vitest
+        run: npm run test
