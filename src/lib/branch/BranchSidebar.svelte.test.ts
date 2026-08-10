@@ -7,6 +7,7 @@ import { within } from "@testing-library/dom";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import BranchSidebar from "./BranchSidebar.svelte";
 import ConfirmDialog from "$lib/shell/ConfirmDialog.svelte";
+import ContextMenu from "$lib/shell/ContextMenu.svelte";
 import { makeBranchInfo } from "$lib/git/testFixtures";
 import { toastState } from "$lib/shell/toast.svelte";
 
@@ -51,6 +52,42 @@ describe("BranchSidebar", () => {
     expect(await findByText("feature")).toBeTruthy();
     expect(await findByText("HEAD")).toBeTruthy();
     expect(await findByText("↑2 ↓1")).toBeTruthy();
+  });
+
+  it("only offers Merge/Rebase/Delete on a non-HEAD branch's actions menu", async () => {
+    mockIPC((cmd) => {
+      switch (cmd) {
+        case "list_branches":
+          return [
+            makeBranchInfo({ name: "main", isHead: true }),
+            makeBranchInfo({ name: "feature" }),
+          ];
+        case "repository_state":
+          return "clean";
+        case "list_conflicts":
+          return [];
+        default:
+          throw new Error(`unexpected command ${cmd}`);
+      }
+    });
+
+    render(ContextMenu);
+    const { findByTitle, findByRole, queryByRole } = render(BranchSidebar, {
+      props: { repoPath: "/repo", refreshKey: 0 },
+    });
+
+    await fireEvent.click(await findByTitle("Actions for main"));
+    expect(await findByRole("menuitem", { name: "Rename" })).toBeTruthy();
+    expect(queryByRole("menuitem", { name: "Merge into current branch" })).toBeNull();
+    expect(queryByRole("menuitem", { name: "Delete" })).toBeNull();
+
+    await fireEvent.click(await findByTitle("Actions for feature"));
+    expect(await findByRole("menuitem", { name: "Rename" })).toBeTruthy();
+    expect(await findByRole("menuitem", { name: "Merge into current branch" })).toBeTruthy();
+    expect(
+      await findByRole("menuitem", { name: "Rebase current branch onto this" }),
+    ).toBeTruthy();
+    expect(await findByRole("menuitem", { name: "Delete" })).toBeTruthy();
   });
 
   it("copies a branch name without checking it out", async () => {
@@ -169,17 +206,20 @@ describe("BranchSidebar", () => {
     });
 
     render(ConfirmDialog);
+    render(ContextMenu);
     const { findByTitle, findByRole } = render(BranchSidebar, {
       props: { repoPath: "/repo", refreshKey: 0 },
     });
 
-    await fireEvent.click(await findByTitle("Delete feature"));
+    await fireEvent.click(await findByTitle("Actions for feature"));
+    await fireEvent.click(await findByRole("menuitem", { name: "Delete" }));
     await fireEvent.click(
       within(await findByRole("alertdialog")).getByRole("button", { name: "Cancel" }),
     );
     expect(calls).toEqual([]);
 
-    await fireEvent.click(await findByTitle("Delete feature"));
+    await fireEvent.click(await findByTitle("Actions for feature"));
+    await fireEvent.click(await findByRole("menuitem", { name: "Delete" }));
     await fireEvent.click(
       within(await findByRole("alertdialog")).getByRole("button", { name: "OK" }),
     );
@@ -209,11 +249,13 @@ describe("BranchSidebar", () => {
     });
 
     render(ConfirmDialog);
+    render(ContextMenu);
     const { findByTitle, findByRole } = render(BranchSidebar, {
       props: { repoPath: "/repo", refreshKey: 0 },
     });
 
-    await fireEvent.click(await findByTitle("Rename main"));
+    await fireEvent.click(await findByTitle("Actions for main"));
+    await fireEvent.click(await findByRole("menuitem", { name: "Rename" }));
     const dialog = within(await findByRole("alertdialog"));
     const input = dialog.getByRole("textbox") as HTMLInputElement;
     expect(input.value).toBe("main");
@@ -244,19 +286,22 @@ describe("BranchSidebar", () => {
     });
 
     render(ConfirmDialog);
+    render(ContextMenu);
     const { findByTitle, findByRole } = render(BranchSidebar, {
       props: { repoPath: "/repo", refreshKey: 0 },
     });
 
     // Cancelled.
-    await fireEvent.click(await findByTitle("Rename main"));
+    await fireEvent.click(await findByTitle("Actions for main"));
+    await fireEvent.click(await findByRole("menuitem", { name: "Rename" }));
     await fireEvent.click(
       within(await findByRole("alertdialog")).getByRole("button", { name: "Cancel" }),
     );
 
     // Submitted unchanged — the dialog pre-fills the current name, and the user submits
     // as-is without editing it.
-    await fireEvent.click(await findByTitle("Rename main"));
+    await fireEvent.click(await findByTitle("Actions for main"));
+    await fireEvent.click(await findByRole("menuitem", { name: "Rename" }));
     await fireEvent.click(
       within(await findByRole("alertdialog")).getByRole("button", { name: "OK" }),
     );
@@ -283,11 +328,13 @@ describe("BranchSidebar", () => {
       }
     });
 
-    const { findByTitle } = render(BranchSidebar, {
+    render(ContextMenu);
+    const { findByTitle, findByRole } = render(BranchSidebar, {
       props: { repoPath: "/repo", refreshKey: 0 },
     });
 
-    await fireEvent.click(await findByTitle("Merge feature into the current branch"));
+    await fireEvent.click(await findByTitle("Actions for feature"));
+    await fireEvent.click(await findByRole("menuitem", { name: "Merge into current branch" }));
 
     await waitFor(() =>
       expect(toastState.toasts.map((t) => t.message)).toContain("Merged feature."),

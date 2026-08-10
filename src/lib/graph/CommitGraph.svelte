@@ -52,6 +52,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import { decideDragAction, type DragActionResult, type DragTarget } from "./dragAction";
   import { settingsState } from "$lib/settings/settings.svelte";
   import { confirmAsync, promptAsync } from "$lib/shell/confirmDialog.svelte";
+  import { notifySuccess } from "$lib/shell/toast.svelte";
   import {
     closeContextMenu,
     openContextMenu,
@@ -512,7 +513,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     void runAction(async () => {
       try {
         await pushRemote(repoPath, REMOTE_NAME, branchName, false);
-        actionMessage = `Pushed ${branchName} to ${REMOTE_NAME}.`;
+        notifySuccess(`Pushed ${branchName} to ${REMOTE_NAME}.`);
       } catch (err) {
         const message = String(err);
         if (
@@ -524,7 +525,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
           throw err;
         }
         await pushRemote(repoPath, REMOTE_NAME, branchName, true);
-        actionMessage = `Force-pushed ${branchName} to ${REMOTE_NAME}.`;
+        notifySuccess(`Force-pushed ${branchName} to ${REMOTE_NAME}.`);
       }
     });
   }

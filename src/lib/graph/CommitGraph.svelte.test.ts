@@ -10,6 +10,11 @@ import ConfirmDialog from "$lib/shell/ConfirmDialog.svelte";
 import ContextMenu from "$lib/shell/ContextMenu.svelte";
 import { firePointer } from "$lib/shell/testPointerEvents";
 import { makeCommitRow } from "$lib/git/testFixtures";
+import { toastState } from "$lib/shell/toast.svelte";
+
+function toastMessages(): string[] {
+  return toastState.toasts.map((toast) => toast.message);
+}
 
 describe("CommitGraph", () => {
   it("shows a prompt instead of opening a session when no repo is given", () => {
@@ -634,6 +639,7 @@ describe("CommitGraph", () => {
         }
       });
 
+      toastState.toasts = [];
       render(ContextMenu);
       const { findByText, findByRole } = render(CommitGraph, { props: { repoPath: "/repo" } });
 
@@ -651,6 +657,7 @@ describe("CommitGraph", () => {
           },
         ]),
       );
+      await waitFor(() => expect(toastMessages()).toContain("Pushed v1.0.0 to origin."));
     });
 
     it("renames a tag from its badge's menu", async () => {

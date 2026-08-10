@@ -33,7 +33,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     | "bell"
     | "sparkles"
     | "square"
-    | "download";
+    | "download"
+    | "more-vertical";
 
   let { name, size = 14 }: { name: IconName; size?: number } = $props();
 </script>
@@ -137,6 +138,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     <path d="M12 3v12" />
     <path d="M7 10l5 5 5-5" />
     <path d="M4 19h16" />
+  {:else if name === "more-vertical"}
+    <circle cx="12" cy="5" r="1.5" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="19" r="1.5" fill="currentColor" stroke="none" />
   {/if}
 </svg>
 
