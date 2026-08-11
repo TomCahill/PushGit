@@ -21,6 +21,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import Icon from "$lib/shell/Icon.svelte";
   import Logo from "$lib/shell/Logo.svelte";
   import NotificationsPanel from "$lib/shell/NotificationsPanel.svelte";
+  import { createPointerDrag } from "$lib/shell/pointerDrag.svelte";
   import Popover from "$lib/shell/Popover.svelte";
   import { unreadNotificationCount } from "$lib/shell/toast.svelte";
   import { dismiss as dismissUpdateBanner, updateCheckState } from "$lib/shell/updateCheck.svelte";
@@ -82,11 +83,6 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     if (selected !== null) {
       onOpenPath(selected);
     }
-  }
-
-  function handleRemove(event: MouseEvent, path: string) {
-    event.stopPropagation();
-    onRemoveRecent(path);
   }
 
   async function handleNewFolder() {
@@ -171,12 +167,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     return "ungrouped";
   }
 
-  let pointerDownInfo: { x: number; y: number; source: DragSource } | null = null;
-  let dragSource = $state<DragSource | null>(null);
-  let dropTarget = $state<DropTarget | null>(null);
-  let suppressClick = false;
-
-  function resolveDropTarget(clientX: number, clientY: number): DropTarget | null {
+  function dropTargetOf(clientX: number, clientY: number): DropTarget | null {
     const hit = document.elementFromPoint(clientX, clientY);
     if (!hit) return null;
     const repoEl = hit.closest<HTMLElement>("[data-repo-path]");
@@ -195,53 +186,6 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       return { kind: "ungrouped" };
     }
     return null;
-  }
-
-  function handlePointerDown(event: PointerEvent) {
-    if (event.button !== 0) return;
-    const target = event.target as HTMLElement;
-    const repoEl = target.closest<HTMLElement>("[data-repo-path]");
-    const folderEl = !repoEl ? target.closest<HTMLElement>("[data-folder-id]") : null;
-    let source: DragSource | null = null;
-    if (repoEl?.dataset.repoPath) {
-      source = { type: "repo", path: repoEl.dataset.repoPath };
-    } else if (folderEl?.dataset.folderId) {
-      source = { type: "folder", id: folderEl.dataset.folderId };
-    }
-    if (!source) return;
-    // Every row is both a click target and a drag source here (unlike `CommitGraph.svelte`,
-    // where only ref badges are drag-eligible and plain row clicks never touch pointer
-    // capture at all) — so capture is deferred to `handlePointerMove`, once a real drag is
-    // confirmed, rather than acquired on every single click.
-    pointerDownInfo = { x: event.clientX, y: event.clientY, source };
-  }
-
-  function handlePointerMove(event: PointerEvent) {
-    if (!pointerDownInfo) return;
-    if (!dragSource) {
-      const distance = Math.hypot(
-        event.clientX - pointerDownInfo.x,
-        event.clientY - pointerDownInfo.y,
-      );
-      if (distance < DRAG_THRESHOLD_PX) return;
-      dragSource = pointerDownInfo.source;
-      (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-    }
-    const candidate = resolveDropTarget(event.clientX, event.clientY);
-    if (dropTargetKey(candidate) !== dropTargetKey(dropTarget)) dropTarget = candidate;
-  }
-
-  function handlePointerUp(event: PointerEvent) {
-    // Only swallow the trailing `click` if a drag actually moved something — plain clicks
-    // (even ones that technically crossed DRAG_THRESHOLD_PX from a bit of mouse jitter, or a
-    // drag released back over its own origin) must still select/toggle/remove normally.
-    if (dragSource) {
-      (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
-      if (dropTarget && applyDrop(dragSource, dropTarget)) suppressClick = true;
-    }
-    pointerDownInfo = null;
-    dragSource = null;
-    dropTarget = null;
   }
 
   function applyDrop(source: DragSource, target: DropTarget): boolean {
@@ -263,31 +207,69 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     return true;
   }
 
-  // A completed drag that actually moved something still ends in a native `click` on release;
-  // swallow just that one so it doesn't also select/toggle/remove whatever's under the pointer.
-  function handleClickCapture(event: MouseEvent) {
-    if (!suppressClick) return;
-    suppressClick = false;
-    event.preventDefault();
-    event.stopPropagation();
+  const pointerDrag = createPointerDrag<DragSource, DropTarget>({
+    threshold: DRAG_THRESHOLD_PX,
+    // Every row is both a click target and a drag source here (unlike `CommitGraph.svelte`,
+    // where only ref badges are drag-eligible and plain row clicks never touch pointer
+    // capture at all) — so capture is deferred until a real drag is confirmed, rather than
+    // acquired on every single click.
+    captureOn: "move",
+    resolveSource: (event) => {
+      const target = event.target as HTMLElement;
+      const repoEl = target.closest<HTMLElement>("[data-repo-path]");
+      const folderEl = !repoEl ? target.closest<HTMLElement>("[data-folder-id]") : null;
+      if (repoEl?.dataset.repoPath) return { type: "repo", path: repoEl.dataset.repoPath };
+      if (folderEl?.dataset.folderId) return { type: "folder", id: folderEl.dataset.folderId };
+      return null;
+    },
+    resolveTarget: dropTargetOf,
+    targetKey: dropTargetKey,
+    // Only swallow the trailing `click` if a drag actually moved something — plain clicks
+    // (even ones that technically crossed the drag threshold from a bit of mouse jitter, or a
+    // drag released back over its own origin) must still select/toggle/remove normally.
+    onDrop: (source, target) => (target ? applyDrop(source, target) : false),
+  });
+
+  // Every row/header click is delegated to this one handler on the container (matching
+  // `CommitGraph.svelte`'s pattern) rather than each row carrying its own `onclick` — that's
+  // what lets a completed drag's trailing `click` be swallowed with a plain flag check here,
+  // no capture-phase listener needed. `data-remove-path` is checked first since it's the most
+  // specific target (nested inside a repo row, which would otherwise also match
+  // `data-repo-path`); `data-repo-path` before `data-folder-id` for the same reason a repo
+  // row's own (metadata-only) `data-folder-id` must never be mistaken for a folder header.
+  function handleClick(event: MouseEvent) {
+    if (pointerDrag.consumeClickSuppression()) return;
+    const target = event.target as HTMLElement;
+
+    const removeEl = target.closest<HTMLElement>("[data-remove-path]");
+    if (removeEl?.dataset.removePath) {
+      onRemoveRecent(removeEl.dataset.removePath);
+      return;
+    }
+
+    const repoEl = target.closest<HTMLElement>("[data-repo-path]");
+    if (repoEl?.dataset.repoPath) {
+      onSelectRecent(repoEl.dataset.repoPath);
+      return;
+    }
+
+    const folderEl = target.closest<HTMLElement>("[data-folder-id]");
+    if (folderEl?.dataset.folderId) {
+      onToggleFolderCollapsed(folderEl.dataset.folderId);
+    }
   }
 </script>
 
 {#snippet repoRow(entry: RecentRepo)}
   <li
     class:current={entry.path === currentPath}
-    class:drag-over={dropTarget?.kind === "repo" && dropTarget.path === entry.path}
-    class:dragged={dragSource?.type === "repo" && dragSource.path === entry.path}
+    class:drag-over={pointerDrag.target?.kind === "repo" && pointerDrag.target.path === entry.path}
+    class:dragged={pointerDrag.source?.type === "repo" && pointerDrag.source.path === entry.path}
     data-repo-path={entry.path}
     data-folder-id={entry.folderId ?? ""}
     oncontextmenu={(event) => handleRepoContextMenu(event, entry)}
   >
-    <button
-      type="button"
-      class="recent-row"
-      title={entry.path}
-      onclick={() => onSelectRecent(entry.path)}
-    >
+    <button type="button" class="recent-row" title={entry.path}>
       <Icon name="folder" size={13} />
       <span class="recent-name">{repoDisplayName(entry.path)}</span>
     </button>
@@ -295,7 +277,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       type="button"
       class="remove"
       title={`Remove ${entry.path} from recent`}
-      onclick={(event) => handleRemove(event, entry.path)}
+      data-remove-path={entry.path}
     >
       <Icon name="x" size={12} />
     </button>
@@ -338,15 +320,19 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     <p class="error" role="alert">{openError}</p>
   {/if}
 
+  <!-- svelte-ignore a11y_click_events_have_key_events -- delegation container only; every
+       actual interactive element inside (row/remove buttons, the folder header's own
+       role="button"+tabindex+onkeydown) is independently keyboard-accessible -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- same reason -->
   <div
     class="repos"
     role="group"
     aria-label="Repositories"
-    class:dragging={dragSource !== null}
-    onpointerdown={handlePointerDown}
-    onpointermove={handlePointerMove}
-    onpointerup={handlePointerUp}
-    onclickcapture={handleClickCapture}
+    class:dragging={pointerDrag.source !== null}
+    onpointerdown={pointerDrag.handlePointerDown}
+    onpointermove={pointerDrag.handlePointerMove}
+    onpointerup={pointerDrag.handlePointerUp}
+    onclick={handleClick}
   >
     {#if folders.length === 0 && recentRepos.length === 0}
       <p class="placeholder">Repos you open will show up here.</p>
@@ -357,7 +343,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
           role="group"
           aria-label="Ungrouped repositories"
           data-drop-zone="ungrouped"
-          class:drag-over={dropTarget?.kind === "ungrouped"}
+          class:drag-over={pointerDrag.target?.kind === "ungrouped"}
         >
           <h3><Icon name="clock" size={12} /> Recent</h3>
         </div>
@@ -376,13 +362,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         <div class="folder">
           <div
             class="folder-header"
-            class:drag-over={dropTarget?.kind === "folder" && dropTarget.id === folder.id}
-            class:dragged={dragSource?.type === "folder" && dragSource.id === folder.id}
+            class:drag-over={pointerDrag.target?.kind === "folder" &&
+              pointerDrag.target.id === folder.id}
+            class:dragged={pointerDrag.source?.type === "folder" &&
+              pointerDrag.source.id === folder.id}
             data-folder-id={folder.id}
             role="button"
             tabindex="0"
             oncontextmenu={(event) => handleFolderContextMenu(event, folder)}
-            onclick={() => onToggleFolderCollapsed(folder.id)}
             onkeydown={(event) => {
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
