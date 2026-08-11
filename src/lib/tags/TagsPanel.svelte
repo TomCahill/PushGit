@@ -14,6 +14,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   // of kind.
   import { createTag, deleteTag, listTags } from "$lib/git/api";
   import { confirmAsync } from "$lib/shell/confirmDialog.svelte";
+  import { createReloadable } from "$lib/shell/reloadable.svelte";
   import { notifyError, notifySuccess } from "$lib/shell/toast.svelte";
 
   let {
@@ -31,20 +32,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   let tags = $state<string[]>([]);
   let loadError = $state<string | null>(null);
 
-  let busy = $state(false);
-
   let newTagName = $state("");
   let newTagTarget = $state("");
   let newTagMessage = $state("");
 
-  let generation = 0;
-
-  $effect(() => {
-    void reload(repoPath, refreshKey);
-  });
-
-  async function reload(path: string, _refreshKey: number) {
-    const myGeneration = ++generation;
+  const tagReload = createReloadable(async (path, isStale) => {
     if (!path) {
       tags = [];
       onCountChange?.(0);
@@ -54,29 +46,25 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     loadError = null;
     try {
       const list = await listTags(path);
-      if (myGeneration !== generation) return;
+      if (isStale()) return;
       tags = list;
       onCountChange?.(list.length);
     } catch (err) {
-      if (myGeneration === generation) {
+      if (!isStale()) {
         loadError = String(err);
         notifyError(loadError);
       }
     }
-  }
+  });
 
-  async function runAction(fn: () => Promise<void>) {
-    if (busy) return;
-    busy = true;
-    try {
-      await fn();
-      await reload(repoPath, refreshKey);
-      onChanged?.();
-    } catch (err) {
-      notifyError(String(err));
-    } finally {
-      busy = false;
-    }
+  let busy = $derived(tagReload.busy);
+
+  $effect(() => {
+    void tagReload.reload(repoPath, refreshKey);
+  });
+
+  function runAction(fn: () => Promise<void>) {
+    void tagReload.runAction(repoPath, fn, notifyError, onChanged);
   }
 
   function handleCreateSubmit(event: SubmitEvent) {

@@ -8,6 +8,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   // (loose object count/size, pack count/size, from `git count-objects -v`) and a one-click
   // `git gc`, both shelling out to real git — neither has a git2/libgit2 API at all.
   import { repoHealth, runGc } from "$lib/git/api";
+  import { createReloadable } from "$lib/shell/reloadable.svelte";
   import { notifyError, notifySuccess } from "$lib/shell/toast.svelte";
   import type { RepoHealth } from "$lib/git/types";
 
@@ -21,16 +22,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
   let health = $state<RepoHealth | null>(null);
   let loadError = $state<string | null>(null);
-  let busy = $state(false);
 
-  let generation = 0;
-
-  $effect(() => {
-    void reload(repoPath, refreshKey);
-  });
-
-  async function reload(path: string, _refreshKey: number) {
-    const myGeneration = ++generation;
+  const healthReload = createReloadable(async (path, isStale) => {
     if (!path) {
       health = null;
       return;
@@ -38,27 +31,30 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     loadError = null;
     try {
       const result = await repoHealth(path);
-      if (myGeneration === generation) health = result;
+      if (!isStale()) health = result;
     } catch (err) {
-      if (myGeneration === generation) {
+      if (!isStale()) {
         loadError = String(err);
         notifyError(loadError);
       }
     }
-  }
+  });
 
-  async function handleRunGc() {
-    if (busy) return;
-    busy = true;
-    try {
-      await runGc(repoPath);
-      notifySuccess("Ran git gc.");
-      await reload(repoPath, refreshKey);
-    } catch (err) {
-      notifyError(String(err));
-    } finally {
-      busy = false;
-    }
+  let busy = $derived(healthReload.busy);
+
+  $effect(() => {
+    void healthReload.reload(repoPath, refreshKey);
+  });
+
+  function handleRunGc() {
+    void healthReload.runAction(
+      repoPath,
+      async () => {
+        await runGc(repoPath);
+        notifySuccess("Ran git gc.");
+      },
+      notifyError,
+    );
   }
 </script>
 

@@ -68,6 +68,31 @@ pub(crate) async fn run_git(args: &[&str], cwd: Option<&Path>) -> PushGitResult<
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// Like `run_git`, but returns the raw `Output` instead of collapsing a non-zero exit into
+/// `Err` — for `interactive_rebase`/`cherry_pick_range`, which must tell a git subprocess
+/// that *paused* (a conflict mid-sequence, still exit-non-zero) apart from one that
+/// genuinely failed, a distinction `run_git`'s own eager error mapping would erase. Also
+/// takes `extra_env`, since both callers script the subprocess via `GIT_SEQUENCE_EDITOR`/
+/// `GIT_EDITOR` rather than letting it prompt interactively.
+pub(crate) async fn run_git_capturing_output(
+    args: &[&str],
+    cwd: &Path,
+    extra_env: &[(&str, &str)],
+) -> PushGitResult<std::process::Output> {
+    let mut command = Command::new("git");
+    command.args(args).current_dir(cwd);
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
+    command
+        .output()
+        .await
+        .map_err(|e| PushGitError::Subprocess {
+            command: format!("git {}", args.join(" ")),
+            message: e.to_string(),
+        })
+}
+
 /// Like `run_git`, but for a network-bound command (fetch/push): streams parsed progress
 /// through `progress` and checks `cancel` between each chunk of
 /// output, killing the child and returning `PushGitError::Cancelled` if it's set. `--progress`

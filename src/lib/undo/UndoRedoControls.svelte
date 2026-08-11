@@ -13,6 +13,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   // regardless of which panel triggered it.
   import { redoLastOperation, undoLastOperation, undoRedoStatus } from "$lib/git/api";
   import Icon from "$lib/shell/Icon.svelte";
+  import { createReloadable } from "$lib/shell/reloadable.svelte";
 
   let {
     repoPath,
@@ -29,17 +30,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   let canRedo = $state(false);
   let redoLabel = $state<string | null>(null);
 
-  let busy = $state(false);
   let actionError = $state<string | null>(null);
 
-  let generation = 0;
-
-  $effect(() => {
-    void reload(repoPath, refreshKey);
-  });
-
-  async function reload(path: string, _refreshKey: number) {
-    const myGeneration = ++generation;
+  const undoRedoReload = createReloadable(async (path, isStale) => {
     if (!path) {
       canUndo = false;
       undoLabel = null;
@@ -50,7 +43,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
     try {
       const status = await undoRedoStatus(path);
-      if (myGeneration !== generation) return;
+      if (isStale()) return;
       canUndo = status.canUndo;
       undoLabel = status.undoLabel;
       canRedo = status.canRedo;
@@ -58,21 +51,24 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     } catch {
       // Best-effort: an undo/redo status hiccup shouldn't block the rest of the toolbar.
     }
-  }
+  });
 
-  async function runAction(fn: () => Promise<unknown>) {
-    if (busy) return;
-    busy = true;
+  let busy = $derived(undoRedoReload.busy);
+
+  $effect(() => {
+    void undoRedoReload.reload(repoPath, refreshKey);
+  });
+
+  function runAction(fn: () => Promise<unknown>) {
     actionError = null;
-    try {
-      await fn();
-      await reload(repoPath, refreshKey);
-      onChanged?.();
-    } catch (err) {
-      actionError = String(err);
-    } finally {
-      busy = false;
-    }
+    void undoRedoReload.runAction(
+      repoPath,
+      fn,
+      (message) => {
+        actionError = message;
+      },
+      onChanged,
+    );
   }
 
   function handleUndo() {

@@ -17,6 +17,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     renameStash,
   } from "$lib/git/api";
   import { confirmAsync, promptAsync } from "$lib/shell/confirmDialog.svelte";
+  import { createReloadable } from "$lib/shell/reloadable.svelte";
   import { notifyError, notifySuccess } from "$lib/shell/toast.svelte";
   import type { StashEntry } from "$lib/git/types";
 
@@ -37,18 +38,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   let stashes = $state<StashEntry[]>([]);
   let loadError = $state<string | null>(null);
 
-  let busy = $state(false);
-
   let newStashMessage = $state("");
 
-  let generation = 0;
-
-  $effect(() => {
-    void reload(repoPath, refreshKey);
-  });
-
-  async function reload(path: string, _refreshKey: number) {
-    const myGeneration = ++generation;
+  const stashReload = createReloadable(async (path, isStale) => {
     if (!path) {
       stashes = [];
       onCountChange?.(0);
@@ -58,29 +50,25 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     loadError = null;
     try {
       const list = await listStashes(path);
-      if (myGeneration !== generation) return;
+      if (isStale()) return;
       stashes = list;
       onCountChange?.(list.length);
     } catch (err) {
-      if (myGeneration === generation) {
+      if (!isStale()) {
         loadError = String(err);
         notifyError(loadError);
       }
     }
-  }
+  });
 
-  async function runAction(fn: () => Promise<void>) {
-    if (busy) return;
-    busy = true;
-    try {
-      await fn();
-      await reload(repoPath, refreshKey);
-      onChanged?.();
-    } catch (err) {
-      notifyError(String(err));
-    } finally {
-      busy = false;
-    }
+  let busy = $derived(stashReload.busy);
+
+  $effect(() => {
+    void stashReload.reload(repoPath, refreshKey);
+  });
+
+  function runAction(fn: () => Promise<void>) {
+    void stashReload.runAction(repoPath, fn, notifyError, onChanged);
   }
 
   function handleCreateSubmit(event: SubmitEvent) {

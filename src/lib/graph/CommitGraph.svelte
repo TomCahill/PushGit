@@ -37,13 +37,16 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     renameTag,
     resetTo,
   } from "$lib/git/api";
+  import {
+    describeCherryPickOutcome,
+    describeMergeOutcome,
+    describePullOutcome,
+    describeRebaseOutcome,
+  } from "$lib/git/describeOutcome";
   import type {
-    CherryPickOutcome,
     CommitGraphPage,
     CommitRow,
     GraphFilter,
-    MergeOutcome,
-    RebaseOutcome,
     Rail,
     RefMarker,
     ResetMode,
@@ -362,32 +365,6 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     }
   }
 
-  function describeMergeOutcome(branchName: string, outcome: MergeOutcome): string {
-    switch (outcome.kind) {
-      case "fast_forward":
-        return `Fast-forwarded to ${branchName}.`;
-      case "already_up_to_date":
-        return "Already up to date.";
-      case "merged":
-        return `Merged ${branchName}.`;
-      case "conflicts":
-        return `Merge stopped with ${outcome.conflicts.length} conflicting file(s).`;
-    }
-  }
-
-  function describePullOutcome(outcome: MergeOutcome): string {
-    switch (outcome.kind) {
-      case "fast_forward":
-        return "Pulled — fast-forwarded.";
-      case "already_up_to_date":
-        return "Already up to date.";
-      case "merged":
-        return "Pulled and merged.";
-      case "conflicts":
-        return `Pull stopped with ${outcome.conflicts.length} conflicting file(s).`;
-    }
-  }
-
   function handleCheckoutCommit(commit: CommitRow) {
     void runAction(() => checkoutCommit(repoPath, commit.oid));
   }
@@ -446,30 +423,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     });
   }
 
-  function describeRebaseOutcome(outcome: RebaseOutcome): string {
-    switch (outcome.kind) {
-      case "completed":
-        return "Rebase completed.";
-      case "conflicts":
-        return `Rebase paused with ${outcome.conflicts.length} conflicting file(s).`;
-    }
-  }
-
   function handleRebase(onto: string) {
     void runAction(async () => {
       const outcome = await rebaseBranch(repoPath, onto);
       actionMessage = describeRebaseOutcome(outcome);
       if (outcome.kind === "conflicts") onConflicts?.();
     });
-  }
-
-  function describeCherryPickOutcome(outcome: CherryPickOutcome): string {
-    switch (outcome.kind) {
-      case "cherry_picked":
-        return "Cherry-picked onto the current branch.";
-      case "conflicts":
-        return `Cherry-pick stopped with ${outcome.conflicts.length} conflicting file(s).`;
-    }
   }
 
   function handleCherryPick(commit: CommitRow) {

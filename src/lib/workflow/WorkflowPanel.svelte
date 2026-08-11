@@ -20,6 +20,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     startWorkflowBranch,
   } from "$lib/git/api";
   import { promptAsync } from "$lib/shell/confirmDialog.svelte";
+  import { createReloadable } from "$lib/shell/reloadable.svelte";
   import { notifyError, notifySuccess } from "$lib/shell/toast.svelte";
   import type {
     BranchInfo,
@@ -49,16 +50,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   let workflowConfig = $state<WorkflowConfig | null>(null);
   let branches = $state<BranchInfo[]>([]);
   let loadError = $state<string | null>(null);
-  let busy = $state(false);
 
-  let generation = 0;
-
-  $effect(() => {
-    void reload(repoPath, refreshKey);
-  });
-
-  async function reload(path: string, _refreshKey: number) {
-    const myGeneration = ++generation;
+  const workflowReload = createReloadable(async (path, isStale) => {
     if (!path) {
       workflowConfig = null;
       branches = [];
@@ -68,29 +61,25 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     loadError = null;
     try {
       const [config, branchList] = await Promise.all([detectWorkflow(path), listBranches(path)]);
-      if (myGeneration !== generation) return;
+      if (isStale()) return;
       workflowConfig = config;
       branches = branchList;
     } catch (err) {
-      if (myGeneration === generation) {
+      if (!isStale()) {
         loadError = String(err);
         notifyError(loadError);
       }
     }
-  }
+  });
 
-  async function runAction(fn: () => Promise<void>) {
-    if (busy) return;
-    busy = true;
-    try {
-      await fn();
-      await reload(repoPath, refreshKey);
-      onChanged?.();
-    } catch (err) {
-      notifyError(String(err));
-    } finally {
-      busy = false;
-    }
+  let busy = $derived(workflowReload.busy);
+
+  $effect(() => {
+    void workflowReload.reload(repoPath, refreshKey);
+  });
+
+  function runAction(fn: () => Promise<void>) {
+    void workflowReload.runAction(repoPath, fn, notifyError, onChanged);
   }
 
   function prefixFor(config: WorkflowConfig, kind: WorkflowBranchKind): string {
