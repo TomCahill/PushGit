@@ -25,6 +25,7 @@ import type {
   FinishOutcome,
   GitVersionCheck,
   GraphFilter,
+  HookOutputLine,
   Hunk,
   LocalAiStatus,
   MergeOutcome,
@@ -152,14 +153,22 @@ export function unstageLines(
 }
 
 /** `skipHooks` bypasses `pre-commit`/`commit-msg` — real `git commit --no-verify`'s
- *  equivalent. `post-commit` always runs regardless. */
+ *  equivalent. `post-commit` always runs regardless. `onHookOutput`, if given, is called with
+ *  each hook output line as it's produced (see `HookOutputModal`). */
 export function commitChanges(
   repoPath: string,
   message: string,
   amend: boolean,
   skipHooks: boolean,
+  onHookOutput?: (line: HookOutputLine) => void,
 ): Promise<string> {
-  return invoke("commit", { repoPath, message, amend, skipHooks });
+  return invoke("commit", {
+    repoPath,
+    message,
+    amend,
+    skipHooks,
+    hookOutput: hookOutputChannel(onHookOutput),
+  });
 }
 
 export function headCommitMessage(repoPath: string): Promise<string | null> {
@@ -456,6 +465,14 @@ function progressChannel(onProgress?: (progress: RemoteProgress) => void): Chann
   return channel;
 }
 
+function hookOutputChannel(onHookOutput?: (line: HookOutputLine) => void): Channel<HookOutputLine> {
+  const channel = new Channel<HookOutputLine>();
+  if (onHookOutput) {
+    channel.onmessage = onHookOutput;
+  }
+  return channel;
+}
+
 export function fetchRemote(
   repoPath: string,
   remoteName: string,
@@ -478,6 +495,7 @@ export function pushRemote(
   branchName: string,
   force: boolean,
   onProgress?: (progress: RemoteProgress) => void,
+  onHookOutput?: (line: HookOutputLine) => void,
 ): Promise<void> {
   return invoke("push", {
     repoPath,
@@ -485,6 +503,7 @@ export function pushRemote(
     branchName,
     force,
     progress: progressChannel(onProgress),
+    hookOutput: hookOutputChannel(onHookOutput),
   });
 }
 

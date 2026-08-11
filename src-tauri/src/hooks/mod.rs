@@ -16,6 +16,9 @@ use git2::Repository;
 
 use crate::error::{PushGitError, PushGitResult};
 
+pub mod output;
+pub use output::{HookOutputLine, OutputStream};
+
 /// A hook that ran and rejected the commit (non-zero exit) — its combined stdout+stderr
 /// becomes the shown message, matching what a terminal `git commit` prints.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,34 +75,43 @@ fn hook_path(repo: &Repository, name: &str) -> Option<PathBuf> {
 
 /// Runs a hook executable with `args`, cwd'd at the working directory and `GIT_DIR` pointed
 /// at the real `.git` (matching what real git sets for hook subprocesses) so a hook that
-/// shells back out to `git` itself sees the right repository. `Ok(None)` on success,
+/// shells back out to `git` itself sees the right repository, forwarding each output line to
+/// `on_line` as it's produced (see `output::stream_command`). `Ok(None)` on success,
 /// `Ok(Some(rejection))` on a non-zero exit — a launch failure (hook removed mid-race, not
 /// actually executable despite the permission check, etc.) is the one case that's a real
 /// `PushGitError::Subprocess`, not a rejection.
-fn run(path: &Path, args: &[&str], repo: &Repository) -> PushGitResult<Option<HookRejection>> {
+fn run(
+    path: &Path,
+    args: &[&str],
+    repo: &Repository,
+    on_line: &mut dyn FnMut(HookOutputLine),
+) -> PushGitResult<Option<HookRejection>> {
     let workdir = repo.workdir().unwrap_or_else(|| repo.path());
-    let output = Command::new(path)
+    let hook_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    let mut command = Command::new(path);
+    command
         .args(args)
         .current_dir(workdir)
         .env("GIT_DIR", repo.path())
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| PushGitError::Subprocess {
+        .stdin(Stdio::null());
+
+    let (status, combined) = output::stream_command(command, &hook_name, on_line).map_err(|e| {
+        PushGitError::Subprocess {
             command: path.display().to_string(),
             message: e.to_string(),
-        })?;
+        }
+    })?;
 
-    if output.status.success() {
+    if status.success() {
         return Ok(None);
     }
 
-    let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
-    combined.push_str(&String::from_utf8_lossy(&output.stderr));
     Ok(Some(HookRejection {
-        hook: path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default(),
+        hook: hook_name,
         output: combined.trim().to_string(),
     }))
 }
@@ -107,11 +119,14 @@ fn run(path: &Path, args: &[&str], repo: &Repository) -> PushGitResult<Option<Ho
 /// Runs `pre-commit` if present and executable. Takes no arguments, matching real git for an
 /// ordinary (non-merge, non-amend-only-message) commit — this GUI has no "amend just the
 /// message, nothing staged changed" fast path that would need `--amend` passed through.
-pub fn run_pre_commit(repo: &Repository) -> PushGitResult<Option<HookRejection>> {
+pub fn run_pre_commit(
+    repo: &Repository,
+    on_line: &mut dyn FnMut(HookOutputLine),
+) -> PushGitResult<Option<HookRejection>> {
     let Some(path) = hook_path(repo, "pre-commit") else {
         return Ok(None);
     };
-    run(&path, &[], repo)
+    run(&path, &[], repo, on_line)
 }
 
 /// Runs `commit-msg` if present and executable, against a temp file seeded with `message` —
@@ -121,6 +136,7 @@ pub fn run_pre_commit(repo: &Repository) -> PushGitResult<Option<HookRejection>>
 pub fn run_commit_msg(
     repo: &Repository,
     message: &str,
+    on_line: &mut dyn FnMut(HookOutputLine),
 ) -> PushGitResult<Result<String, HookRejection>> {
     let Some(path) = hook_path(repo, "commit-msg") else {
         return Ok(Ok(message.to_string()));
@@ -130,7 +146,7 @@ pub fn run_commit_msg(
     std::fs::write(&msg_path, message)?;
 
     let arg = msg_path.to_string_lossy().into_owned();
-    Ok(match run(&path, &[&arg], repo)? {
+    Ok(match run(&path, &[&arg], repo, on_line)? {
         Some(rejection) => Err(rejection),
         None => Ok(std::fs::read_to_string(&msg_path)?),
     })
@@ -140,9 +156,9 @@ pub fn run_commit_msg(
 /// unconditionally (even when `skip_hooks` bypassed `pre-commit`/`commit-msg` — `--no-verify`
 /// only ever bypasses those two), and neither its exit code nor its output can affect
 /// anything, so any failure here is swallowed rather than propagated.
-pub fn run_post_commit(repo: &Repository) {
+pub fn run_post_commit(repo: &Repository, on_line: &mut dyn FnMut(HookOutputLine)) {
     if let Some(path) = hook_path(repo, "post-commit") {
-        let _ = run(&path, &[], repo);
+        let _ = run(&path, &[], repo, on_line);
     }
 }
 
@@ -167,7 +183,7 @@ mod tests {
     #[test]
     fn run_pre_commit_is_a_no_op_when_no_hook_is_installed() {
         let (_dir, repo) = repo_init();
-        assert!(run_pre_commit(&repo).unwrap().is_none());
+        assert!(run_pre_commit(&repo, &mut |_| {}).unwrap().is_none());
     }
 
     #[test]
@@ -178,7 +194,7 @@ mod tests {
         fs::write(dir.join("pre-commit"), "#!/bin/sh\nexit 1\n").unwrap();
         // Left at the default (non-executable) mode a plain `fs::write` produces.
 
-        assert!(run_pre_commit(&repo).unwrap().is_none());
+        assert!(run_pre_commit(&repo, &mut |_| {}).unwrap().is_none());
     }
 
     #[test]
@@ -186,7 +202,7 @@ mod tests {
         let (_dir, repo) = repo_init();
         write_hook(&repo, "pre-commit", "#!/bin/sh\nexit 0\n");
 
-        assert!(run_pre_commit(&repo).unwrap().is_none());
+        assert!(run_pre_commit(&repo, &mut |_| {}).unwrap().is_none());
     }
 
     #[test]
@@ -198,16 +214,38 @@ mod tests {
             "#!/bin/sh\necho 'lint failed' >&2\nexit 1\n",
         );
 
-        let rejection = run_pre_commit(&repo).unwrap().unwrap();
+        let rejection = run_pre_commit(&repo, &mut |_| {}).unwrap().unwrap();
         assert_eq!(rejection.hook, "pre-commit");
         assert_eq!(rejection.output, "lint failed");
+    }
+
+    #[test]
+    fn run_pre_commit_forwards_output_lines_as_they_re_produced() {
+        let (_dir, repo) = repo_init();
+        write_hook(
+            &repo,
+            "pre-commit",
+            "#!/bin/sh\necho 'checking style' >&2\nexit 0\n",
+        );
+
+        let mut lines = Vec::new();
+        run_pre_commit(&repo, &mut |line| lines.push(line)).unwrap();
+
+        assert_eq!(
+            lines,
+            vec![HookOutputLine {
+                hook: "pre-commit".to_string(),
+                stream: OutputStream::Stderr,
+                text: "checking style".to_string(),
+            }]
+        );
     }
 
     #[test]
     fn run_commit_msg_returns_the_message_unchanged_when_no_hook_is_installed() {
         let (_dir, repo) = repo_init();
         assert_eq!(
-            run_commit_msg(&repo, "original message").unwrap(),
+            run_commit_msg(&repo, "original message", &mut |_| {}).unwrap(),
             Ok("original message".to_string())
         );
     }
@@ -222,7 +260,7 @@ mod tests {
         );
 
         assert_eq!(
-            run_commit_msg(&repo, "original message").unwrap(),
+            run_commit_msg(&repo, "original message", &mut |_| {}).unwrap(),
             Ok("rewritten by hook\n".to_string())
         );
     }
@@ -236,7 +274,7 @@ mod tests {
             "#!/bin/sh\necho 'bad message format' >&2\nexit 1\n",
         );
 
-        let result = run_commit_msg(&repo, "bad").unwrap();
+        let result = run_commit_msg(&repo, "bad", &mut |_| {}).unwrap();
         let rejection = result.unwrap_err();
         assert_eq!(rejection.hook, "commit-msg");
         assert_eq!(rejection.output, "bad message format");
@@ -247,7 +285,7 @@ mod tests {
         let (_dir, repo) = repo_init();
         write_hook(&repo, "post-commit", "#!/bin/sh\nexit 1\n");
 
-        run_post_commit(&repo); // must not panic
+        run_post_commit(&repo, &mut |_| {}); // must not panic
     }
 
     #[test]
@@ -269,7 +307,7 @@ mod tests {
         perms.set_mode(0o755);
         fs::set_permissions(&hook_path, perms).unwrap();
 
-        let rejection = run_pre_commit(&repo).unwrap().unwrap();
+        let rejection = run_pre_commit(&repo, &mut |_| {}).unwrap().unwrap();
         assert_eq!(rejection.output, "from custom dir");
     }
 }

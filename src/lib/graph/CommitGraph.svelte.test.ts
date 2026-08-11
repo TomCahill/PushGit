@@ -686,6 +686,7 @@ describe("CommitGraph", () => {
             branchName: "v1.0.0",
             force: false,
             progress: expect.anything(),
+            hookOutput: expect.anything(),
           },
         ]),
       );

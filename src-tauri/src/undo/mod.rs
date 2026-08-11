@@ -348,7 +348,7 @@ mod tests {
     fn commit_file(repo: &Repository, name: &str, content: &str) -> Oid {
         fs::write(repo.workdir().unwrap().join(name), content).unwrap();
         stage_file(repo, name).unwrap();
-        stage_commit(repo, name, false, false).unwrap()
+        stage_commit(repo, name, false, false, &mut |_| {}).unwrap()
     }
 
     #[test]
@@ -489,7 +489,7 @@ mod tests {
         let snapshot = capture(&repo).unwrap();
 
         // Blow away all working-tree/index state.
-        stage_commit(&repo, "unrelated commit", false, false).unwrap();
+        stage_commit(&repo, "unrelated commit", false, false, &mut |_| {}).unwrap();
         fs::remove_file(dir.path().join("untracked.txt")).unwrap();
 
         restore(&mut repo, &snapshot).unwrap();

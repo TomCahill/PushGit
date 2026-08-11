@@ -20,6 +20,7 @@ use crate::config;
 use crate::diff::{self, ConflictSides, FileDiff, Hunk};
 use crate::error::{PushGitError, PushGitResult};
 use crate::graph::{CommitGraphPage, GraphFilter};
+use crate::hooks::HookOutputLine;
 use crate::interactive_rebase::{self, RebaseCommitSummary, RebaseStep};
 use crate::maintenance::{self, RepoHealth};
 use crate::remote::{self, GitVersionCheck, RemoteProgress};
@@ -221,6 +222,9 @@ pub fn unstage_lines(
 /// because a `pre-commit`/`commit-msg` hook can run arbitrary, arbitrarily slow user scripts —
 /// running that synchronously (as a plain non-`async` command) would block the WebView's IPC
 /// dispatch thread, which on Linux/WebKitGTK is the GTK main loop, freezing the whole window.
+/// `hook_output` streams each hook's output lines live as they're produced (see
+/// `hooks::output::stream_command`), so the frontend can show a running transcript instead of
+/// only the final rejection message on failure.
 #[tauri::command]
 pub async fn commit(
     repo_path: String,
@@ -228,6 +232,7 @@ pub async fn commit(
     amend: bool,
     skip_hooks: bool,
     app: AppHandle,
+    hook_output: Channel<HookOutputLine>,
 ) -> PushGitResult<String> {
     let label = if amend {
         "Amend commit".to_string()
@@ -237,7 +242,9 @@ pub async fn commit(
     let oid = tokio::task::spawn_blocking(move || {
         let state = app.state::<AppState>();
         with_undo(&state, &repo_path, label, |repo| {
-            stage::commit(repo, &message, amend, skip_hooks)
+            stage::commit(repo, &message, amend, skip_hooks, &mut |line| {
+                let _ = hook_output.send(line);
+            })
         })
     })
     .await
@@ -906,6 +913,7 @@ pub async fn push(
     branch_name: String,
     force: bool,
     progress: Channel<RemoteProgress>,
+    hook_output: Channel<HookOutputLine>,
     state: State<'_, AppState>,
 ) -> PushGitResult<()> {
     let cancel = state
@@ -918,6 +926,7 @@ pub async fn push(
         &branch_name,
         force,
         &progress,
+        &hook_output,
         &cancel,
     )
     .await

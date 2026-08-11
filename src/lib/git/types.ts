@@ -193,6 +193,15 @@ export interface RemoteProgress {
   total: number | null;
 }
 
+// Mirror of `src-tauri/src/hooks/output.rs`.
+export type OutputStream = "stdout" | "stderr";
+
+export interface HookOutputLine {
+  hook: string;
+  stream: OutputStream;
+  text: string;
+}
+
 // Mirror of `src-tauri/src/undo/stack.rs`.
 export interface UndoRedoStatus {
   canUndo: boolean;

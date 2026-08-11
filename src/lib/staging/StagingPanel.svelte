@@ -29,6 +29,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import { confirmAsync } from "$lib/shell/confirmDialog.svelte";
   import Button from "$lib/shell/Button.svelte";
   import { openContextMenu, type ContextMenuItem } from "$lib/shell/contextMenu.svelte";
+  import { finishHookOutput, pushHookOutputLine, startHookOutput } from "$lib/shell/hookOutput.svelte";
   import Icon from "$lib/shell/Icon.svelte";
   import ResizeHandle from "$lib/shell/ResizeHandle.svelte";
   import { acknowledgeAiCloudWarning, settingsState } from "$lib/settings/settings.svelte";
@@ -588,8 +589,15 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     if (committing || commitDisabledReason !== null) return;
     committing = true;
     commitError = null;
+    startHookOutput(amend ? "Amend" : "Commit");
     try {
-      await commitChanges(repoPath, buildMessage(title, description), amend, skipHooks);
+      await commitChanges(
+        repoPath,
+        buildMessage(title, description),
+        amend,
+        skipHooks,
+        pushHookOutputLine,
+      );
       title = "";
       description = "";
       amend = false;
@@ -603,6 +611,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       commitError = String(err);
     } finally {
       committing = false;
+      finishHookOutput();
     }
   }
 </script>

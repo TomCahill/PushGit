@@ -24,6 +24,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import { burstConfetti } from "$lib/shell/confetti.svelte";
   import { confirmAsync } from "$lib/shell/confirmDialog.svelte";
   import Button from "$lib/shell/Button.svelte";
+  import { finishHookOutput, pushHookOutputLine, startHookOutput } from "$lib/shell/hookOutput.svelte";
   import Icon from "$lib/shell/Icon.svelte";
   import { notifyError, notifySuccess } from "$lib/shell/toast.svelte";
 
@@ -212,23 +213,35 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     const branchName = currentBranchName;
     if (!branchName) return;
     void runAction(async () => {
+      startHookOutput("Push");
       try {
-        await pushRemote(repoPath, REMOTE_NAME, branchName, false, onProgress);
-        notifySuccess(`Pushed ${branchName} to ${REMOTE_NAME}.`);
-        if (pushButtonEl) burstConfetti(pushButtonEl.getBoundingClientRect());
-      } catch (err) {
-        const message = String(err);
-        if (
-          !REJECTED_PUSH_PATTERN.test(message) ||
-          !(await confirmAsync(
-            `Push rejected: ${REMOTE_NAME} has changes you don't have locally. Force push "${branchName}" anyway? This can overwrite remote history.`,
-          ))
-        ) {
-          throw err;
+        try {
+          await pushRemote(
+            repoPath,
+            REMOTE_NAME,
+            branchName,
+            false,
+            onProgress,
+            pushHookOutputLine,
+          );
+          notifySuccess(`Pushed ${branchName} to ${REMOTE_NAME}.`);
+          if (pushButtonEl) burstConfetti(pushButtonEl.getBoundingClientRect());
+        } catch (err) {
+          const message = String(err);
+          if (
+            !REJECTED_PUSH_PATTERN.test(message) ||
+            !(await confirmAsync(
+              `Push rejected: ${REMOTE_NAME} has changes you don't have locally. Force push "${branchName}" anyway? This can overwrite remote history.`,
+            ))
+          ) {
+            throw err;
+          }
+          await pushRemote(repoPath, REMOTE_NAME, branchName, true, onProgress, pushHookOutputLine);
+          notifySuccess(`Force-pushed ${branchName} to ${REMOTE_NAME}.`);
+          if (pushButtonEl) burstConfetti(pushButtonEl.getBoundingClientRect());
         }
-        await pushRemote(repoPath, REMOTE_NAME, branchName, true, onProgress);
-        notifySuccess(`Force-pushed ${branchName} to ${REMOTE_NAME}.`);
-        if (pushButtonEl) burstConfetti(pushButtonEl.getBoundingClientRect());
+      } finally {
+        finishHookOutput();
       }
     });
   }

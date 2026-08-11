@@ -437,9 +437,18 @@ describe("StagingPanel", () => {
           return [];
         case "diff_staged":
           return [makeFileDiff({ newPath: "a.txt" })];
-        case "commit":
-          commitCalls.push(args);
+        case "commit": {
+          // `hookOutput` is a mock Channel object (non-deterministic id), so it's excluded
+          // from what gets asserted on below — same pattern as `RemotePanel`'s tests.
+          const { repoPath, message, amend, skipHooks } = args as {
+            repoPath: string;
+            message: string;
+            amend: boolean;
+            skipHooks: boolean;
+          };
+          commitCalls.push({ repoPath, message, amend, skipHooks });
           return "deadbeef";
+        }
         default:
           throw new Error(`unexpected command ${cmd}`);
       }
@@ -468,9 +477,18 @@ describe("StagingPanel", () => {
           return [];
         case "diff_staged":
           return [makeFileDiff({ newPath: "a.txt" })];
-        case "commit":
-          commitCalls.push(args);
+        case "commit": {
+          // `hookOutput` is a mock Channel object (non-deterministic id), so it's excluded
+          // from what gets asserted on below — same pattern as `RemotePanel`'s tests.
+          const { repoPath, message, amend, skipHooks } = args as {
+            repoPath: string;
+            message: string;
+            amend: boolean;
+            skipHooks: boolean;
+          };
+          commitCalls.push({ repoPath, message, amend, skipHooks });
           return "deadbeef";
+        }
         default:
           throw new Error(`unexpected command ${cmd}`);
       }
@@ -503,9 +521,18 @@ describe("StagingPanel", () => {
           return [makeFileDiff({ newPath: "a.txt" })];
         case "get_repo_config":
           return { defaultSkipHooks: true };
-        case "commit":
-          commitCalls.push(args);
+        case "commit": {
+          // `hookOutput` is a mock Channel object (non-deterministic id), so it's excluded
+          // from what gets asserted on below — same pattern as `RemotePanel`'s tests.
+          const { repoPath, message, amend, skipHooks } = args as {
+            repoPath: string;
+            message: string;
+            amend: boolean;
+            skipHooks: boolean;
+          };
+          commitCalls.push({ repoPath, message, amend, skipHooks });
           return "deadbeef";
+        }
         default:
           throw new Error(`unexpected command ${cmd}`);
       }
@@ -656,9 +683,18 @@ describe("StagingPanel", () => {
           return [];
         case "diff_staged":
           return [makeFileDiff({ newPath: "a.txt" })];
-        case "commit":
-          commitCalls.push(args);
+        case "commit": {
+          // `hookOutput` is a mock Channel object (non-deterministic id), so it's excluded
+          // from what gets asserted on below — same pattern as `RemotePanel`'s tests.
+          const { repoPath, message, amend, skipHooks } = args as {
+            repoPath: string;
+            message: string;
+            amend: boolean;
+            skipHooks: boolean;
+          };
+          commitCalls.push({ repoPath, message, amend, skipHooks });
           return "deadbeef";
+        }
         default:
           throw new Error(`unexpected command ${cmd}`);
       }
