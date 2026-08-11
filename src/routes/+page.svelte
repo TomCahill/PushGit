@@ -89,6 +89,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   } from "$lib/git/types";
   import type { UnlistenFn } from "@tauri-apps/api/event";
   import AboutDialog from "$lib/shell/AboutDialog.svelte";
+  import { checkNow } from "$lib/shell/updateCheck.svelte";
 
   const LAST_REPO_KEY = "pushgit.lastRepoPath";
   const SEARCH_DEBOUNCE_MS = 250;
@@ -193,7 +194,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   onMount(() => {
     recentRepos = loadRecentRepos();
     folders = loadRepoFolders();
-    void loadAppConfig();
+    void loadAppConfig().then(checkNow);
     void openInitialRepo();
     void listenForMenuActions();
     hideStartupSplash();

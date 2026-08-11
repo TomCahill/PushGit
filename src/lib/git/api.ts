@@ -33,6 +33,7 @@ import type {
   RebaseCommitSummary,
   RebaseOutcome,
   RebaseStep,
+  ReleaseInfo,
   RemoteProgress,
   RepoConfig,
   RepoHealth,
@@ -560,6 +561,24 @@ export function setAutoFetchIntervalMinutes(value: number): Promise<AppConfig> {
  *  running, versus staying hidden until the operation fails, returning the resulting config. */
 export function setShowHookOutputAlways(value: boolean): Promise<AppConfig> {
   return invoke("set_show_hook_output_always", { value });
+}
+
+/** Checks GitHub's public releases API for a newer PushGit release, resolving to `null` when
+ *  there isn't one or the check itself failed (offline, GitHub down) — the two are
+ *  indistinguishable by design, see `update_check::check_for_update`. */
+export function checkForUpdate(): Promise<ReleaseInfo | null> {
+  return invoke("check_for_update");
+}
+
+/** Persists whether the launch-time update check runs at all, returning the resulting config. */
+export function setCheckForUpdatesEnabled(value: boolean): Promise<AppConfig> {
+  return invoke("set_check_for_updates_enabled", { value });
+}
+
+/** Records that the user dismissed the update banner for `version`, returning the resulting
+ *  config, so it doesn't reappear on the next launch for that same release. */
+export function dismissUpdate(version: string): Promise<AppConfig> {
+  return invoke("dismiss_update", { version });
 }
 
 /** This repo's settings. Never rejects, same

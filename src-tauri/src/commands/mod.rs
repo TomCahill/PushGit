@@ -29,6 +29,7 @@ use crate::stage;
 use crate::stash::{self, StashEntry};
 use crate::state::AppState;
 use crate::undo::{OperationSummary, UndoRedoStatus};
+use crate::update_check;
 use crate::watcher;
 use crate::workflow::{self, FinishOutcome, WorkflowBranchKind, WorkflowConfig};
 
@@ -1107,6 +1108,41 @@ pub fn set_auto_fetch_interval_minutes(value: u32) -> config::AppConfig {
 pub fn set_show_hook_output_always(value: bool) -> config::AppConfig {
     let config = config::AppConfig {
         show_hook_output_always: value,
+        ..config::load_app_config()
+    };
+    config::save_app_config(&config);
+    config
+}
+
+/// Checks GitHub's public releases API for a newer PushGit release, returning `Some` only if
+/// one exists — collapses "no update" and "the check itself failed" (offline, GitHub down) to
+/// the same `None`, since the frontend has nothing more useful to do with the distinction.
+/// Always runs when called; the frontend is responsible for not calling this at all when
+/// `AppConfig::check_for_updates_enabled` is off, same split as auto-fetch's enabled flag.
+#[tauri::command]
+pub async fn check_for_update() -> Option<update_check::ReleaseInfo> {
+    update_check::check_for_update(env!("CARGO_PKG_VERSION")).await
+}
+
+/// Persists whether the launch-time update check runs at all, returning the resulting config.
+/// Same load-existing-config-first reasoning as `set_auto_fetch_enabled`.
+#[tauri::command]
+pub fn set_check_for_updates_enabled(value: bool) -> config::AppConfig {
+    let config = config::AppConfig {
+        check_for_updates_enabled: value,
+        ..config::load_app_config()
+    };
+    config::save_app_config(&config);
+    config
+}
+
+/// Records that the user dismissed the update banner for `version`, so it doesn't reappear on
+/// the next launch for that same release — a newer release afterward isn't affected, since its
+/// version won't match what's stored here.
+#[tauri::command]
+pub fn dismiss_update(version: String) -> config::AppConfig {
+    let config = config::AppConfig {
+        dismissed_update_version: Some(version),
         ..config::load_app_config()
     };
     config::save_app_config(&config);

@@ -292,6 +292,13 @@ export interface DownloadProgress {
   bytesTotal: number;
 }
 
+// Mirror of `src-tauri/src/update_check/mod.rs::ReleaseInfo`.
+export interface ReleaseInfo {
+  version: string;
+  url: string;
+  publishedAt: string;
+}
+
 // Mirror of `src-tauri/src/config/mod.rs`.
 export interface AppConfig {
   maxCommitsRendered: number;
@@ -300,6 +307,8 @@ export interface AppConfig {
   autoFetchEnabled: boolean;
   autoFetchIntervalMinutes: number;
   showHookOutputAlways: boolean;
+  checkForUpdatesEnabled: boolean;
+  dismissedUpdateVersion: string | null;
 }
 
 export interface RepoConfig {

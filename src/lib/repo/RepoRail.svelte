@@ -12,6 +12,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   // `./repoFolders.ts`) — this component just renders the list/folders and reports
   // clicks/drags/menu selections.
   import { getVersion } from "@tauri-apps/api/app";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import { onMount } from "svelte";
   import { pickRepositoryFolder } from "$lib/git/api";
   import { confirmAsync, promptAsync } from "$lib/shell/confirmDialog.svelte";
@@ -22,8 +23,15 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import NotificationsPanel from "$lib/shell/NotificationsPanel.svelte";
   import Popover from "$lib/shell/Popover.svelte";
   import { unreadNotificationCount } from "$lib/shell/toast.svelte";
+  import { dismiss as dismissUpdateBanner, updateCheckState } from "$lib/shell/updateCheck.svelte";
   import { repoDisplayName, type RecentRepo } from "./recentRepos";
   import type { RepoFolder } from "./repoFolders";
+
+  // A plain `<a target="_blank">` doesn't open the system browser from inside a Tauri
+  // webview — same `preventDefault` + opener-plugin pattern as `AboutDialog.svelte`'s Ko-fi link.
+  function handleViewRelease() {
+    if (updateCheckState.available) void openUrl(updateCheckState.available.url);
+  }
 
   let appVersion = $state("");
   onMount(() => {
@@ -305,6 +313,23 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     {/if}
   </div>
 
+  {#if updateCheckState.available}
+    <div class="update-banner">
+      <button type="button" class="update-link" onclick={handleViewRelease}>
+        <Icon name="download" size={13} />
+        <span>v{updateCheckState.available.version} available</span>
+      </button>
+      <button
+        type="button"
+        class="update-dismiss"
+        title="Dismiss"
+        onclick={() => void dismissUpdateBanner()}
+      >
+        <Icon name="x" size={11} />
+      </button>
+    </div>
+  {/if}
+
   <Button variant="tonal" title="Open a repository" onclick={handleOpenClick}>
     <Icon name="folder" size={14} /> Open
   </Button>
@@ -535,6 +560,50 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     margin: 0;
     color: var(--danger);
     font-size: 0.8rem;
+  }
+
+  .update-banner {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0.35rem 0.5rem;
+    background: var(--accent-bg);
+    border-radius: var(--radius-md);
+  }
+
+  .update-link {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    gap: 0.35rem;
+    min-width: 0;
+    padding: 0;
+    color: var(--accent);
+    background: none;
+    border: none;
+    font: inherit;
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .update-dismiss {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 1.3rem;
+    height: 1.3rem;
+    color: var(--text-muted);
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+
+  .update-dismiss:hover {
+    color: var(--accent);
   }
 
   .repos {
