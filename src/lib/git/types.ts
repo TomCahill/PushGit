@@ -39,6 +39,9 @@ export interface CommitRow {
   committerTime: number;
   parents: string[];
   isMerge: boolean;
+  /** `false` for a commit only reachable via a local branch's ahead-of-local upstream — a
+   *  fetched but not-yet-pulled commit. Always `true` for `kind !== "commit"`. */
+  isLocal: boolean;
   lane: number;
   colorId: number;
   refs: RefMarker[];
@@ -190,6 +193,15 @@ export interface RemoteProgress {
   total: number | null;
 }
 
+// Mirror of `src-tauri/src/hooks/output.rs`.
+export type OutputStream = "stdout" | "stderr";
+
+export interface HookOutputLine {
+  hook: string;
+  stream: OutputStream;
+  text: string;
+}
+
 // Mirror of `src-tauri/src/undo/stack.rs`.
 export interface UndoRedoStatus {
   canUndo: boolean;
@@ -287,6 +299,7 @@ export interface AppConfig {
   ai: AiSettings;
   autoFetchEnabled: boolean;
   autoFetchIntervalMinutes: number;
+  showHookOutputAlways: boolean;
 }
 
 export interface RepoConfig {

@@ -27,6 +27,7 @@ export function makeCommitRow(overrides: Partial<CommitRow> = {}): CommitRow {
     committerTime: 1700000000,
     parents: [],
     isMerge: false,
+    isLocal: true,
     lane: 0,
     colorId: 0,
     refs: [],

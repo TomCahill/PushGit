@@ -29,6 +29,7 @@ use tokio::process::Command;
 
 use crate::branch::{self, MergeOutcome};
 use crate::error::{PushGitError, PushGitResult};
+use crate::hooks::{HookOutputLine, OutputStream};
 
 /// Forwards at most one update per ~60ms.
 const PROGRESS_THROTTLE: Duration = Duration::from_millis(60);
@@ -73,10 +74,18 @@ pub(crate) async fn run_git(args: &[&str], cwd: Option<&Path>) -> PushGitResult<
 /// must already be in `args` — git suppresses its own progress reporting by default whenever
 /// stderr isn't a terminal, which a piped subprocess never is, so without it this would
 /// silently never produce anything to parse.
+///
+/// `hook_output`, when given, also receives every line that *doesn't* parse as progress —
+/// this is push's only avenue for surfacing `pre-push` hook output live, since the hook runs
+/// inside this `git` subprocess and git never tags its own stderr chatter separately from
+/// whatever the hook prints. So this is really "live raw stderr for the operation", a superset
+/// that happens to include the hook's lines, not an isolated hook transcript. `None` for
+/// `fetch`, which runs no hook worth showing this way.
 async fn run_git_streaming(
     args: &[&str],
     cwd: Option<&Path>,
     progress: &Channel<RemoteProgress>,
+    hook_output: Option<&Channel<HookOutputLine>>,
     cancel: &Arc<AtomicBool>,
 ) -> PushGitResult<()> {
     let mut command = Command::new("git");
@@ -126,6 +135,15 @@ async fn run_git_streaming(
             if due {
                 let _ = progress.send(update);
                 last_sent = Some(Instant::now());
+            }
+        } else if let Some(channel) = hook_output {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                let _ = channel.send(HookOutputLine {
+                    hook: "push".to_string(),
+                    stream: OutputStream::Stderr,
+                    text: trimmed.to_string(),
+                });
             }
         }
     }
@@ -189,6 +207,7 @@ pub async fn fetch(
         ],
         Some(repo_path),
         progress,
+        None,
         cancel,
     )
     .await
@@ -231,13 +250,16 @@ pub async fn pull(
 /// Pushes `branch_name` to `remote_name`, using a matching refspec (`branch:branch`),
 /// streaming progress and honoring `cancel`. Always passes
 /// `--follow-tags`, so annotated tags reachable from the pushed commits go along with it —
-/// unlike `--tags`, this never pushes unrelated local-only tags.
+/// unlike `--tags`, this never pushes unrelated local-only tags. `hook_output` gets the raw
+/// non-progress stderr lines — see `run_git_streaming`'s doc comment for why that's the closest
+/// thing to a live `pre-push` transcript this can offer.
 pub async fn push(
     repo_path: &Path,
     remote_name: &str,
     branch_name: &str,
     force: bool,
     progress: &Channel<RemoteProgress>,
+    hook_output: &Channel<HookOutputLine>,
     cancel: &Arc<AtomicBool>,
 ) -> PushGitResult<()> {
     let refspec = format!("{branch_name}:{branch_name}");
@@ -248,7 +270,7 @@ pub async fn push(
     args.push(remote_name);
     args.push(&refspec);
 
-    run_git_streaming(&args, Some(repo_path), progress, cancel).await
+    run_git_streaming(&args, Some(repo_path), progress, Some(hook_output), cancel).await
 }
 
 /// Clones `url` into `dest`, which must not already exist.
@@ -266,6 +288,7 @@ mod tests {
     use super::*;
     use crate::test_support::{repo_init, set_test_identity};
     use std::fs;
+    use std::os::unix::fs::PermissionsExt;
     use std::path::Path as StdPath;
 
     fn commit_file(repo: &git2::Repository, name: &str, content: &str) -> git2::Oid {
@@ -291,6 +314,11 @@ mod tests {
     /// that only care about the fetch/push/pull outcome, not the progress stream itself.
     fn no_op_progress() -> (Channel<RemoteProgress>, Arc<AtomicBool>) {
         (Channel::new(|_| Ok(())), Arc::new(AtomicBool::new(false)))
+    }
+
+    /// Like `no_op_progress`, for push's hook-output channel.
+    fn no_op_hook_output() -> Channel<HookOutputLine> {
+        Channel::new(|_| Ok(()))
     }
 
     #[tokio::test]
@@ -331,9 +359,18 @@ mod tests {
             .unwrap();
         let head_name = repo_a.head().unwrap().shorthand().unwrap().to_string();
         let (progress, cancel) = no_op_progress();
-        push(&dest_a, "origin", &head_name, false, &progress, &cancel)
-            .await
-            .unwrap();
+        let hook_output = no_op_hook_output();
+        push(
+            &dest_a,
+            "origin",
+            &head_name,
+            false,
+            &progress,
+            &hook_output,
+            &cancel,
+        )
+        .await
+        .unwrap();
 
         let dest_b = tempfile::TempDir::new().unwrap().keep();
         clone(remote_url, &dest_b).await.unwrap();
@@ -341,9 +378,17 @@ mod tests {
 
         // dest_a pushes a new commit; dest_b should be able to fetch it.
         commit_file(&repo_a, "more.txt", "more\n");
-        push(&dest_a, "origin", &head_name, false, &progress, &cancel)
-            .await
-            .unwrap();
+        push(
+            &dest_a,
+            "origin",
+            &head_name,
+            false,
+            &progress,
+            &hook_output,
+            &cancel,
+        )
+        .await
+        .unwrap();
 
         fetch(&dest_b, "origin", &progress, &cancel).await.unwrap();
         let repo_b = crate::repo::open(&dest_b).unwrap();
@@ -376,9 +421,18 @@ mod tests {
         let head_name = repo_a.head().unwrap().shorthand().unwrap().to_string();
         repo_a.remote("origin", remote_url).unwrap();
         let (progress, cancel) = no_op_progress();
-        push(&dest_a, "origin", &head_name, false, &progress, &cancel)
-            .await
-            .unwrap();
+        let hook_output = no_op_hook_output();
+        push(
+            &dest_a,
+            "origin",
+            &head_name,
+            false,
+            &progress,
+            &hook_output,
+            &cancel,
+        )
+        .await
+        .unwrap();
 
         let dest_b = tempfile::TempDir::new().unwrap().keep();
         clone(remote_url, &dest_b).await.unwrap();
@@ -389,9 +443,17 @@ mod tests {
             .unwrap();
 
         commit_file(&repo_a, "more.txt", "more\n");
-        push(&dest_a, "origin", &head_name, false, &progress, &cancel)
-            .await
-            .unwrap();
+        push(
+            &dest_a,
+            "origin",
+            &head_name,
+            false,
+            &progress,
+            &hook_output,
+            &cancel,
+        )
+        .await
+        .unwrap();
 
         let outcome = pull(&dest_b, "origin", &progress, &cancel).await.unwrap();
 
@@ -430,11 +492,20 @@ mod tests {
             *received_for_callback.lock().unwrap() += 1;
             Ok(())
         });
+        let hook_output = no_op_hook_output();
         let cancel = Arc::new(AtomicBool::new(false));
 
-        push(&dest_a, "origin", &head_name, false, &progress, &cancel)
-            .await
-            .unwrap();
+        push(
+            &dest_a,
+            "origin",
+            &head_name,
+            false,
+            &progress,
+            &hook_output,
+            &cancel,
+        )
+        .await
+        .unwrap();
 
         assert!(
             *received.lock().unwrap() > 0,
@@ -466,14 +537,91 @@ mod tests {
         repo.remote("origin", remote_url).unwrap();
 
         let (progress, cancel) = no_op_progress();
-        push(&dest, "origin", &head_name, false, &progress, &cancel)
-            .await
-            .unwrap();
+        let hook_output = no_op_hook_output();
+        push(
+            &dest,
+            "origin",
+            &head_name,
+            false,
+            &progress,
+            &hook_output,
+            &cancel,
+        )
+        .await
+        .unwrap();
 
         let remote_repo = git2::Repository::open(remote_dir.path()).unwrap();
         assert!(
             remote_repo.find_reference("refs/tags/v1.0.0").is_ok(),
             "expected --follow-tags to push the annotated tag along with the branch"
+        );
+    }
+
+    #[tokio::test]
+    async fn push_forwards_a_pre_push_hook_s_output_live() {
+        let remote_dir = bare_remote();
+        let remote_url = remote_dir.path().to_str().unwrap();
+
+        let dest = tempfile::TempDir::new().unwrap().keep();
+        let repo = git2::Repository::init(&dest).unwrap();
+        set_test_identity(&repo);
+        fs::write(dest.join("a.txt"), "a\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(StdPath::new("a.txt")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let sig = repo.signature().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "seed", &tree, &[])
+            .unwrap();
+        let head_name = repo.head().unwrap().shorthand().unwrap().to_string();
+        repo.remote("origin", remote_url).unwrap();
+
+        let hooks_dir = repo.path().join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+        let hook_path = hooks_dir.join("pre-push");
+        fs::write(
+            &hook_path,
+            "#!/bin/sh\necho 'running pre-push checks' >&2\nexit 0\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&hook_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&hook_path, perms).unwrap();
+
+        let (progress, cancel) = no_op_progress();
+        let received = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let received_for_callback = received.clone();
+        let hook_output = Channel::new(move |body| {
+            if let tauri::ipc::InvokeResponseBody::Json(json) = body {
+                let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+                received_for_callback
+                    .lock()
+                    .unwrap()
+                    .push(value["text"].as_str().unwrap().to_string());
+            }
+            Ok(())
+        });
+
+        push(
+            &dest,
+            "origin",
+            &head_name,
+            false,
+            &progress,
+            &hook_output,
+            &cancel,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            received
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|line| line == "running pre-push checks"),
+            "expected the pre-push hook's stderr line to be forwarded as hook output, got: {:?}",
+            received.lock().unwrap()
         );
     }
 

@@ -30,6 +30,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     setAutoFetchIntervalMinutes,
     setMaxCommitsRendered,
     setReduceMotion,
+    setShowHookOutputAlways,
     settingsState,
   } from "./settings.svelte";
   import { notifyError } from "$lib/shell/toast.svelte";
@@ -165,6 +166,16 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       await setReduceMotion(value);
     } catch (err) {
       settingsState.reduceMotion = !value; // revert the optimistic checkbox toggle
+      notifyError(String(err));
+    }
+  }
+
+  async function handleShowHookOutputAlwaysChange() {
+    const value = settingsState.showHookOutputAlways;
+    try {
+      await setShowHookOutputAlways(value);
+    } catch (err) {
+      settingsState.showHookOutputAlways = !value; // revert the optimistic checkbox toggle
       notifyError(String(err));
     }
   }
@@ -378,6 +389,21 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         </div>
         <Switch bind:checked={settingsState.reduceMotion} onchange={handleReduceMotionChange} />
       </label>
+
+      <label class="switch-row">
+        <div class="switch-row-text">
+          <span>Always show hook output</span>
+        </div>
+        <Switch
+          bind:checked={settingsState.showHookOutputAlways}
+          onchange={handleShowHookOutputAlwaysChange}
+        />
+      </label>
+      <p class="hint">
+        Opens the commit/push hook output transcript as soon as a hook starts running. Off
+        keeps it hidden — still recording in the background — until the operation actually
+        fails.
+      </p>
 
       <label class="switch-row">
         <div class="switch-row-text">

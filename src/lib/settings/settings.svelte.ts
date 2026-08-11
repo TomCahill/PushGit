@@ -27,6 +27,7 @@ import {
   setAutoFetchIntervalMinutes as setAutoFetchIntervalMinutesCommand,
   setMaxCommitsRendered as setMaxCommitsRenderedCommand,
   setReduceMotion as setReduceMotionCommand,
+  setShowHookOutputAlways as setShowHookOutputAlwaysCommand,
 } from "$lib/git/api";
 import type {
   AiSettings,
@@ -72,6 +73,9 @@ interface SettingsState {
    *  one a manual Fetch click would use. */
   autoFetchEnabled: boolean;
   autoFetchIntervalMinutes: number;
+  /** Whether the commit/push hook-output transcript opens immediately when a hook starts
+   *  running. Off means it stays hidden (still recording) until the operation fails. */
+  showHookOutputAlways: boolean;
   /** Whether an AI provider API key is currently saved — the key's value itself is never
    *  read back into the frontend, see `hasAiApiKey`. */
   hasAiApiKey: boolean;
@@ -88,6 +92,7 @@ export const settingsState: SettingsState = $state({
   ai: { ...DEFAULT_AI_SETTINGS },
   autoFetchEnabled: true,
   autoFetchIntervalMinutes: DEFAULT_AUTO_FETCH_INTERVAL_MINUTES,
+  showHookOutputAlways: true,
   hasAiApiKey: false,
   localAiStatus: { ...DEFAULT_LOCAL_AI_STATUS },
   localAiDownloadProgress: null,
@@ -105,6 +110,7 @@ export async function loadAppConfig(): Promise<void> {
     settingsState.ai = config.ai;
     settingsState.autoFetchEnabled = config.autoFetchEnabled;
     settingsState.autoFetchIntervalMinutes = config.autoFetchIntervalMinutes;
+    settingsState.showHookOutputAlways = config.showHookOutputAlways;
   } catch {
     // Keep the hardcoded defaults.
   }
@@ -185,6 +191,13 @@ export async function setAutoFetchEnabled(value: boolean): Promise<void> {
 export async function setAutoFetchIntervalMinutes(value: number): Promise<void> {
   const config = await setAutoFetchIntervalMinutesCommand(value);
   settingsState.autoFetchIntervalMinutes = config.autoFetchIntervalMinutes;
+}
+
+/** Persists whether the hook-output transcript opens immediately or only on failure;
+ *  `settingsState` is updated from the backend's response. */
+export async function setShowHookOutputAlways(value: boolean): Promise<void> {
+  const config = await setShowHookOutputAlwaysCommand(value);
+  settingsState.showHookOutputAlways = config.showHookOutputAlways;
 }
 
 /** Persists the chosen AI transport (`null` clears it); `settingsState.ai` is updated from

@@ -384,7 +384,7 @@ mod tests {
             .is_ok());
 
         branch::write_resolved_conflict(&repo, "shared.txt", "resolved\n").unwrap();
-        stage::commit(&repo, "Merge feature/conflict", false, true).unwrap();
+        stage::commit(&repo, "Merge feature/conflict", false, true, &mut |_| {}).unwrap();
 
         let outcome =
             finish_branch(&repo, &config, WorkflowBranchKind::Feature, "conflict").unwrap();

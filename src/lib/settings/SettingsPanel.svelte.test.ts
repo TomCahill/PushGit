@@ -21,6 +21,7 @@ describe("SettingsPanel", () => {
     settingsState.ai = { transport: null, instructions: "", cloudWarningAcknowledged: false };
     settingsState.autoFetchEnabled = false;
     settingsState.autoFetchIntervalMinutes = DEFAULT_AUTO_FETCH_INTERVAL_MINUTES;
+    settingsState.showHookOutputAlways = true;
     settingsState.hasAiApiKey = false;
     settingsState.localAiStatus = { modelPresent: false, enginePresent: false, gpuDevice: null };
     settingsState.localAiDownloadProgress = null;
@@ -115,6 +116,39 @@ describe("SettingsPanel", () => {
     await fireEvent.click(checkbox);
 
     await waitFor(() => expect(checkbox.checked).toBe(false));
+    expect(toastState.toasts.map((t) => t.message)).toContain("disk full");
+  });
+
+  it("saves the show-hook-output-always preference as soon as the checkbox is toggled", async () => {
+    mockIPC((cmd, args) => {
+      if (cmd === "set_show_hook_output_always") {
+        expect(args).toEqual({ value: false });
+        return { maxCommitsRendered: DEFAULT_MAX_COMMITS_RENDERED, showHookOutputAlways: false };
+      }
+      throw new Error(`unexpected command ${cmd}`);
+    });
+
+    const { getByLabelText } = render(SettingsPanel);
+    const checkbox = getByLabelText("Always show hook output") as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+
+    await fireEvent.click(checkbox);
+
+    expect(checkbox.checked).toBe(false);
+  });
+
+  it("reverts the show-hook-output-always checkbox and shows an error toast when the save fails", async () => {
+    mockIPC((cmd) => {
+      if (cmd === "set_show_hook_output_always") throw "disk full";
+      throw new Error(`unexpected command ${cmd}`);
+    });
+
+    const { getByLabelText } = render(SettingsPanel);
+    const checkbox = getByLabelText("Always show hook output") as HTMLInputElement;
+
+    await fireEvent.click(checkbox);
+
+    await waitFor(() => expect(checkbox.checked).toBe(true));
     expect(toastState.toasts.map((t) => t.message)).toContain("disk full");
   });
 

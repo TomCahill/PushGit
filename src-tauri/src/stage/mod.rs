@@ -204,16 +204,17 @@ pub fn commit(
     message: &str,
     amend: bool,
     skip_hooks: bool,
+    on_hook_line: &mut dyn FnMut(hooks::HookOutputLine),
 ) -> PushGitResult<Oid> {
     if !skip_hooks {
-        if let Some(rejection) = hooks::run_pre_commit(repo)? {
+        if let Some(rejection) = hooks::run_pre_commit(repo, on_hook_line)? {
             return Err(rejection.into());
         }
     }
     let message = if skip_hooks {
         message.to_string()
     } else {
-        hooks::run_commit_msg(repo, message)?.map_err(PushGitError::from)?
+        hooks::run_commit_msg(repo, message, on_hook_line)?.map_err(PushGitError::from)?
     };
 
     let mut index = repo.index()?;
@@ -255,7 +256,7 @@ pub fn commit(
         oid
     };
 
-    hooks::run_post_commit(repo);
+    hooks::run_post_commit(repo, on_hook_line);
     Ok(oid)
 }
 
@@ -705,7 +706,7 @@ mod tests {
         fs::write(dir.path().join("new.txt"), "hello\n").unwrap();
         stage_file(&repo, "new.txt").unwrap();
 
-        let new_oid = commit(&repo, "add new.txt", false, false).unwrap();
+        let new_oid = commit(&repo, "add new.txt", false, false, &mut |_| {}).unwrap();
 
         assert_ne!(new_oid, head_before);
         let head_after = repo.head().unwrap().target().unwrap();
@@ -737,7 +738,7 @@ mod tests {
         fs::write(dir.path().join("new.txt"), "hello\n").unwrap();
         stage_file(&repo, "new.txt").unwrap();
 
-        let err = commit(&repo, "add new.txt", false, false).unwrap_err();
+        let err = commit(&repo, "add new.txt", false, false, &mut |_| {}).unwrap_err();
 
         assert!(err.to_string().contains("lint failed"));
         assert_eq!(repo.head().unwrap().target().unwrap(), head_before);
@@ -754,7 +755,7 @@ mod tests {
         fs::write(dir.path().join("new.txt"), "hello\n").unwrap();
         stage_file(&repo, "new.txt").unwrap();
 
-        let oid = commit(&repo, "original message", false, false).unwrap();
+        let oid = commit(&repo, "original message", false, false, &mut |_| {}).unwrap();
 
         assert_eq!(
             repo.find_commit(oid).unwrap().message(),
@@ -769,7 +770,7 @@ mod tests {
         fs::write(dir.path().join("new.txt"), "hello\n").unwrap();
         stage_file(&repo, "new.txt").unwrap();
 
-        let oid = commit(&repo, "add new.txt", false, true).unwrap();
+        let oid = commit(&repo, "add new.txt", false, true, &mut |_| {}).unwrap();
 
         assert_eq!(
             repo.find_commit(oid).unwrap().message(),
@@ -789,7 +790,7 @@ mod tests {
         fs::write(dir.path().join("new.txt"), "hello\n").unwrap();
         stage_file(&repo, "new.txt").unwrap();
 
-        commit(&repo, "add new.txt", false, true).unwrap();
+        commit(&repo, "add new.txt", false, true, &mut |_| {}).unwrap();
 
         assert!(
             marker.exists(),
@@ -806,7 +807,7 @@ mod tests {
         fs::write(dir.path().join("new.txt"), "hello\n").unwrap();
         stage_file(&repo, "new.txt").unwrap();
 
-        let amended_oid = commit(&repo, "amended message", true, false).unwrap();
+        let amended_oid = commit(&repo, "amended message", true, false, &mut |_| {}).unwrap();
 
         let amended = repo.find_commit(amended_oid).unwrap();
         assert_eq!(amended.parent_count(), original_parent_count);
@@ -836,7 +837,8 @@ mod tests {
         fs::write(dir.path().join("shared.txt"), "resolved\n").unwrap();
         stage_file(&repo, "shared.txt").unwrap();
 
-        let merge_commit_oid = commit(&repo, "Merge branch 'feature'", false, false).unwrap();
+        let merge_commit_oid =
+            commit(&repo, "Merge branch 'feature'", false, false, &mut |_| {}).unwrap();
 
         let merge_commit = repo.find_commit(merge_commit_oid).unwrap();
         assert_eq!(merge_commit.parent_count(), 2);
@@ -886,7 +888,7 @@ mod tests {
         fs::write(dir.path().join("shared.txt"), "resolved\n").unwrap();
         stage_file(&repo, "shared.txt").unwrap();
 
-        let new_oid = commit(&repo, "shared.txt", false, false).unwrap();
+        let new_oid = commit(&repo, "shared.txt", false, false, &mut |_| {}).unwrap();
 
         let new_commit = repo.find_commit(new_oid).unwrap();
         assert_eq!(new_commit.parent_count(), 1);

@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use git2::{Oid, Repository, Sort, StatusOptions};
+use git2::{BranchType, Oid, Repository, Sort, StatusOptions};
 use tokio::sync::Mutex;
 
 use crate::error::{PushGitError, PushGitResult};
@@ -58,6 +58,9 @@ pub struct GraphSession {
     /// rows spliced in, which shouldn't skew the commit-graph-file-writing threshold.
     commit_count: usize,
     refs_by_oid: HashMap<Oid, Vec<RefMarker>>,
+    /// Oids reachable from a local ref (`HEAD`/`refs/heads/*`) — every other oid in `entries`
+    /// is only reachable via a tracked branch's ahead upstream. See `CommitRow::is_local`.
+    local_oids: HashSet<Oid>,
     lane_tracker: LaneTracker,
     color_assigner: ColorAssigner,
     next_index: usize,
@@ -78,20 +81,49 @@ impl GraphSession {
     pub fn open(repo_path: &Path, filter: &GraphFilter) -> PushGitResult<Self> {
         let mut repo = crate::repo::open(repo_path)?;
 
-        let mut revwalk = repo.revwalk()?;
-        revwalk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
+        let (local_oids, ordered_oids) = if filter.refs.is_empty() {
+            // Local-only walk first, so `is_local` can later tell an ordinary commit apart
+            // from one only reachable via a tracked branch's ahead-of-local upstream.
+            let mut local_walk = repo.revwalk()?;
+            local_walk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
+            local_walk.push_glob("refs/heads/*")?;
+            let _ = local_walk.push_head();
+            let local_oids: HashSet<Oid> = local_walk.collect::<Result<HashSet<_>, _>>()?;
 
-        if filter.refs.is_empty() {
+            // The real walk: local roots plus, for every local branch with a configured
+            // upstream, that upstream's tip — surfacing fetched-but-not-yet-pulled commits
+            // (`COMMIT_GRAPH.md`'s remote-tracking color-key rule already anticipated a lane
+            // whose current occupant is a remote-only tip, it just never had one to render).
+            // A branch with no upstream, or an upstream `git2` can't resolve, contributes
+            // nothing — same silent-skip contract `branch::list_branches`'s own ahead/behind
+            // computation already uses.
+            let mut revwalk = repo.revwalk()?;
+            revwalk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
             revwalk.push_glob("refs/heads/*")?;
             let _ = revwalk.push_head();
+            for branch in repo.branches(Some(BranchType::Local))? {
+                let (branch, _) = branch?;
+                if let Ok(upstream) = branch.upstream() {
+                    if let Some(target) = upstream.get().target() {
+                        let _ = revwalk.push(target);
+                    }
+                }
+            }
+            let ordered_oids = revwalk.collect::<Result<Vec<_>, _>>()?;
+
+            (local_oids, ordered_oids)
         } else {
+            let mut revwalk = repo.revwalk()?;
+            revwalk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
             for name in &filter.refs {
                 let oid = repo.revparse_single(name)?.peel_to_commit()?.id();
                 revwalk.push(oid)?;
             }
-        }
+            let ordered_oids = revwalk.collect::<Result<Vec<_>, _>>()?;
+            let local_oids: HashSet<Oid> = ordered_oids.iter().copied().collect();
+            (local_oids, ordered_oids)
+        };
 
-        let ordered_oids = revwalk.collect::<Result<Vec<_>, _>>()?;
         let refs_by_oid = build_refs_by_oid(&repo)?;
         let commit_count = ordered_oids.len();
 
@@ -120,6 +152,7 @@ impl GraphSession {
             entries,
             commit_count,
             refs_by_oid,
+            local_oids,
             lane_tracker: LaneTracker::new(),
             color_assigner: ColorAssigner::with_cache(
                 ColorAssigner::default_persistent_patterns(),
@@ -170,6 +203,7 @@ impl GraphSession {
         {
             let repo = &self.repo;
             let refs_by_oid = &self.refs_by_oid;
+            let local_oids = &self.local_oids;
             let lane_tracker = &mut self.lane_tracker;
             let color_assigner = &mut self.color_assigner;
             let flat_list = self.flat_list;
@@ -219,6 +253,7 @@ impl GraphSession {
                             committer_time: committer.when().seconds(),
                             parents: parent_ids.iter().map(Oid::to_string).collect(),
                             is_merge: parent_ids.len() > 1,
+                            is_local: local_oids.contains(&oid),
                             lane: layout.lane,
                             color_id: layout.color_id,
                             refs: refs_by_oid.get(&oid).cloned().unwrap_or_default(),
@@ -249,6 +284,7 @@ impl GraphSession {
                             committer_time: 0,
                             parents: vec![parent.to_string()],
                             is_merge: false,
+                            is_local: true,
                             lane: layout.lane,
                             color_id: layout.color_id,
                             refs: Vec::new(),
@@ -285,6 +321,7 @@ impl GraphSession {
                             committer_time: committer.when().seconds(),
                             parents: vec![parent.to_string()],
                             is_merge: false,
+                            is_local: true,
                             lane: layout.lane,
                             color_id: layout.color_id,
                             refs: Vec::new(),
@@ -683,6 +720,71 @@ mod tests {
             .find(|r| r.name == "origin/main")
             .unwrap();
         assert!(!remote_ref.is_head);
+    }
+
+    #[test]
+    fn commits_only_reachable_via_an_ahead_upstream_are_marked_not_local() {
+        let (dir, repo) = repo_init();
+        // Use the repo itself as its own "remote", mirroring
+        // `branch::ahead_behind_counts_reflect_divergence_from_upstream`.
+        let remote_path = dir.path().to_str().unwrap();
+        repo.remote("origin", remote_path).unwrap();
+        let base = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.reference("refs/remotes/origin/main", base.id(), true, "")
+            .unwrap();
+        let mut branch = repo.find_branch("main", git2::BranchType::Local).unwrap();
+        branch.set_upstream(Some("origin/main")).unwrap();
+
+        // Two commits only on the "remote" tracking ref — never on refs/heads/main.
+        let ahead_one = repo
+            .find_commit(commit_file(&repo, "a.txt", "a", &[&base]))
+            .unwrap();
+        let ahead_two = commit_file(&repo, "b.txt", "b", &[&ahead_one]);
+        repo.reference("refs/remotes/origin/main", ahead_two, true, "")
+            .unwrap();
+
+        let mut session = GraphSession::open(dir.path(), &GraphFilter::default()).unwrap();
+        let page = session.next_page(10).unwrap();
+
+        let local_row = page
+            .rows
+            .iter()
+            .find(|r| r.oid == base.id().to_string())
+            .unwrap();
+        assert!(local_row.is_local);
+
+        let ahead_one_row = page
+            .rows
+            .iter()
+            .find(|r| r.oid == ahead_one.id().to_string())
+            .unwrap();
+        assert!(!ahead_one_row.is_local);
+
+        let ahead_two_row = page
+            .rows
+            .iter()
+            .find(|r| r.oid == ahead_two.to_string())
+            .unwrap();
+        assert!(!ahead_two_row.is_local);
+        // The lane the two ahead commits sit on must still resolve down to the shared base's
+        // lane — no dangling `PassThrough` awaiting an oid the sweep never reaches.
+        assert!(ahead_two_row
+            .rails
+            .iter()
+            .any(|r| r.kind == RailKind::ParentEdge));
+    }
+
+    #[test]
+    fn a_branch_with_no_upstream_configured_contributes_no_extra_roots() {
+        let (dir, repo) = repo_init();
+        let base = repo.head().unwrap().peel_to_commit().unwrap();
+
+        let mut session = GraphSession::open(dir.path(), &GraphFilter::default()).unwrap();
+        let page = session.next_page(10).unwrap();
+
+        assert_eq!(page.rows.len(), 1);
+        assert!(page.rows[0].is_local);
+        assert_eq!(page.rows[0].oid, base.id().to_string());
     }
 
     #[test]

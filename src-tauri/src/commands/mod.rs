@@ -8,7 +8,7 @@ use std::path::Path;
 
 use git2::Repository;
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::ai;
 use crate::blame::{self, BlameLine, FileHistoryEntry};
@@ -18,8 +18,9 @@ use crate::branch::{
 use crate::cherry_pick_range;
 use crate::config;
 use crate::diff::{self, ConflictSides, FileDiff, Hunk};
-use crate::error::PushGitResult;
+use crate::error::{PushGitError, PushGitResult};
 use crate::graph::{CommitGraphPage, GraphFilter};
+use crate::hooks::HookOutputLine;
 use crate::interactive_rebase::{self, RebaseCommitSummary, RebaseStep};
 use crate::maintenance::{self, RepoHealth};
 use crate::remote::{self, GitVersionCheck, RemoteProgress};
@@ -217,23 +218,37 @@ pub fn unstage_lines(
 
 /// Commits the current index tree; `amend` rewrites HEAD in place instead of creating a
 /// new commit. `skip_hooks` bypasses `pre-commit`/`commit-msg` (real `git commit
-/// --no-verify`'s equivalent) — see `hooks/mod.rs` and `stage::commit`.
+/// --no-verify`'s equivalent) — see `hooks/mod.rs` and `stage::commit`. `async` + `spawn_blocking`
+/// because a `pre-commit`/`commit-msg` hook can run arbitrary, arbitrarily slow user scripts —
+/// running that synchronously (as a plain non-`async` command) would block the WebView's IPC
+/// dispatch thread, which on Linux/WebKitGTK is the GTK main loop, freezing the whole window.
+/// `hook_output` streams each hook's output lines live as they're produced (see
+/// `hooks::output::stream_command`), so the frontend can show a running transcript instead of
+/// only the final rejection message on failure.
 #[tauri::command]
-pub fn commit(
+pub async fn commit(
     repo_path: String,
     message: String,
     amend: bool,
     skip_hooks: bool,
-    state: State<'_, AppState>,
+    app: AppHandle,
+    hook_output: Channel<HookOutputLine>,
 ) -> PushGitResult<String> {
     let label = if amend {
         "Amend commit".to_string()
     } else {
         format!("Commit '{message}'")
     };
-    let oid = with_undo(&state, &repo_path, label, |repo| {
-        stage::commit(repo, &message, amend, skip_hooks)
-    })?;
+    let oid = tokio::task::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        with_undo(&state, &repo_path, label, |repo| {
+            stage::commit(repo, &message, amend, skip_hooks, &mut |line| {
+                let _ = hook_output.send(line);
+            })
+        })
+    })
+    .await
+    .map_err(|e| PushGitError::Invalid(format!("commit task panicked: {e}")))??;
     Ok(oid.to_string())
 }
 
@@ -898,6 +913,7 @@ pub async fn push(
     branch_name: String,
     force: bool,
     progress: Channel<RemoteProgress>,
+    hook_output: Channel<HookOutputLine>,
     state: State<'_, AppState>,
 ) -> PushGitResult<()> {
     let cancel = state
@@ -910,6 +926,7 @@ pub async fn push(
         &branch_name,
         force,
         &progress,
+        &hook_output,
         &cancel,
     )
     .await
@@ -1077,6 +1094,19 @@ pub fn set_auto_fetch_enabled(value: bool) -> config::AppConfig {
 pub fn set_auto_fetch_interval_minutes(value: u32) -> config::AppConfig {
     let config = config::AppConfig {
         auto_fetch_interval_minutes: config::clamp_auto_fetch_interval_minutes(value),
+        ..config::load_app_config()
+    };
+    config::save_app_config(&config);
+    config
+}
+
+/// Persists whether `HookOutputModal` opens immediately when a commit/push hook starts
+/// running, versus staying hidden until the operation fails. Same load-existing-config-first
+/// reasoning as `set_reduce_motion`.
+#[tauri::command]
+pub fn set_show_hook_output_always(value: bool) -> config::AppConfig {
+    let config = config::AppConfig {
+        show_hook_output_always: value,
         ..config::load_app_config()
     };
     config::save_app_config(&config);

@@ -41,6 +41,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import Confetti from "$lib/shell/Confetti.svelte";
   import ConfirmDialog from "$lib/shell/ConfirmDialog.svelte";
   import ContextMenu from "$lib/shell/ContextMenu.svelte";
+  import HookOutputModal from "$lib/shell/HookOutputModal.svelte";
   import ResizeHandle from "$lib/shell/ResizeHandle.svelte";
   import SettingsPanel from "$lib/settings/SettingsPanel.svelte";
   import { loadAppConfig, settingsState } from "$lib/settings/settings.svelte";
@@ -727,6 +728,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 <ConfirmDialog />
 <ContextMenu />
+<HookOutputModal />
 <Toast />
 <Confetti />
 <AboutDialog open={showAbout} onClose={() => (showAbout = false)} />

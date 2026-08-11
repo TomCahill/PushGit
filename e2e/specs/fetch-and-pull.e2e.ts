@@ -77,6 +77,13 @@ describe("fetch and pull golden path", () => {
     await branchTrigger.click();
     await expect(aheadBehind).toBeDisplayed();
 
+    // The fetched-but-not-yet-pulled commit shows up in the graph right away, greyed out —
+    // this is the whole point of the feature: visible without needing a pull first.
+    const unpulledCommitRow = await browser.$("div*=Someone else's commit");
+    await unpulledCommitRow.waitForExist({ timeout: 15_000 });
+    const unpulledRow = await unpulledCommitRow.$("..");
+    await expect(unpulledRow).toHaveElementClass("unpulled");
+
     const pullButton = await browser.$("button=Pull");
     await browser.waitUntil(async () => !(await pullButton.getAttribute("disabled")), {
       timeout: 8_000,
@@ -87,6 +94,8 @@ describe("fetch and pull golden path", () => {
     const newCommitRow = await browser.$("div*=Someone else's commit");
     await newCommitRow.waitForExist({ timeout: 15_000 });
     await expect(newCommitRow).toBeDisplayed();
+    const pulledRow = await newCommitRow.$("..");
+    await expect(pulledRow).not.toHaveElementClass("unpulled");
     await aheadBehind.waitForExist({ timeout: 15_000, reverse: true });
   });
 });

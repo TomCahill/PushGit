@@ -133,74 +133,76 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         </div>
       </div>
 
-      {#if diffViewState.mode === "inline"}
-        {#each hunk.lines as line, index}
-          {@const html = lineHtml(hunk, index)}
-          <div
-            class="line"
-            class:addition={line.origin === "addition"}
-            class:deletion={line.origin === "deletion"}
-          >
-            {#if onLineAction}
-              <span class="line-checkbox">
-                {#if line.origin !== "context"}
-                  <input
-                    type="checkbox"
-                    checked={isLineSelected(hunk, index)}
-                    onchange={() => toggleLine(hunk, index)}
-                    aria-label={`Select this ${line.origin} line`}
-                  />
-                {/if}
-              </span>
-            {/if}
-            <span class="lineno">{line.oldLineno ?? ""}</span>
-            <span class="lineno">{line.newLineno ?? ""}</span>
-            <span class="marker"
-              >{line.origin === "addition" ? "+" : line.origin === "deletion" ? "-" : " "}</span
-            >
-            {#if html}
-              <span class="content">{@html html}</span>
-            {:else}
-              <span class="content">{lineText(line)}</span>
-            {/if}
-          </div>
-        {/each}
-      {:else}
-        {#each pairHunkLines(hunk.lines) as row}
-          <div class="split-row">
+      <div class="hunk-body">
+        {#if diffViewState.mode === "inline"}
+          {#each hunk.lines as line, index}
+            {@const html = lineHtml(hunk, index)}
             <div
-              class="split-cell"
-              class:empty={!row.left}
-              class:deletion={row.left?.line.origin === "deletion"}
+              class="line"
+              class:addition={line.origin === "addition"}
+              class:deletion={line.origin === "deletion"}
             >
-              {#if row.left}
-                {@const html = lineHtml(hunk, row.left.index)}
-                <span class="lineno">{row.left.line.oldLineno ?? ""}</span>
-                {#if html}
-                  <span class="content">{@html html}</span>
-                {:else}
-                  <span class="content">{lineText(row.left.line)}</span>
-                {/if}
+              {#if onLineAction}
+                <span class="line-checkbox">
+                  {#if line.origin !== "context"}
+                    <input
+                      type="checkbox"
+                      checked={isLineSelected(hunk, index)}
+                      onchange={() => toggleLine(hunk, index)}
+                      aria-label={`Select this ${line.origin} line`}
+                    />
+                  {/if}
+                </span>
+              {/if}
+              <span class="lineno">{line.oldLineno ?? ""}</span>
+              <span class="lineno">{line.newLineno ?? ""}</span>
+              <span class="marker"
+                >{line.origin === "addition" ? "+" : line.origin === "deletion" ? "-" : " "}</span
+              >
+              {#if html}
+                <span class="content">{@html html}</span>
+              {:else}
+                <span class="content">{lineText(line)}</span>
               {/if}
             </div>
-            <div
-              class="split-cell"
-              class:empty={!row.right}
-              class:addition={row.right?.line.origin === "addition"}
-            >
-              {#if row.right}
-                {@const html = lineHtml(hunk, row.right.index)}
-                <span class="lineno">{row.right.line.newLineno ?? ""}</span>
-                {#if html}
-                  <span class="content">{@html html}</span>
-                {:else}
-                  <span class="content">{lineText(row.right.line)}</span>
+          {/each}
+        {:else}
+          {#each pairHunkLines(hunk.lines) as row}
+            <div class="split-row">
+              <div
+                class="split-cell"
+                class:empty={!row.left}
+                class:deletion={row.left?.line.origin === "deletion"}
+              >
+                {#if row.left}
+                  {@const html = lineHtml(hunk, row.left.index)}
+                  <span class="lineno">{row.left.line.oldLineno ?? ""}</span>
+                  {#if html}
+                    <span class="content">{@html html}</span>
+                  {:else}
+                    <span class="content">{lineText(row.left.line)}</span>
+                  {/if}
                 {/if}
-              {/if}
+              </div>
+              <div
+                class="split-cell"
+                class:empty={!row.right}
+                class:addition={row.right?.line.origin === "addition"}
+              >
+                {#if row.right}
+                  {@const html = lineHtml(hunk, row.right.index)}
+                  <span class="lineno">{row.right.line.newLineno ?? ""}</span>
+                  {#if html}
+                    <span class="content">{@html html}</span>
+                  {:else}
+                    <span class="content">{lineText(row.right.line)}</span>
+                  {/if}
+                {/if}
+              </div>
             </div>
-          </div>
-        {/each}
-      {/if}
+          {/each}
+        {/if}
+      </div>
     </div>
   {/each}
 {/if}
@@ -237,7 +239,6 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     font-size: 0.8rem;
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
-    overflow: hidden;
   }
 
   .hunk-header {
@@ -246,6 +247,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     align-items: center;
     background: var(--surface-2);
     padding: 0.25rem 0.6rem;
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+  }
+
+  .hunk-body {
+    overflow-x: auto;
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
   }
 
   .hunk-label {
@@ -317,9 +324,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     flex: 1 1 50%;
     display: flex;
     gap: 0.5rem;
-    min-width: 0;
     white-space: pre;
-    overflow: hidden;
   }
 
   .split-cell:first-child {
@@ -336,11 +341,6 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
   .split-cell.empty {
     background: var(--surface-2);
-  }
-
-  .content {
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   /* Syntax token colors, reusing the same Okabe-Ito colorblind-safe hues as the commit

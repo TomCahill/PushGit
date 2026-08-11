@@ -40,17 +40,22 @@ function save(entries: RecentRepo[]): RecentRepo[] {
   return entries;
 }
 
-/** Moves `path` to the front (deduped, preserving its `folderId` if it had one) with a fresh
- *  timestamp. Only trims ungrouped entries down to `MAX_ENTRIES` — a repo the user has filed
- *  into a folder was deliberately kept, so it's never silently evicted by the cap. */
+/** Refreshes `path`'s timestamp. A foldered repo keeps its user-arranged position — only its
+ *  `lastOpenedAt` changes. An ungrouped repo moves to the front of "Recent" (deduped) with only
+ *  ungrouped entries trimmed down to `MAX_ENTRIES`, since a foldered repo was deliberately kept
+ *  and is never silently evicted by the cap. */
 export function recordRepoOpened(path: string): RecentRepo[] {
   const previous = loadRecentRepos();
   const existing = previous.find((entry) => entry.path === path);
+
+  if (existing?.folderId) {
+    return save(
+      previous.map((entry) => (entry.path === path ? { ...entry, lastOpenedAt: Date.now() } : entry)),
+    );
+  }
+
   const rest = previous.filter((entry) => entry.path !== path);
-  const updated: RecentRepo[] = [
-    { path, lastOpenedAt: Date.now(), folderId: existing?.folderId },
-    ...rest,
-  ];
+  const updated: RecentRepo[] = [{ path, lastOpenedAt: Date.now() }, ...rest];
   const overflow = new Set(
     updated
       .filter((entry) => !entry.folderId)
