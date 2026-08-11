@@ -67,6 +67,11 @@ pub struct CommitRow {
     /// `parents[0]` is first-parent.
     pub parents: Vec<String>,
     pub is_merge: bool,
+    /// `true` if reachable from a local ref (`HEAD` or `refs/heads/*`); `false` if only
+    /// reachable via a local branch's configured upstream that's ahead of it — a fetched but
+    /// not-yet-pulled commit. Always `true` for `RowKind::Workdir`/`Stash`, both of which are
+    /// anchored to `HEAD`.
+    pub is_local: bool,
 
     pub lane: u16,
     /// Stable palette index.

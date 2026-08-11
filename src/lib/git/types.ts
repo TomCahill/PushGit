@@ -39,6 +39,9 @@ export interface CommitRow {
   committerTime: number;
   parents: string[];
   isMerge: boolean;
+  /** `false` for a commit only reachable via a local branch's ahead-of-local upstream — a
+   *  fetched but not-yet-pulled commit. Always `true` for `kind !== "commit"`. */
+  isLocal: boolean;
   lane: number;
   colorId: number;
   refs: RefMarker[];

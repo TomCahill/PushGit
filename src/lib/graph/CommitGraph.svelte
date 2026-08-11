@@ -863,10 +863,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         class="row"
         class:selected={commit.oid === selectedOid}
         class:workdir-row={commit.kind === "workdir"}
+        class:unpulled={!commit.isLocal}
         class:drop-target={dropTarget?.type === "commit" && dropTarget.oid === commit.oid}
         data-oid={commit.oid}
         role="option"
         aria-selected={commit.oid === selectedOid}
+        title={commit.isLocal ? undefined : "Not yet pulled"}
         style:transform="translateY({commit.row * ROW_HEIGHT}px)"
         style:height="{ROW_HEIGHT}px"
       >
@@ -1032,6 +1034,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   .row.workdir-row {
     font-style: italic;
     color: var(--text-secondary);
+  }
+
+  /* Fetched but not-yet-pulled commit — opacity on the row fades the dot, rails, refs, and
+     text together since they're all its descendants, no per-child overrides needed. */
+  .row.unpulled {
+    opacity: 0.55;
   }
 
   .workdir-summary {

@@ -53,6 +53,38 @@ describe("CommitGraph", () => {
     expect(await findByText("Second commit")).toBeTruthy();
   });
 
+  it("greys out a commit that's only reachable via an ahead upstream", async () => {
+    mockIPC((cmd) => {
+      switch (cmd) {
+        case "graph_open":
+          return "session-1";
+        case "graph_page":
+          return {
+            rows: [
+              makeCommitRow({ oid: "a", summary: "Not yet pulled", isLocal: false }),
+              makeCommitRow({ oid: "b", summary: "Ordinary local commit", row: 1 }),
+            ],
+            hasMore: false,
+          };
+        case "graph_close":
+          return null;
+        default:
+          throw new Error(`unexpected command ${cmd}`);
+      }
+    });
+
+    const { container, findByText } = render(CommitGraph, { props: { repoPath: "/repo" } });
+
+    await findByText("Not yet pulled");
+    const unpulledRow = container.querySelector('[data-oid="a"]');
+    const localRow = container.querySelector('[data-oid="b"]');
+
+    expect(unpulledRow?.classList.contains("unpulled")).toBe(true);
+    expect(unpulledRow?.getAttribute("title")).toBe("Not yet pulled");
+    expect(localRow?.classList.contains("unpulled")).toBe(false);
+    expect(localRow?.hasAttribute("title")).toBe(false);
+  });
+
   it("selects a commit on click and reports it via onSelect", async () => {
     mockIPC((cmd) => {
       switch (cmd) {
