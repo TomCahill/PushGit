@@ -78,16 +78,31 @@ describe("recentRepos", () => {
     expect(loadRecentRepos()).toEqual([{ path: "/ok", lastOpenedAt: 1 }]);
   });
 
-  it("preserves folderId when a foldered repo is re-opened", () => {
+  it("preserves folderId and position when a foldered repo is re-opened", () => {
     recordRepoOpened("/repo/one");
     recordRepoOpened("/repo/two");
     moveRepo("/repo/one", "folder-1", null);
 
+    const before = loadRecentRepos().find((e) => e.path === "/repo/one");
     recordRepoOpened("/repo/one");
 
     const loaded = loadRecentRepos();
-    expect(loaded.map((e) => e.path)).toEqual(["/repo/one", "/repo/two"]);
-    expect(loaded[0].folderId).toBe("folder-1");
+    expect(loaded.map((e) => e.path)).toEqual(["/repo/two", "/repo/one"]);
+    const after = loaded.find((e) => e.path === "/repo/one");
+    expect(after?.folderId).toBe("folder-1");
+    expect(after?.lastOpenedAt).toBeGreaterThanOrEqual(before?.lastOpenedAt ?? 0);
+  });
+
+  it("does not reorder foldered repos relative to each other on reopen", () => {
+    recordRepoOpened("/repo/a");
+    recordRepoOpened("/repo/b");
+    moveRepo("/repo/a", "folder-1", null);
+    moveRepo("/repo/b", "folder-1", null); // order within folder-1: a, b
+
+    recordRepoOpened("/repo/a");
+
+    const inFolder = loadRecentRepos().filter((e) => e.folderId === "folder-1");
+    expect(inFolder.map((e) => e.path)).toEqual(["/repo/a", "/repo/b"]);
   });
 
   it("never evicts foldered repos, only unfoldered ones, once over the cap", () => {
