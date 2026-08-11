@@ -24,7 +24,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import { burstConfetti } from "$lib/shell/confetti.svelte";
   import { confirmAsync } from "$lib/shell/confirmDialog.svelte";
   import Button from "$lib/shell/Button.svelte";
-  import { finishHookOutput, pushHookOutputLine, startHookOutput } from "$lib/shell/hookOutput.svelte";
+  import {
+    finishHookOutput,
+    pushHookOutputLine,
+    revealHookOutput,
+    startHookOutput,
+  } from "$lib/shell/hookOutput.svelte";
   import Icon from "$lib/shell/Icon.svelte";
   import { notifyError, notifySuccess } from "$lib/shell/toast.svelte";
 
@@ -213,7 +218,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     const branchName = currentBranchName;
     if (!branchName) return;
     void runAction(async () => {
-      startHookOutput("Push");
+      startHookOutput("Push", settingsState.showHookOutputAlways);
       try {
         try {
           await pushRemote(
@@ -240,6 +245,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
           notifySuccess(`Force-pushed ${branchName} to ${REMOTE_NAME}.`);
           if (pushButtonEl) burstConfetti(pushButtonEl.getBoundingClientRect());
         }
+      } catch (err) {
+        if (!settingsState.showHookOutputAlways) revealHookOutput();
+        throw err;
       } finally {
         finishHookOutput();
       }

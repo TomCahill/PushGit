@@ -8,11 +8,13 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 import ConfirmDialog from "$lib/shell/ConfirmDialog.svelte";
 import RemotePanel from "./RemotePanel.svelte";
 import { makeBranchInfo } from "$lib/git/testFixtures";
+import { hookOutputState } from "$lib/shell/hookOutput.svelte";
 import { settingsState } from "$lib/settings/settings.svelte";
 import { toastState } from "$lib/shell/toast.svelte";
-import type { RemoteProgress } from "$lib/git/types";
+import type { HookOutputLine, RemoteProgress } from "$lib/git/types";
 
 type ProgressChannel = { onmessage: (progress: RemoteProgress) => void };
+type HookOutputChannel = { onmessage: (line: HookOutputLine) => void };
 
 function toastMessages(): string[] {
   return toastState.toasts.map((toast) => toast.message);
@@ -23,6 +25,8 @@ describe("RemotePanel", () => {
     toastState.toasts = [];
     settingsState.autoFetchEnabled = false;
     settingsState.autoFetchIntervalMinutes = 5;
+    settingsState.showHookOutputAlways = true;
+    hookOutputState.session = null;
   });
 
   it("shows a warning when the installed git predates the CVE-2024-32002 fix", async () => {
@@ -400,6 +404,41 @@ describe("RemotePanel", () => {
       ),
     );
     expect(queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("keeps the hook output modal hidden while pushing, then reveals it on failure, when 'always show' is off", async () => {
+    settingsState.showHookOutputAlways = false;
+    mockIPC((cmd, args) => {
+      switch (cmd) {
+        case "check_git_version":
+          return { version: "2.45.1", isPatched: true };
+        case "list_branches":
+          return [makeBranchInfo({ name: "main", isHead: true })];
+        case "push": {
+          (args as { hookOutput: HookOutputChannel }).hookOutput.onmessage({
+            hook: "push",
+            stream: "stderr",
+            text: "running pre-push checks",
+          });
+          throw "git error: could not resolve host";
+        }
+        default:
+          throw new Error(`unexpected command ${cmd}`);
+      }
+    });
+
+    const { findByText } = render(RemotePanel, {
+      props: { repoPath: "/repo", refreshKey: 0 },
+    });
+
+    const pushButton = (await findByText("Push")) as HTMLButtonElement;
+    await waitFor(() => expect(pushButton.disabled).toBe(false));
+    await fireEvent.click(pushButton);
+
+    await waitFor(() => expect(hookOutputState.session?.visible).toBe(true));
+    expect(hookOutputState.session?.lines).toEqual([
+      { hook: "push", stream: "stderr", text: "running pre-push checks" },
+    ]);
   });
 
   describe("auto-fetch", () => {

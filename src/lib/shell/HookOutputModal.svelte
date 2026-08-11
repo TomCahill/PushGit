@@ -40,7 +40,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   });
 
   function handleWindowKeydown(event: KeyboardEvent) {
-    if (!hookOutputState.session) return;
+    if (!hookOutputState.session?.visible) return;
     if (event.key === "Escape") {
       event.preventDefault();
       closeHookOutput();
@@ -54,7 +54,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 <svelte:window onkeydown={handleWindowKeydown} />
 
-{#if hookOutputState.session}
+{#if hookOutputState.session?.visible}
   {@const session = hookOutputState.session}
   <div
     class="backdrop"

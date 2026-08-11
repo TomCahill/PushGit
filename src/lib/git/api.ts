@@ -556,6 +556,12 @@ export function setAutoFetchIntervalMinutes(value: number): Promise<AppConfig> {
   return invoke("set_auto_fetch_interval_minutes", { value });
 }
 
+/** Persists whether `HookOutputModal` opens immediately when a commit/push hook starts
+ *  running, versus staying hidden until the operation fails, returning the resulting config. */
+export function setShowHookOutputAlways(value: boolean): Promise<AppConfig> {
+  return invoke("set_show_hook_output_always", { value });
+}
+
 /** This repo's settings. Never rejects, same
  *  degrade-to-default behavior as `getAppConfig`. */
 export function getRepoConfig(repoPath: string): Promise<RepoConfig> {

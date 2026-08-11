@@ -9,6 +9,7 @@ import ConfirmDialog from "$lib/shell/ConfirmDialog.svelte";
 import ContextMenu from "$lib/shell/ContextMenu.svelte";
 import StagingPanel from "./StagingPanel.svelte";
 import { makeFileDiff, makeHunk } from "$lib/git/testFixtures";
+import { hookOutputState } from "$lib/shell/hookOutput.svelte";
 import { settingsState } from "$lib/settings/settings.svelte";
 
 type AiChannel = { channel: { onmessage: (chunk: { text: string }) => void } };
@@ -17,6 +18,8 @@ describe("StagingPanel", () => {
   afterEach(() => {
     settingsState.ai = { transport: null, instructions: "", cloudWarningAcknowledged: false };
     settingsState.localAiStatus = { modelPresent: false, enginePresent: false, gpuDevice: null };
+    settingsState.showHookOutputAlways = true;
+    hookOutputState.session = null;
   });
 
   it("does nothing when no repo is open", () => {
@@ -614,6 +617,41 @@ describe("StagingPanel", () => {
 
     const alert = await findByRole("alert");
     expect(alert.textContent).toContain("pre-commit` hook rejected the commit");
+  });
+
+  it("keeps the hook output modal hidden while committing, then reveals it on failure, when 'always show' is off", async () => {
+    settingsState.showHookOutputAlways = false;
+    mockIPC((cmd, args) => {
+      switch (cmd) {
+        case "diff_unstaged":
+          return [];
+        case "diff_staged":
+          return [makeFileDiff({ newPath: "a.txt" })];
+        case "commit": {
+          const { hookOutput } = args as {
+            hookOutput: { onmessage: (line: unknown) => void };
+          };
+          hookOutput.onmessage({ hook: "pre-commit", stream: "stderr", text: "lint failed" });
+          throw "git error: `pre-commit` hook rejected the commit:\nlint failed";
+        }
+        default:
+          throw new Error(`unexpected command ${cmd}`);
+      }
+    });
+
+    const { findByLabelText, getByRole, findByRole } = render(StagingPanel, {
+      props: { repoPath: "/repo", refreshKey: 0 },
+    });
+
+    const titleInput = (await findByLabelText("Commit title")) as HTMLInputElement;
+    await fireEvent.input(titleInput, { target: { value: "fix the bug" } });
+    await fireEvent.click(getByRole("button", { name: "Commit" }));
+
+    await findByRole("alert");
+    expect(hookOutputState.session?.visible).toBe(true);
+    expect(hookOutputState.session?.lines).toEqual([
+      { hook: "pre-commit", stream: "stderr", text: "lint failed" },
+    ]);
   });
 
   it("caps the commit title at 72 characters and rejects an empty title", async () => {

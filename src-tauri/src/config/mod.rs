@@ -30,6 +30,10 @@ fn default_auto_fetch_enabled() -> bool {
     true
 }
 
+fn default_show_hook_output_always() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
@@ -44,6 +48,12 @@ pub struct AppConfig {
     pub auto_fetch_enabled: bool,
     #[serde(default = "default_auto_fetch_interval_minutes")]
     pub auto_fetch_interval_minutes: u32,
+    /// Whether the commit/push hook-output transcript (`HookOutputModal`) opens as soon as a
+    /// hook starts running. On by default, matching the behavior before this was
+    /// configurable. Off means it stays hidden (still recording in the background) and only
+    /// opens if the commit/push ends up failing.
+    #[serde(default = "default_show_hook_output_always")]
+    pub show_hook_output_always: bool,
 }
 
 impl Default for AppConfig {
@@ -54,6 +64,7 @@ impl Default for AppConfig {
             ai: AiSettings::default(),
             auto_fetch_enabled: true,
             auto_fetch_interval_minutes: DEFAULT_AUTO_FETCH_INTERVAL_MINUTES,
+            show_hook_output_always: true,
         }
     }
 }
@@ -210,6 +221,7 @@ mod tests {
             },
             auto_fetch_enabled: true,
             auto_fetch_interval_minutes: 15,
+            show_hook_output_always: false,
         };
 
         save_app_config_to(dir.path(), &config);
@@ -237,6 +249,7 @@ mod tests {
                 ai: AiSettings::default(),
                 auto_fetch_enabled: true,
                 auto_fetch_interval_minutes: DEFAULT_AUTO_FETCH_INTERVAL_MINUTES,
+                show_hook_output_always: true,
             }
         );
     }

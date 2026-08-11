@@ -16,6 +16,7 @@ import {
   setAutoFetchIntervalMinutes,
   setMaxCommitsRendered,
   setReduceMotion,
+  setShowHookOutputAlways,
   settingsState,
 } from "./settings.svelte";
 import type { AiSettings } from "$lib/git/types";
@@ -33,6 +34,7 @@ describe("settingsState", () => {
     settingsState.ai = { ...DEFAULT_AI_SETTINGS };
     settingsState.autoFetchEnabled = false;
     settingsState.autoFetchIntervalMinutes = DEFAULT_AUTO_FETCH_INTERVAL_MINUTES;
+    settingsState.showHookOutputAlways = true;
     settingsState.hasAiApiKey = false;
   });
 
@@ -50,6 +52,7 @@ describe("settingsState", () => {
           ai,
           autoFetchEnabled: true,
           autoFetchIntervalMinutes: 15,
+          showHookOutputAlways: false,
         };
       }
       if (cmd === "has_ai_api_key") return true;
@@ -63,6 +66,7 @@ describe("settingsState", () => {
     expect(settingsState.ai).toEqual(ai);
     expect(settingsState.autoFetchEnabled).toBe(true);
     expect(settingsState.autoFetchIntervalMinutes).toBe(15);
+    expect(settingsState.showHookOutputAlways).toBe(false);
     expect(settingsState.hasAiApiKey).toBe(true);
   });
 
@@ -130,6 +134,26 @@ describe("settingsState", () => {
     await setAutoFetchIntervalMinutes(999);
 
     expect(settingsState.autoFetchIntervalMinutes).toBe(60);
+  });
+
+  it("setShowHookOutputAlways persists through the backend and updates settingsState from its response", async () => {
+    mockIPC((cmd, args) => {
+      if (cmd === "set_show_hook_output_always") {
+        expect(args).toEqual({ value: false });
+        return {
+          maxCommitsRendered: DEFAULT_MAX_COMMITS_RENDERED,
+          reduceMotion: false,
+          autoFetchEnabled: false,
+          autoFetchIntervalMinutes: DEFAULT_AUTO_FETCH_INTERVAL_MINUTES,
+          showHookOutputAlways: false,
+        };
+      }
+      throw new Error(`unexpected command ${cmd}`);
+    });
+
+    await setShowHookOutputAlways(false);
+
+    expect(settingsState.showHookOutputAlways).toBe(false);
   });
 
   it("setAiTransport persists through the backend and updates settingsState.ai from its response", async () => {

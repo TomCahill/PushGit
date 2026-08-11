@@ -299,6 +299,7 @@ export interface AppConfig {
   ai: AiSettings;
   autoFetchEnabled: boolean;
   autoFetchIntervalMinutes: number;
+  showHookOutputAlways: boolean;
 }
 
 export interface RepoConfig {

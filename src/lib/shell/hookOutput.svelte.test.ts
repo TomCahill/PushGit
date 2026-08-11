@@ -8,6 +8,7 @@ import {
   finishHookOutput,
   hookOutputState,
   pushHookOutputLine,
+  revealHookOutput,
   startHookOutput,
 } from "./hookOutput.svelte";
 
@@ -87,5 +88,41 @@ describe("hookOutput", () => {
     await fireEvent.keyDown(window, { key: "Escape" });
 
     expect(hookOutputState.session).toBeNull();
+  });
+
+  it("stays hidden when started with visible: false, still recording lines", async () => {
+    const { container, queryByText } = render(HookOutputModal);
+
+    startHookOutput("Commit", false);
+    pushHookOutputLine({ hook: "pre-commit", stream: "stdout", text: "checking style" });
+
+    expect(container.querySelector(".dialog")).toBeNull();
+    expect(hookOutputState.session?.lines).toHaveLength(1);
+    expect(queryByText("checking style")).toBeNull();
+  });
+
+  it("revealHookOutput shows a session that was started hidden, with its lines already there", async () => {
+    const { container, findByText } = render(HookOutputModal);
+
+    startHookOutput("Commit", false);
+    pushHookOutputLine({ hook: "pre-commit", stream: "stderr", text: "lint failed" });
+    revealHookOutput();
+
+    expect(await findByText("lint failed")).toBeTruthy();
+    expect(container.querySelector(".dialog")).toBeTruthy();
+  });
+
+  it("revealHookOutput is a no-op when there is no session", () => {
+    revealHookOutput();
+    expect(hookOutputState.session).toBeNull();
+  });
+
+  it("Escape does nothing while a hidden session is running", async () => {
+    render(HookOutputModal);
+    startHookOutput("Commit", false);
+
+    await fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(hookOutputState.session).not.toBeNull();
   });
 });

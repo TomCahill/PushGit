@@ -1100,6 +1100,19 @@ pub fn set_auto_fetch_interval_minutes(value: u32) -> config::AppConfig {
     config
 }
 
+/// Persists whether `HookOutputModal` opens immediately when a commit/push hook starts
+/// running, versus staying hidden until the operation fails. Same load-existing-config-first
+/// reasoning as `set_reduce_motion`.
+#[tauri::command]
+pub fn set_show_hook_output_always(value: bool) -> config::AppConfig {
+    let config = config::AppConfig {
+        show_hook_output_always: value,
+        ..config::load_app_config()
+    };
+    config::save_app_config(&config);
+    config
+}
+
 /// This repo's settings, e.g. whether commits
 /// skip hooks by default. Never fails, same degrade-to-default behavior as `get_app_config`.
 #[tauri::command]
