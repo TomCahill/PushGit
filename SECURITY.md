@@ -4,7 +4,7 @@
 
 | Version | Supported |
 |---|---|
-| 1.0.x   | :white_check_mark: |
+| 1.x.x   | :white_check_mark: |
 | < 1.0   | :x: |
 
 Security fixes target the latest release line — there's no long-term support for older versions from a
