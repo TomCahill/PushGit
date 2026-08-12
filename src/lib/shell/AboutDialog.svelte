@@ -10,6 +10,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   // instead of hardcoded, so they can't drift from `tauri.conf.json`.
   import { getName, getVersion } from "@tauri-apps/api/app";
   import { openUrl } from "@tauri-apps/plugin-opener";
+  import { updateCheckState } from "./updateCheck.svelte";
   import Logo from "./Logo.svelte";
   import Button from "./Button.svelte";
 
@@ -21,6 +22,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   function handleKofiClick(event: MouseEvent) {
     event.preventDefault();
     void openUrl(KOFI_URL);
+  }
+
+  function handleViewRelease() {
+    if (updateCheckState.available) void openUrl(updateCheckState.available.url);
   }
 
   let { open, onClose }: { open: boolean; onClose: () => void } = $props();
@@ -59,6 +64,13 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       <div class="logo"><Logo size={40} /></div>
       <h2 class="title">{appName}</h2>
       <p class="version">Version {appVersion}</p>
+      {#if updateCheckState.available}
+        <p class="update-available">
+          <button type="button" class="update-link" onclick={handleViewRelease}>
+            v{updateCheckState.available.version} is available — View release
+          </button>
+        </p>
+      {/if}
       <p class="tagline">A fast, native git GUI with a proper visual commit graph.</p>
       <p class="license">License: AGPL-3.0-or-later</p>
       <p class="author">© 2026 Tom Cahill</p>
@@ -117,6 +129,23 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     margin: 0 0 0.75rem;
     font-size: 0.8rem;
     color: var(--text-secondary);
+  }
+
+  .update-available {
+    margin: 0 0 0.75rem;
+    font-size: 0.78rem;
+    color: var(--accent);
+  }
+
+  .update-link {
+    padding: 0;
+    color: var(--accent);
+    background: none;
+    border: none;
+    font: inherit;
+    font-weight: 600;
+    text-decoration: underline;
+    cursor: pointer;
   }
 
   .tagline {

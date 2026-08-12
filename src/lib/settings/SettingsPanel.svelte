@@ -28,6 +28,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     setAiTransport,
     setAutoFetchEnabled,
     setAutoFetchIntervalMinutes,
+    setCheckForUpdatesEnabled,
     setMaxCommitsRendered,
     setReduceMotion,
     setShowHookOutputAlways,
@@ -176,6 +177,16 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       await setShowHookOutputAlways(value);
     } catch (err) {
       settingsState.showHookOutputAlways = !value; // revert the optimistic checkbox toggle
+      notifyError(String(err));
+    }
+  }
+
+  async function handleCheckForUpdatesEnabledChange() {
+    const value = settingsState.checkForUpdatesEnabled;
+    try {
+      await setCheckForUpdatesEnabled(value);
+    } catch (err) {
+      settingsState.checkForUpdatesEnabled = !value; // revert the optimistic checkbox toggle
       notifyError(String(err));
     }
   }
@@ -433,6 +444,21 @@ SPDX-License-Identifier: AGPL-3.0-or-later
           <option value="60">Every 60 minutes</option>
         </Select>
       {/if}
+
+      <label class="switch-row">
+        <div class="switch-row-text">
+          <span>Check for updates on launch</span>
+        </div>
+        <Switch
+          bind:checked={settingsState.checkForUpdatesEnabled}
+          onchange={handleCheckForUpdatesEnabledChange}
+        />
+      </label>
+      <p class="hint">
+        Checks GitHub's public releases page for a newer PushGit release each time the app
+        starts. Only queries GitHub — no identifying data is sent, and nothing downloads or
+        installs automatically.
+      </p>
     </section>
 
     <section class="settings-card">

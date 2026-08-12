@@ -24,6 +24,7 @@ mod state;
 #[cfg(test)]
 mod test_support;
 mod undo;
+mod update_check;
 mod watcher;
 mod workflow;
 
@@ -221,6 +222,9 @@ pub fn run() {
         commands::set_auto_fetch_enabled,
         commands::set_auto_fetch_interval_minutes,
         commands::set_show_hook_output_always,
+        commands::check_for_update,
+        commands::set_check_for_updates_enabled,
+        commands::dismiss_update,
         commands::get_repo_config,
         commands::set_repo_default_skip_hooks,
         commands::get_commit_template_path,

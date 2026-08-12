@@ -19,7 +19,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     pullRemote,
     pushRemote,
   } from "$lib/git/api";
-  import type { MergeOutcome, RemoteProgress } from "$lib/git/types";
+  import { describePullOutcome } from "$lib/git/describeOutcome";
+  import type { RemoteProgress } from "$lib/git/types";
   import { settingsState } from "$lib/settings/settings.svelte";
   import { burstConfetti } from "$lib/shell/confetti.svelte";
   import { confirmAsync } from "$lib/shell/confirmDialog.svelte";
@@ -184,19 +185,6 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     return p.current != null && p.total != null
       ? `${p.phase}: ${p.percent}% (${p.current}/${p.total})`
       : `${p.phase}: ${p.percent}%`;
-  }
-
-  function describePullOutcome(outcome: MergeOutcome): string {
-    switch (outcome.kind) {
-      case "fast_forward":
-        return "Pulled — fast-forwarded.";
-      case "already_up_to_date":
-        return "Already up to date.";
-      case "merged":
-        return "Pulled and merged.";
-      case "conflicts":
-        return `Pull stopped with ${outcome.conflicts.length} conflicting file(s).`;
-    }
   }
 
   function handleFetch() {

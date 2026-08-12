@@ -9,6 +9,7 @@ import ConfirmDialog from "$lib/shell/ConfirmDialog.svelte";
 import ContextMenu from "$lib/shell/ContextMenu.svelte";
 import { firePointer } from "$lib/shell/testPointerEvents";
 import { notificationHistory, notifyError, notifySuccess, toastState } from "$lib/shell/toast.svelte";
+import { updateCheckState } from "$lib/shell/updateCheck.svelte";
 import RepoRail from "./RepoRail.svelte";
 import type { RecentRepo } from "./recentRepos";
 import type { RepoFolder } from "./repoFolders";
@@ -476,6 +477,62 @@ describe("RepoRail", () => {
       await fireEvent.click(getByRole("button", { name: /Notifications/ }));
 
       expect(await findByText("Fetched from origin.")).toBeTruthy();
+    });
+  });
+
+  describe("update banner", () => {
+    beforeEach(() => {
+      updateCheckState.available = null;
+    });
+
+    it("shows nothing when there's no update available", () => {
+      const { queryByText } = render(RepoRail, { props: baseProps() });
+
+      expect(queryByText(/available/)).toBeNull();
+    });
+
+    it("opens the release page in the system browser when clicked", async () => {
+      updateCheckState.available = {
+        version: "1.3.0",
+        url: "https://github.com/TomCahill/PushGit/releases/tag/v1.3.0",
+        publishedAt: "2026-08-01T00:00:00Z",
+      };
+      const calls: unknown[] = [];
+      mockIPC((cmd, args) => {
+        if (cmd === "plugin:opener|open_url") {
+          calls.push(args);
+          return null;
+        }
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const { getByText } = render(RepoRail, { props: baseProps() });
+      await fireEvent.click(getByText("v1.3.0 available"));
+
+      expect(calls).toEqual([
+        { url: "https://github.com/TomCahill/PushGit/releases/tag/v1.3.0", openWith: undefined },
+      ]);
+    });
+
+    it("dismisses the banner and persists the dismissal", async () => {
+      updateCheckState.available = {
+        version: "1.3.0",
+        url: "https://github.com/TomCahill/PushGit/releases/tag/v1.3.0",
+        publishedAt: "2026-08-01T00:00:00Z",
+      };
+      mockIPC((cmd, args) => {
+        if (cmd === "dismiss_update") {
+          expect(args).toEqual({ version: "1.3.0" });
+          return { dismissedUpdateVersion: "1.3.0" };
+        }
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const { getByTitle, queryByText } = render(RepoRail, { props: baseProps() });
+      await fireEvent.click(getByTitle("Dismiss"));
+      await tick();
+
+      expect(queryByText("v1.3.0 available")).toBeNull();
     });
   });
 });

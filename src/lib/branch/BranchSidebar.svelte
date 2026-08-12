@@ -33,18 +33,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     renameBranch,
     repositoryState,
   } from "$lib/git/api";
+  import { describeMergeOutcome, describeRebaseOutcome } from "$lib/git/describeOutcome";
   import { confirmAsync, promptAsync } from "$lib/shell/confirmDialog.svelte";
   import { openContextMenu, type ContextMenuItem } from "$lib/shell/contextMenu.svelte";
   import CopyButton from "$lib/shell/CopyButton.svelte";
   import Icon from "$lib/shell/Icon.svelte";
+  import { createReloadable } from "$lib/shell/reloadable.svelte";
   import { notifyError, notifySuccess } from "$lib/shell/toast.svelte";
-  import type {
-    BranchInfo,
-    MergeOutcome,
-    RebaseCommitSummary,
-    RebaseOutcome,
-    RepoState,
-  } from "$lib/git/types";
+  import type { BranchInfo, RebaseCommitSummary, RepoState } from "$lib/git/types";
 
   let {
     repoPath,
@@ -73,18 +69,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   let multiCherryPickInProgress = $state(false);
   let loadError = $state<string | null>(null);
 
-  let busy = $state(false);
-
   let newBranchName = $state("");
 
-  let generation = 0;
-
-  $effect(() => {
-    void reload(repoPath, refreshKey);
-  });
-
-  async function reload(path: string, _refreshKey: number) {
-    const myGeneration = ++generation;
+  const branchReload = createReloadable(async (path, isStale) => {
     if (!path) {
       branches = [];
       repoState = "clean";
@@ -103,7 +90,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       const isInteractive = state === "rebase" ? await isInteractiveRebaseInProgress(path) : false;
       const isMultiCherryPick =
         state === "cherry_pick" ? await isMultiCherryPickInProgress(path) : false;
-      if (myGeneration !== generation) return;
+      if (isStale()) return;
       branches = branchList;
       repoState = state;
       conflicts = conflictList;
@@ -111,47 +98,21 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       multiCherryPickInProgress = isMultiCherryPick;
       onCurrentBranchChange?.(branchList.find((b) => b.isHead)?.name ?? null);
     } catch (err) {
-      if (myGeneration === generation) {
+      if (!isStale()) {
         loadError = String(err);
         notifyError(loadError);
       }
     }
-  }
+  });
 
-  async function runAction(fn: () => Promise<void>) {
-    if (busy) return;
-    busy = true;
-    try {
-      await fn();
-      await reload(repoPath, refreshKey);
-      onChanged?.();
-    } catch (err) {
-      notifyError(String(err));
-    } finally {
-      busy = false;
-    }
-  }
+  let busy = $derived(branchReload.busy);
 
-  function describeMergeOutcome(branchName: string, outcome: MergeOutcome): string {
-    switch (outcome.kind) {
-      case "fast_forward":
-        return `Fast-forwarded to ${branchName}.`;
-      case "already_up_to_date":
-        return "Already up to date.";
-      case "merged":
-        return `Merged ${branchName}.`;
-      case "conflicts":
-        return `Merge stopped with ${outcome.conflicts.length} conflicting file(s).`;
-    }
-  }
+  $effect(() => {
+    void branchReload.reload(repoPath, refreshKey);
+  });
 
-  function describeRebaseOutcome(outcome: RebaseOutcome): string {
-    switch (outcome.kind) {
-      case "completed":
-        return "Rebase completed.";
-      case "conflicts":
-        return `Rebase paused with ${outcome.conflicts.length} conflicting file(s).`;
-    }
+  function runAction(fn: () => Promise<void>) {
+    void branchReload.runAction(repoPath, fn, notifyError, onChanged);
   }
 
   function handleCheckout(branch: BranchInfo) {
@@ -236,7 +197,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       }
       items.push(
         { separator: true },
-        { label: "Delete", danger: true, onSelect: () => void handleDelete(branch), disabled: busy },
+        {
+          label: "Delete",
+          danger: true,
+          onSelect: () => void handleDelete(branch),
+          disabled: busy,
+        },
       );
     }
     openContextMenu(event.clientX, event.clientY, items);

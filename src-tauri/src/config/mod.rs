@@ -34,6 +34,10 @@ fn default_show_hook_output_always() -> bool {
     true
 }
 
+fn default_check_for_updates_enabled() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
@@ -54,6 +58,17 @@ pub struct AppConfig {
     /// opens if the commit/push ends up failing.
     #[serde(default = "default_show_hook_output_always")]
     pub show_hook_output_always: bool,
+    /// Whether `update_check` runs on launch. On by default per the explicit 2026-08-11
+    /// decision reversing `SPEC.md`'s prior "no update-check pings" line — see
+    /// `.private/feature/update-notification/PLAN.md`. Only ever queries GitHub's public
+    /// releases API for this repo; never sends any identifying data.
+    #[serde(default = "default_check_for_updates_enabled")]
+    pub check_for_updates_enabled: bool,
+    /// The version string of a release the user has already dismissed the banner for, so the
+    /// same release doesn't nag again on the next launch. Cleared implicitly the moment a
+    /// newer release ships, since that release's version won't match this one.
+    #[serde(default)]
+    pub dismissed_update_version: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -65,6 +80,8 @@ impl Default for AppConfig {
             auto_fetch_enabled: true,
             auto_fetch_interval_minutes: DEFAULT_AUTO_FETCH_INTERVAL_MINUTES,
             show_hook_output_always: true,
+            check_for_updates_enabled: true,
+            dismissed_update_version: None,
         }
     }
 }
@@ -222,6 +239,8 @@ mod tests {
             auto_fetch_enabled: true,
             auto_fetch_interval_minutes: 15,
             show_hook_output_always: false,
+            check_for_updates_enabled: false,
+            dismissed_update_version: Some("1.2.0".to_string()),
         };
 
         save_app_config_to(dir.path(), &config);
@@ -250,6 +269,8 @@ mod tests {
                 auto_fetch_enabled: true,
                 auto_fetch_interval_minutes: DEFAULT_AUTO_FETCH_INTERVAL_MINUTES,
                 show_hook_output_always: true,
+                check_for_updates_enabled: true,
+                dismissed_update_version: None,
             }
         );
     }

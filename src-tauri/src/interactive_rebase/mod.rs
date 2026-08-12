@@ -35,15 +35,16 @@
 //! a rebase state `git rebase -i` itself created. The frontend keeps the two conflict-recovery
 //! paths separate too — whichever UI started the rebase owns resolving it.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Output;
 
 use git2::Repository;
 use serde::{Deserialize, Serialize};
-use tokio::process::Command;
 
 use crate::branch::{self, RebaseOutcome};
 use crate::error::{PushGitError, PushGitResult};
+use crate::remote::run_git_capturing_output;
+use crate::repo::{git_dir_of, workdir_of};
 
 const TODO_FILE: &str = ".pushgit-rebase-todo";
 const REWORD_PREFIX: &str = ".pushgit-reword-";
@@ -128,36 +129,6 @@ fn build_todo(workdir: &Path, steps: &[RebaseStep]) -> PushGitResult<String> {
     Ok(lines.join("\n") + "\n")
 }
 
-fn workdir_of(repo_path: &Path) -> PushGitResult<PathBuf> {
-    crate::repo::open(repo_path)?
-        .workdir()
-        .map(|p| p.to_path_buf())
-        .ok_or_else(|| PushGitError::Invalid("repository has no working directory".to_string()))
-}
-
-fn git_dir_of(repo_path: &Path) -> PushGitResult<PathBuf> {
-    Ok(crate::repo::open(repo_path)?.path().to_path_buf())
-}
-
-async fn run_rebase_subprocess(
-    args: &[&str],
-    cwd: &Path,
-    extra_env: &[(&str, &str)],
-) -> PushGitResult<Output> {
-    let mut command = Command::new("git");
-    command.args(args).current_dir(cwd);
-    for (key, value) in extra_env {
-        command.env(key, value);
-    }
-    command
-        .output()
-        .await
-        .map_err(|e| PushGitError::Subprocess {
-            command: format!("git {}", args.join(" ")),
-            message: e.to_string(),
-        })
-}
-
 /// `.git/rebase-merge` is the *same* on-disk format a plain (non-interactive) rebase uses
 /// (`branch::rebase_branch`, via git2's own `Rebase` API) — so a paused interactive rebase
 /// is otherwise indistinguishable from a paused plain one to anything that only checks
@@ -224,7 +195,7 @@ pub async fn start_interactive_rebase(
     let todo = build_todo(&workdir, steps)?;
     std::fs::write(workdir.join(TODO_FILE), todo)?;
 
-    let output = run_rebase_subprocess(
+    let output = run_git_capturing_output(
         &["rebase", "-i", onto],
         &workdir,
         &[
@@ -245,7 +216,7 @@ pub async fn start_interactive_rebase(
 /// staged it — mirrors `git rebase --continue`.
 pub async fn continue_interactive_rebase(repo_path: &Path) -> PushGitResult<RebaseOutcome> {
     let workdir = workdir_of(repo_path)?;
-    let output = run_rebase_subprocess(
+    let output = run_git_capturing_output(
         &["rebase", "--continue"],
         &workdir,
         &[("GIT_EDITOR", "true")],
@@ -263,7 +234,7 @@ pub async fn continue_interactive_rebase(repo_path: &Path) -> PushGitResult<Reba
 /// `start_interactive_rebase` ran — mirrors `git rebase --abort`.
 pub async fn abort_interactive_rebase(repo_path: &Path) -> PushGitResult<()> {
     let workdir = workdir_of(repo_path)?;
-    let output = run_rebase_subprocess(&["rebase", "--abort"], &workdir, &[]).await?;
+    let output = run_git_capturing_output(&["rebase", "--abort"], &workdir, &[]).await?;
     cleanup_transient_files(&workdir);
 
     if !output.status.success() {

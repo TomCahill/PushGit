@@ -16,42 +16,20 @@
 //! own dedicated continue/abort commands — see `branch::is_multi_cherry_pick_in_progress`
 //! for how the frontend tells the two recovery paths apart.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Output;
-
-use tokio::process::Command;
 
 use crate::branch::{self, CherryPickOutcome};
 use crate::error::{PushGitError, PushGitResult};
-
-fn workdir_of(repo_path: &Path) -> PushGitResult<PathBuf> {
-    crate::repo::open(repo_path)?
-        .workdir()
-        .map(|p| p.to_path_buf())
-        .ok_or_else(|| PushGitError::Invalid("repository has no working directory".to_string()))
-}
-
-fn git_dir_of(repo_path: &Path) -> PushGitResult<PathBuf> {
-    Ok(crate::repo::open(repo_path)?.path().to_path_buf())
-}
+use crate::remote::run_git_capturing_output;
+use crate::repo::{git_dir_of, workdir_of};
 
 /// `GIT_EDITOR=true` accepts each step's own commit message unedited — this range never
 /// offers a custom per-commit message (matching `branch::cherry_pick`'s own "preserve the
-/// original message" default), so there's nothing for an interactive editor to add.
-async fn run_subprocess(args: &[&str], cwd: &Path) -> PushGitResult<Output> {
-    let mut command = Command::new("git");
-    command
-        .args(args)
-        .current_dir(cwd)
-        .env("GIT_EDITOR", "true");
-    command
-        .output()
-        .await
-        .map_err(|e| PushGitError::Subprocess {
-            command: format!("git {}", args.join(" ")),
-            message: e.to_string(),
-        })
-}
+/// original message" default), so there's nothing for an interactive editor to add. Passed
+/// to every call below (cherry-pick, `--continue`, `--abort` alike), matching how the
+/// original single `run_subprocess` wrapper applied it unconditionally.
+const CHERRY_PICK_ENV: &[(&str, &str)] = &[("GIT_EDITOR", "true")];
 
 /// Classifies a `git cherry-pick`/`--continue` subprocess result the same way
 /// `interactive_rebase::classify` does for rebase: `CherryPicked` if it exited successfully
@@ -90,7 +68,7 @@ pub async fn cherry_pick_range(
     let mut args = vec!["cherry-pick"];
     args.extend(commit_oids.iter().map(String::as_str));
 
-    let output = run_subprocess(&args, &workdir).await?;
+    let output = run_git_capturing_output(&args, &workdir, CHERRY_PICK_ENV).await?;
     classify(repo_path, &output)
 }
 
@@ -99,7 +77,8 @@ pub async fn cherry_pick_range(
 /// and advances to the next queued commit.
 pub async fn continue_cherry_pick_range(repo_path: &Path) -> PushGitResult<CherryPickOutcome> {
     let workdir = workdir_of(repo_path)?;
-    let output = run_subprocess(&["cherry-pick", "--continue"], &workdir).await?;
+    let output =
+        run_git_capturing_output(&["cherry-pick", "--continue"], &workdir, CHERRY_PICK_ENV).await?;
     classify(repo_path, &output)
 }
 
@@ -107,7 +86,8 @@ pub async fn continue_cherry_pick_range(repo_path: &Path) -> PushGitResult<Cherr
 /// `cherry_pick_range` ran — mirrors `git cherry-pick --abort`.
 pub async fn abort_cherry_pick_range(repo_path: &Path) -> PushGitResult<()> {
     let workdir = workdir_of(repo_path)?;
-    let output = run_subprocess(&["cherry-pick", "--abort"], &workdir).await?;
+    let output =
+        run_git_capturing_output(&["cherry-pick", "--abort"], &workdir, CHERRY_PICK_ENV).await?;
     if !output.status.success() {
         return Err(PushGitError::Subprocess {
             command: "git cherry-pick --abort".to_string(),

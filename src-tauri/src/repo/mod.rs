@@ -4,16 +4,32 @@
 //! Repository discovery and open, multi-repo/tab session management, and `.git` state
 //! (HEAD, current branch, detached-HEAD state).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use git2::Repository;
 
-use crate::error::PushGitResult;
+use crate::error::{PushGitError, PushGitResult};
 
 /// Opens the git repository at `path`, discovering upward through parent directories
 /// the same way `git` itself does (so opening from a subdirectory of a repo works).
 pub fn open(path: &Path) -> PushGitResult<Repository> {
     Ok(Repository::discover(path)?)
+}
+
+/// The repository's working directory — errors for a bare repository, which none of
+/// PushGit's operations target. Shared by `interactive_rebase`/`cherry_pick_range`, which
+/// both need a plain filesystem path to hand to a `git` subprocess's `current_dir`.
+pub fn workdir_of(path: &Path) -> PushGitResult<PathBuf> {
+    open(path)?
+        .workdir()
+        .map(|p| p.to_path_buf())
+        .ok_or_else(|| PushGitError::Invalid("repository has no working directory".to_string()))
+}
+
+/// The repository's `.git` directory — for callers that need to check on-disk state
+/// (`rebase-merge`, `CHERRY_PICK_HEAD`) `git2` has no query for directly.
+pub fn git_dir_of(path: &Path) -> PushGitResult<PathBuf> {
+    Ok(open(path)?.path().to_path_buf())
 }
 
 #[cfg(test)]

@@ -37,13 +37,16 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     renameTag,
     resetTo,
   } from "$lib/git/api";
+  import {
+    describeCherryPickOutcome,
+    describeMergeOutcome,
+    describePullOutcome,
+    describeRebaseOutcome,
+  } from "$lib/git/describeOutcome";
   import type {
-    CherryPickOutcome,
     CommitGraphPage,
     CommitRow,
     GraphFilter,
-    MergeOutcome,
-    RebaseOutcome,
     Rail,
     RefMarker,
     ResetMode,
@@ -58,6 +61,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     openContextMenu,
     type ContextMenuItem,
   } from "$lib/shell/contextMenu.svelte";
+  import { createPointerDrag } from "$lib/shell/pointerDrag.svelte";
   import Avatar from "$lib/shell/Avatar.svelte";
   import CopyButton from "$lib/shell/CopyButton.svelte";
 
@@ -131,28 +135,68 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   let actionError = $state<string | null>(null);
   let actionMessage = $state<string | null>(null);
 
-  // Drag-to-merge/rebase state. `dragSource` is only set once the pointer has moved past
-  // `DRAG_THRESHOLD_PX` from its pointerdown position — see `handlePointerMove` — so a plain
-  // click on a badge (which already selects its row via bubbling to `handleClick`) is never
-  // hijacked into an accidental drag.
-  let dragSource = $state<{ ref: RefMarker; commitOid: string } | null>(null);
-  let dropTarget = $state<DragTarget | null>(null);
+  type DragSource = { ref: RefMarker; commitOid: string };
+
   let dragPointerPos = $state<{ x: number; y: number } | null>(null);
   // Alt held while dragging the current branch onto a bare commit row picks "reset" instead of
   // the default "rebase" — see `dragAction.ts`'s header comment. Tracked live from pointermove
   // (rather than only at drop) so the tooltip reflects the modifier the instant it's pressed.
   let dragModifierHeld = $state(false);
+
+  const pointerDrag = createPointerDrag<DragSource, DragTarget>({
+    threshold: DRAG_THRESHOLD_PX,
+    // Badges are drag-only elements with no click behavior of their own to protect — a plain
+    // click bubbles to `handleClick` regardless — so capture happens immediately, unlike
+    // `RepoRail.svelte`'s every-row-is-also-a-click-target case, which defers it.
+    captureOn: "down",
+    resolveSource: (event) => {
+      if (busy) return null;
+      const badge = (event.target as HTMLElement).closest<HTMLElement>("[data-ref-name]");
+      if (!badge?.dataset.refName) return null;
+      const row = badge.closest<HTMLElement>("[data-oid]");
+      if (!row?.dataset.oid) return null;
+      const commit = rows.find((r) => r.oid === row.dataset.oid);
+      if (!commit) return null;
+      const ref = commit.refs.find(
+        (r) => r.name === badge.dataset.refName && r.kind === badge.dataset.refKind,
+      );
+      return ref ? { ref, commitOid: commit.oid } : null;
+    },
+    resolveTarget: resolveDragTarget,
+    targetKey: dragTargetKey,
+    onDragMove: (event) => {
+      dragPointerPos = { x: event.clientX, y: event.clientY };
+      dragModifierHeld = event.altKey;
+    },
+    onDrop: (source, target, event) => {
+      // Re-derive from live state rather than trusting the captured `source` reference is
+      // still valid — a branch could have been deleted mid-drag by an external actor/watcher.
+      const stillExists = rows.some((r) =>
+        r.refs.some((ref) => ref.name === source.ref.name && ref.kind === source.ref.kind),
+      );
+      const action = target
+        ? decideDragAction(source, target, { modifierHeld: dragModifierHeld })
+        : null;
+      if (action && stillExists) {
+        if (action.verb === "merge") handleMerge(action.sourceName);
+        else if (action.verb === "rebase") handleRebase(action.onto);
+        else if (action.verb === "reset")
+          handleResetDrop(action.onto, event.clientX, event.clientY);
+        else handleMoveTag(action.tagName, action.onto);
+      }
+      dragPointerPos = null;
+      dragModifierHeld = false;
+      // Any completed drag (past the threshold) suppresses the trailing click, regardless of
+      // outcome — unlike `RepoRail.svelte`, which only suppresses a drop that changed something.
+      return true;
+    },
+  });
+
   const dragAction = $derived<DragActionResult>(
-    dragSource && dropTarget
-      ? decideDragAction(dragSource, dropTarget, { modifierHeld: dragModifierHeld })
+    pointerDrag.source && pointerDrag.target
+      ? decideDragAction(pointerDrag.source, pointerDrag.target, { modifierHeld: dragModifierHeld })
       : null,
   );
-
-  // Plain (non-reactive) vars, mirroring `ResizeHandle.svelte`'s `last` — only read/written
-  // synchronously within the pointer handlers below, never need to trigger a re-render on their
-  // own.
-  let pointerDownInfo: { x: number; y: number; ref: RefMarker; commitOid: string } | null = null;
-  let suppressNextClick = false;
 
   let sessionId: string | null = null;
   let generation = 0;
@@ -329,10 +373,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     // A completed drag (pointerdown → move past threshold → pointerup) synthesizes a trailing
     // `click` at release — without this guard, a drag-triggered merge/rebase would immediately
     // re-fire selection against whatever's now under the cursor.
-    if (suppressNextClick) {
-      suppressNextClick = false;
-      return;
-    }
+    if (pointerDrag.consumeClickSuppression()) return;
     const target = (event.target as HTMLElement).closest<HTMLElement>("[data-oid]");
     if (!target?.dataset.oid) return;
     const commit = rows.find((r) => r.oid === target.dataset.oid);
@@ -359,32 +400,6 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     } catch {
       // Clipboard access can be denied — a silent no-op beats an error banner for a purely
       // cosmetic convenience action, matching `CopyButton.svelte`'s own handling.
-    }
-  }
-
-  function describeMergeOutcome(branchName: string, outcome: MergeOutcome): string {
-    switch (outcome.kind) {
-      case "fast_forward":
-        return `Fast-forwarded to ${branchName}.`;
-      case "already_up_to_date":
-        return "Already up to date.";
-      case "merged":
-        return `Merged ${branchName}.`;
-      case "conflicts":
-        return `Merge stopped with ${outcome.conflicts.length} conflicting file(s).`;
-    }
-  }
-
-  function describePullOutcome(outcome: MergeOutcome): string {
-    switch (outcome.kind) {
-      case "fast_forward":
-        return "Pulled — fast-forwarded.";
-      case "already_up_to_date":
-        return "Already up to date.";
-      case "merged":
-        return "Pulled and merged.";
-      case "conflicts":
-        return `Pull stopped with ${outcome.conflicts.length} conflicting file(s).`;
     }
   }
 
@@ -446,30 +461,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     });
   }
 
-  function describeRebaseOutcome(outcome: RebaseOutcome): string {
-    switch (outcome.kind) {
-      case "completed":
-        return "Rebase completed.";
-      case "conflicts":
-        return `Rebase paused with ${outcome.conflicts.length} conflicting file(s).`;
-    }
-  }
-
   function handleRebase(onto: string) {
     void runAction(async () => {
       const outcome = await rebaseBranch(repoPath, onto);
       actionMessage = describeRebaseOutcome(outcome);
       if (outcome.kind === "conflicts") onConflicts?.();
     });
-  }
-
-  function describeCherryPickOutcome(outcome: CherryPickOutcome): string {
-    switch (outcome.kind) {
-      case "cherry_picked":
-        return "Cherry-picked onto the current branch.";
-      case "conflicts":
-        return `Cherry-pick stopped with ${outcome.conflicts.length} conflicting file(s).`;
-    }
   }
 
   function handleCherryPick(commit: CommitRow) {
@@ -615,77 +612,6 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     }
   }
 
-  function handlePointerDown(event: PointerEvent) {
-    // Left/primary button only: the drag-to-merge/rebase/move-tag gesture this feeds is
-    // exclusively a left-click drag. Capturing the
-    // pointer on a right-button pointerdown also has a real cross-browser side effect beyond
-    // just being semantically wrong — it suppresses the `contextmenu` event that would
-    // otherwise fire on release, silently breaking every ref badge's right-click menu.
-    if (event.button !== 0 || busy) return;
-    const badge = (event.target as HTMLElement).closest<HTMLElement>("[data-ref-name]");
-    if (!badge?.dataset.refName) return;
-    const row = badge.closest<HTMLElement>("[data-oid]");
-    if (!row?.dataset.oid) return;
-    const commit = rows.find((r) => r.oid === row.dataset.oid);
-    if (!commit) return;
-    const ref = commit.refs.find(
-      (r) => r.name === badge.dataset.refName && r.kind === badge.dataset.refKind,
-    );
-    if (!ref) return;
-
-    pointerDownInfo = { x: event.clientX, y: event.clientY, ref, commitOid: commit.oid };
-    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-  }
-
-  function handlePointerMove(event: PointerEvent) {
-    if (!pointerDownInfo) return;
-
-    if (!dragSource) {
-      const distance = Math.hypot(
-        event.clientX - pointerDownInfo.x,
-        event.clientY - pointerDownInfo.y,
-      );
-      if (distance < DRAG_THRESHOLD_PX) return;
-      dragSource = { ref: pointerDownInfo.ref, commitOid: pointerDownInfo.commitOid };
-    }
-
-    dragPointerPos = { x: event.clientX, y: event.clientY };
-    dragModifierHeld = event.altKey;
-
-    const candidate = resolveDragTarget(event.clientX, event.clientY);
-    if (dragTargetKey(candidate) !== dragTargetKey(dropTarget)) {
-      dropTarget = candidate;
-    }
-  }
-
-  function handlePointerUp(event: PointerEvent) {
-    (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
-
-    const source = dragSource;
-    if (source) {
-      suppressNextClick = true;
-      const action = dragAction;
-      // Re-derive from live state rather than trusting the captured `source` reference is still
-      // valid — a branch could have been deleted mid-drag by an external actor/watcher.
-      const stillExists = rows.some((r) =>
-        r.refs.some((ref) => ref.name === source.ref.name && ref.kind === source.ref.kind),
-      );
-      if (action && stillExists) {
-        if (action.verb === "merge") handleMerge(action.sourceName);
-        else if (action.verb === "rebase") handleRebase(action.onto);
-        else if (action.verb === "reset")
-          handleResetDrop(action.onto, event.clientX, event.clientY);
-        else handleMoveTag(action.tagName, action.onto);
-      }
-    }
-
-    pointerDownInfo = null;
-    dragSource = null;
-    dropTarget = null;
-    dragPointerPos = null;
-    dragModifierHeld = false;
-  }
-
   function buildCommitMenu(commit: CommitRow): ContextMenuItem[] {
     return [
       { label: "Checkout this commit", onSelect: () => handleCheckoutCommit(commit) },
@@ -829,7 +755,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 <div
   class="graph-scroll"
-  class:dragging={dragSource !== null}
+  class:dragging={pointerDrag.source !== null}
   role="listbox"
   aria-label="Commit rows"
   aria-activedescendant={selectedOid ? `commit-${selectedOid}` : undefined}
@@ -840,9 +766,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   onclick={handleClick}
   onkeydown={handleKeydown}
   oncontextmenu={handleContextMenu}
-  onpointerdown={handlePointerDown}
-  onpointermove={handlePointerMove}
-  onpointerup={handlePointerUp}
+  onpointerdown={pointerDrag.handlePointerDown}
+  onpointermove={pointerDrag.handlePointerMove}
+  onpointerup={pointerDrag.handlePointerUp}
 >
   {#if error}
     <p class="graph-error" role="alert">{error}</p>
@@ -864,7 +790,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         class:selected={commit.oid === selectedOid}
         class:workdir-row={commit.kind === "workdir"}
         class:unpulled={!commit.isLocal}
-        class:drop-target={dropTarget?.type === "commit" && dropTarget.oid === commit.oid}
+        class:drop-target={pointerDrag.target?.type === "commit" &&
+          pointerDrag.target.oid === commit.oid}
         data-oid={commit.oid}
         role="option"
         aria-selected={commit.oid === selectedOid}
@@ -912,9 +839,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
               <span
                 class="ref-badge draggable"
                 class:head={ref.isHead}
-                class:drop-target={dropTarget?.type === "ref" &&
-                  dropTarget.ref.name === ref.name &&
-                  dropTarget.ref.kind === ref.kind}
+                class:drop-target={pointerDrag.target?.type === "ref" &&
+                  pointerDrag.target.ref.name === ref.name &&
+                  pointerDrag.target.ref.kind === ref.kind}
                 data-ref-name={ref.name}
                 data-ref-kind={ref.kind}>{ref.name}</span
               >

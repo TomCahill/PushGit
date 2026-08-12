@@ -14,6 +14,7 @@ import {
   setAiTransport,
   setAutoFetchEnabled,
   setAutoFetchIntervalMinutes,
+  setCheckForUpdatesEnabled,
   setMaxCommitsRendered,
   setReduceMotion,
   setShowHookOutputAlways,
@@ -35,6 +36,8 @@ describe("settingsState", () => {
     settingsState.autoFetchEnabled = false;
     settingsState.autoFetchIntervalMinutes = DEFAULT_AUTO_FETCH_INTERVAL_MINUTES;
     settingsState.showHookOutputAlways = true;
+    settingsState.checkForUpdatesEnabled = true;
+    settingsState.dismissedUpdateVersion = null;
     settingsState.hasAiApiKey = false;
   });
 
@@ -53,6 +56,8 @@ describe("settingsState", () => {
           autoFetchEnabled: true,
           autoFetchIntervalMinutes: 15,
           showHookOutputAlways: false,
+          checkForUpdatesEnabled: false,
+          dismissedUpdateVersion: "1.2.0",
         };
       }
       if (cmd === "has_ai_api_key") return true;
@@ -67,6 +72,8 @@ describe("settingsState", () => {
     expect(settingsState.autoFetchEnabled).toBe(true);
     expect(settingsState.autoFetchIntervalMinutes).toBe(15);
     expect(settingsState.showHookOutputAlways).toBe(false);
+    expect(settingsState.checkForUpdatesEnabled).toBe(false);
+    expect(settingsState.dismissedUpdateVersion).toBe("1.2.0");
     expect(settingsState.hasAiApiKey).toBe(true);
   });
 
@@ -154,6 +161,26 @@ describe("settingsState", () => {
     await setShowHookOutputAlways(false);
 
     expect(settingsState.showHookOutputAlways).toBe(false);
+  });
+
+  it("setCheckForUpdatesEnabled persists through the backend and updates settingsState from its response", async () => {
+    mockIPC((cmd, args) => {
+      if (cmd === "set_check_for_updates_enabled") {
+        expect(args).toEqual({ value: false });
+        return {
+          maxCommitsRendered: DEFAULT_MAX_COMMITS_RENDERED,
+          reduceMotion: false,
+          autoFetchEnabled: false,
+          autoFetchIntervalMinutes: DEFAULT_AUTO_FETCH_INTERVAL_MINUTES,
+          checkForUpdatesEnabled: false,
+        };
+      }
+      throw new Error(`unexpected command ${cmd}`);
+    });
+
+    await setCheckForUpdatesEnabled(false);
+
+    expect(settingsState.checkForUpdatesEnabled).toBe(false);
   });
 
   it("setAiTransport persists through the backend and updates settingsState.ai from its response", async () => {

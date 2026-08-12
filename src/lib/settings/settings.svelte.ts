@@ -25,6 +25,7 @@ import {
   setAiTransport as setAiTransportCommand,
   setAutoFetchEnabled as setAutoFetchEnabledCommand,
   setAutoFetchIntervalMinutes as setAutoFetchIntervalMinutesCommand,
+  setCheckForUpdatesEnabled as setCheckForUpdatesEnabledCommand,
   setMaxCommitsRendered as setMaxCommitsRenderedCommand,
   setReduceMotion as setReduceMotionCommand,
   setShowHookOutputAlways as setShowHookOutputAlwaysCommand,
@@ -76,6 +77,11 @@ interface SettingsState {
   /** Whether the commit/push hook-output transcript opens immediately when a hook starts
    *  running. Off means it stays hidden (still recording) until the operation fails. */
   showHookOutputAlways: boolean;
+  /** Whether `checkForUpdate()` runs on launch. Only ever queries GitHub's public releases API
+   *  for this repo; never sends any identifying data. */
+  checkForUpdatesEnabled: boolean;
+  /** The version string of a release the user has already dismissed the update banner for. */
+  dismissedUpdateVersion: string | null;
   /** Whether an AI provider API key is currently saved — the key's value itself is never
    *  read back into the frontend, see `hasAiApiKey`. */
   hasAiApiKey: boolean;
@@ -93,6 +99,8 @@ export const settingsState: SettingsState = $state({
   autoFetchEnabled: true,
   autoFetchIntervalMinutes: DEFAULT_AUTO_FETCH_INTERVAL_MINUTES,
   showHookOutputAlways: true,
+  checkForUpdatesEnabled: true,
+  dismissedUpdateVersion: null,
   hasAiApiKey: false,
   localAiStatus: { ...DEFAULT_LOCAL_AI_STATUS },
   localAiDownloadProgress: null,
@@ -111,6 +119,8 @@ export async function loadAppConfig(): Promise<void> {
     settingsState.autoFetchEnabled = config.autoFetchEnabled;
     settingsState.autoFetchIntervalMinutes = config.autoFetchIntervalMinutes;
     settingsState.showHookOutputAlways = config.showHookOutputAlways;
+    settingsState.checkForUpdatesEnabled = config.checkForUpdatesEnabled;
+    settingsState.dismissedUpdateVersion = config.dismissedUpdateVersion;
   } catch {
     // Keep the hardcoded defaults.
   }
@@ -183,6 +193,13 @@ export async function setReduceMotion(value: boolean): Promise<void> {
 export async function setAutoFetchEnabled(value: boolean): Promise<void> {
   const config = await setAutoFetchEnabledCommand(value);
   settingsState.autoFetchEnabled = config.autoFetchEnabled;
+}
+
+/** Persists whether the launch-time update check runs at all; `settingsState` is updated from
+ *  the backend's response. */
+export async function setCheckForUpdatesEnabled(value: boolean): Promise<void> {
+  const config = await setCheckForUpdatesEnabledCommand(value);
+  settingsState.checkForUpdatesEnabled = config.checkForUpdatesEnabled;
 }
 
 /** Persists a new auto-fetch interval; the backend clamps it to

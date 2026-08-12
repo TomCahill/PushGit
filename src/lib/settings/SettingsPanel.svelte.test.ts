@@ -22,6 +22,8 @@ describe("SettingsPanel", () => {
     settingsState.autoFetchEnabled = false;
     settingsState.autoFetchIntervalMinutes = DEFAULT_AUTO_FETCH_INTERVAL_MINUTES;
     settingsState.showHookOutputAlways = true;
+    settingsState.checkForUpdatesEnabled = true;
+    settingsState.dismissedUpdateVersion = null;
     settingsState.hasAiApiKey = false;
     settingsState.localAiStatus = { modelPresent: false, enginePresent: false, gpuDevice: null };
     settingsState.localAiDownloadProgress = null;
@@ -224,6 +226,44 @@ describe("SettingsPanel", () => {
       await fireEvent.change(select, { target: { value: "30" } });
 
       await waitFor(() => expect(settingsState.autoFetchIntervalMinutes).toBe(30));
+    });
+  });
+
+  describe("check for updates", () => {
+    it("saves the check-for-updates preference", async () => {
+      mockIPC((cmd, args) => {
+        if (cmd === "set_check_for_updates_enabled") {
+          expect(args).toEqual({ value: false });
+          return {
+            maxCommitsRendered: DEFAULT_MAX_COMMITS_RENDERED,
+            reduceMotion: false,
+            checkForUpdatesEnabled: false,
+          };
+        }
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const { getByLabelText } = render(SettingsPanel);
+      const checkbox = getByLabelText("Check for updates on launch") as HTMLInputElement;
+
+      await fireEvent.click(checkbox);
+
+      expect(checkbox.checked).toBe(false);
+    });
+
+    it("reverts the checkbox and shows an error toast when the save fails", async () => {
+      mockIPC((cmd) => {
+        if (cmd === "set_check_for_updates_enabled") throw "disk full";
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const { getByLabelText } = render(SettingsPanel);
+      const checkbox = getByLabelText("Check for updates on launch") as HTMLInputElement;
+
+      await fireEvent.click(checkbox);
+
+      await waitFor(() => expect(checkbox.checked).toBe(true));
+      expect(toastState.toasts.map((t) => t.message)).toContain("disk full");
     });
   });
 
