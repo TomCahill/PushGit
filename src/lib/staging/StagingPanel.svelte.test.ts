@@ -345,6 +345,58 @@ describe("StagingPanel", () => {
     expect(button.disabled).toBe(true);
   });
 
+  it("unstages every staged file when Unstage All is clicked", async () => {
+    let staged = true;
+    const unstagedPaths: string[] = [];
+    mockIPC((cmd, args) => {
+      switch (cmd) {
+        case "diff_unstaged":
+          return staged
+            ? []
+            : [makeFileDiff({ newPath: "a.txt" }), makeFileDiff({ newPath: "b.txt" })];
+        case "diff_staged":
+          return staged
+            ? [makeFileDiff({ newPath: "a.txt" }), makeFileDiff({ newPath: "b.txt" })]
+            : [];
+        case "unstage_file":
+          unstagedPaths.push((args as { path: string }).path);
+          if (unstagedPaths.length === 2) staged = false;
+          return null;
+        default:
+          throw new Error(`unexpected command ${cmd}`);
+      }
+    });
+
+    const { findByText, findByRole } = render(StagingPanel, {
+      props: { repoPath: "/repo", refreshKey: 0 },
+    });
+
+    await findByText("Staged Changes (2)");
+    await fireEvent.click(await findByRole("button", { name: "Unstage All" }));
+
+    expect(await findByText("Changes (2)")).toBeTruthy();
+    expect(await findByText("Staged Changes (0)")).toBeTruthy();
+    expect(unstagedPaths).toEqual(["a.txt", "b.txt"]);
+  });
+
+  it("disables Unstage All when there is nothing staged", async () => {
+    mockIPC((cmd) => {
+      switch (cmd) {
+        case "diff_unstaged":
+          return [];
+        case "diff_staged":
+          return [];
+        default:
+          throw new Error(`unexpected command ${cmd}`);
+      }
+    });
+
+    const { findByRole } = render(StagingPanel, { props: { repoPath: "/repo", refreshKey: 0 } });
+
+    const button = (await findByRole("button", { name: "Unstage All" })) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+  });
+
   it("reports the selected file's diff, with a hunk-stage action, to onDiffChange", async () => {
     let hunkStaged = false;
     mockIPC((cmd, args) => {
