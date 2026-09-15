@@ -198,6 +198,11 @@ export function listBranches(repoPath: string): Promise<BranchInfo[]> {
   return invoke("list_branches", { repoPath });
 }
 
+/** Remote-tracking branch shorthand names (e.g. `"origin/feature"`), for a ref picker. */
+export function listRemoteBranches(repoPath: string): Promise<string[]> {
+  return invoke("list_remote_branches", { repoPath });
+}
+
 export function createBranch(repoPath: string, name: string, at?: string): Promise<void> {
   return invoke("create_branch", { repoPath, name, at: at ?? null });
 }

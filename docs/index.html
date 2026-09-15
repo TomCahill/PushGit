@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PushGit — a fast, native git GUI</title>
+<meta name="description" content="PushGit is a fast, native git GUI with a proper visual commit graph. No Electron, no account, no telemetry — just a lightweight, offline-first client for the git operations you do every day.">
+<link rel="icon" type="image/png" href="assets/favicon.png">
+<style>
+  :root {
+    color-scheme: light dark;
+
+    --surface-0: light-dark(#fef7ff, #141218);
+    --surface-1: light-dark(#f3edf7, #211f26);
+    --surface-2: light-dark(#ece6f0, #2b2930);
+    --border: light-dark(#cac4d0, #49454f);
+    --border-strong: light-dark(#79747e, #938f99);
+
+    --text-primary: light-dark(#1d1b20, #e6e0e9);
+    --text-secondary: light-dark(#49454f, #cac4d0);
+    --text-muted: light-dark(#79747e, #938f99);
+
+    --accent: light-dark(#6750a4, #d0bcff);
+    --accent-bg: light-dark(rgba(103, 80, 164, 0.1), rgba(208, 188, 255, 0.14));
+    --on-accent: light-dark(#ffffff, #381e72);
+    --primary-container: light-dark(#eaddff, #4f378b);
+    --on-primary-container: light-dark(#21005d, #eaddff);
+
+    --success: light-dark(#00785a, #009e73);
+    --success-bg: light-dark(rgba(0, 158, 115, 0.12), rgba(0, 158, 115, 0.18));
+    --danger: light-dark(#a3390a, #d55e00);
+    --danger-bg: light-dark(rgba(213, 94, 0, 0.12), rgba(213, 94, 0, 0.18));
+
+    --radius-sm: 12px;
+    --radius-md: 20px;
+    --radius-lg: 28px;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px 1px rgba(0, 0, 0, 0.15);
+    --shadow-md: 0 1px 3px rgba(0, 0, 0, 0.3), 0 4px 8px 3px rgba(0, 0, 0, 0.15);
+
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Code", monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--surface-0);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    scroll-behavior: smooth;
+  }
+
+  a { color: inherit; }
+
+  img { max-width: 100%; }
+
+  .wrap {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 0 1.5rem;
+  }
+
+  /* Nav */
+  header.nav {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    backdrop-filter: blur(10px);
+    background: light-dark(rgba(254, 247, 255, 0.85), rgba(20, 18, 24, 0.85));
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1.5rem;
+    max-width: 1080px;
+    margin: 0 auto;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-weight: 700;
+    font-size: 1.05rem;
+    text-decoration: none;
+  }
+  .brand img { width: 28px; height: 28px; border-radius: 6px; }
+  .nav-links {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    font-size: 0.9rem;
+  }
+  .nav-links a {
+    text-decoration: none;
+    color: var(--text-secondary);
+  }
+  .nav-links a:hover { color: var(--text-primary); }
+  /* Needs to out-specify `.nav-links a`, which would otherwise win and leave grey-on-accent */
+  .nav-links a.nav-cta,
+  .nav-links a.nav-cta:hover {
+    background: var(--accent);
+    color: var(--on-accent);
+    padding: 0.45rem 0.9rem;
+    border-radius: 999px;
+    font-weight: 600;
+    text-decoration: none;
+    font-size: 0.85rem;
+  }
+  @media (max-width: 640px) {
+    .nav-links a:not(.nav-cta) { display: none; }
+  }
+
+  /* Hero */
+  .hero {
+    padding: 4.5rem 0 3rem;
+    text-align: center;
+  }
+  .hero .badges {
+    display: flex;
+    justify-content: center;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+  }
+  .badge {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    padding: 0.3rem 0.7rem;
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+  }
+  .hero h1 {
+    font-size: clamp(2.2rem, 5vw, 3.4rem);
+    line-height: 1.1;
+    margin: 0 0 1rem;
+    letter-spacing: -0.02em;
+  }
+  .hero h1 .accent { color: var(--accent); }
+  .hero p.lede {
+    font-size: 1.15rem;
+    color: var(--text-secondary);
+    max-width: 640px;
+    margin: 0 auto 2rem;
+    line-height: 1.55;
+  }
+  .cta-row {
+    display: flex;
+    justify-content: center;
+    gap: 0.85rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.75rem;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.4rem;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 0.95rem;
+    text-decoration: none;
+    transition: transform 120ms ease, box-shadow 120ms ease;
+  }
+  .btn:hover { transform: translateY(-1px); }
+  .btn-filled { background: var(--accent); color: var(--on-accent); box-shadow: var(--shadow-sm); }
+  .btn-filled:hover { box-shadow: var(--shadow-md); }
+  .btn-outline { background: transparent; color: var(--text-primary); border: 1.5px solid var(--border-strong); }
+  .hero .sub-cta { font-size: 0.82rem; color: var(--text-muted); }
+
+  /* Graph mockup */
+  .mockup-wrap { margin: 3rem auto 0; max-width: 840px; }
+  .mockup {
+    background: var(--surface-0);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    overflow: hidden;
+    text-align: left;
+  }
+  .mockup-titlebar {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.65rem 1rem;
+    background: var(--surface-1);
+    border-bottom: 1px solid var(--border);
+  }
+  .mockup-titlebar span {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--border-strong);
+  }
+  .mockup-titlebar .title {
+    margin-left: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    width: 100%;
+    height: auto;
+    background: none;
+  }
+
+  /* Commit graph rows — same geometry as the app: 26px rows, 16px lanes, r=4 dots */
+  .graph {
+    position: relative;
+    padding: 0.3rem 0.55rem;
+    font-size: 12px;
+    line-height: 1;
+  }
+  .rails { position: absolute; top: 0.3rem; left: 0.55rem; pointer-events: none; }
+  .rail { fill: none; stroke: var(--lane); stroke-width: 2; }
+  .dot { fill: var(--lane); }
+  .dot-open {
+    fill: var(--surface-0);
+    stroke: var(--lane);
+    stroke-width: 2;
+    stroke-dasharray: 2 2;
+  }
+  .c-orange    { --lane: light-dark(#b25000, #e69f00); }
+  .c-blue      { --lane: light-dark(#0072b2, #56b4e9); }
+  .c-green     { --lane: light-dark(#00785a, #009e73); }
+  .c-yellow    { --lane: light-dark(#8a7300, #f0e442); }
+  .c-vermilion { --lane: light-dark(#a3390a, #d55e00); }
+  .c-pink      { --lane: light-dark(#a0447d, #cc79a7); }
+  .c-teal      { --lane: light-dark(#00787a, #00c2c4); }
+
+  .grow {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    height: 26px;
+    padding: 0 0.4rem 0 70px;
+    border-radius: 6px;
+    white-space: nowrap;
+  }
+  .grow.sel { background: var(--accent-bg); }
+  .grow.wip { font-style: italic; color: var(--text-secondary); }
+
+  .refs { display: flex; gap: 0.25rem; flex-shrink: 0; }
+  .ref {
+    font-size: 10px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    color: var(--text-secondary);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+  }
+  .ref.head { font-weight: 600; color: var(--accent); border-color: var(--accent); }
+
+  .msg { flex: 1 1 auto; min-width: 3rem; overflow: hidden; text-overflow: ellipsis; }
+
+  .gmeta {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .who {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    max-width: 9rem;
+    padding: 1px 7px 1px 1px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--text-secondary);
+    overflow: hidden;
+  }
+  .who i {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: var(--who);
+    color: #fff;
+    font-size: 8px;
+    font-style: normal;
+    font-weight: 600;
+  }
+  .who b { font-weight: 400; overflow: hidden; text-overflow: ellipsis; }
+  .sha { font-family: var(--font-mono); }
+  .copy {
+    width: 12px; height: 12px;
+    flex-shrink: 0;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    opacity: 0.55;
+  }
+  .when { font-variant-numeric: tabular-nums; }
+  .scrollbar {
+    position: absolute;
+    top: 8px; right: 4px;
+    width: 5px; height: 170px;
+    border-radius: 999px;
+    background: var(--border-strong);
+    opacity: 0.45;
+  }
+
+  /* Drop meta columns as the row narrows, exactly as the real pane does */
+  @media (max-width: 880px) { .when { display: none; } }
+  @media (max-width: 720px) { .sha, .copy { display: none; } }
+  @media (max-width: 560px) { .who b { display: none; } .who { padding: 1px; } }
+  @media (max-width: 520px) {
+    .refs .ref ~ .ref { display: none; }
+    .ref { max-width: 7rem; overflow: hidden; text-overflow: ellipsis; }
+  }
+  @media (max-width: 480px) { .graph { font-size: 11px; } .ref { font-size: 9px; padding: 1px 5px; } }
+
+  /* Sections */
+  section { padding: 3.5rem 0; }
+  section h2 {
+    font-size: 1.9rem;
+    letter-spacing: -0.01em;
+    margin: 0 0 0.6rem;
+    text-align: center;
+  }
+  section > .wrap > p.section-sub {
+    text-align: center;
+    color: var(--text-secondary);
+    max-width: 620px;
+    margin: 0 auto 2.5rem;
+    line-height: 1.5;
+  }
+
+  /* Problem / positioning */
+  .positioning {
+    background: var(--surface-1);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+  .problem-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+    align-items: center;
+  }
+  @media (max-width: 720px) {
+    .problem-grid { grid-template-columns: 1fr; }
+  }
+  .problem-grid p { color: var(--text-secondary); line-height: 1.65; }
+  .stat-cards {
+    display: grid;
+    gap: 0.8rem;
+  }
+  .stat-card {
+    background: var(--surface-0);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 0.95rem 1.1rem;
+  }
+  .stat-card .label {
+    display: block;
+    font-size: 0.88rem;
+    font-weight: 600;
+    margin-bottom: 0.7rem;
+  }
+  .bar + .bar { margin-top: 0.55rem; }
+  .bar-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+    margin-bottom: 0.25rem;
+    font-size: 0.74rem;
+    color: var(--text-muted);
+  }
+  .bar-head .fig { font-family: var(--font-mono); white-space: nowrap; }
+  .bar-head .bad { color: var(--danger); }
+  .bar-head .good { color: var(--success); font-weight: 700; }
+  .track {
+    display: block;
+    height: 7px;
+    border-radius: 999px;
+    background: var(--surface-2);
+  }
+  .fill {
+    display: block;
+    height: 100%;
+    width: var(--pct);
+    min-width: 6px;
+    border-radius: 999px;
+    background: var(--danger);
+  }
+  .fill.good-fill { background: var(--success); }
+
+  /* Feature grid */
+  .feature-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.1rem;
+  }
+  @media (max-width: 860px) { .feature-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .feature-grid { grid-template-columns: 1fr; } }
+  .feature-card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 1.4rem;
+  }
+  .feature-card .icon {
+    width: 36px; height: 36px;
+    border-radius: 10px;
+    background: var(--accent-bg);
+    color: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 0.9rem;
+    font-size: 1.1rem;
+  }
+  .feature-card h3 { font-size: 1.02rem; margin: 0 0 0.4rem; }
+  .feature-card p { font-size: 0.88rem; color: var(--text-secondary); line-height: 1.5; margin: 0; }
+
+  /* Tech strip */
+  .tech-strip {
+    display: flex;
+    justify-content: center;
+    gap: 2.2rem;
+    flex-wrap: wrap;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    font-family: var(--font-mono);
+  }
+  .tech-strip strong { color: var(--text-secondary); font-family: inherit; }
+
+  /* Privacy band */
+  .privacy {
+    background: var(--surface-1);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    text-align: center;
+  }
+  .privacy-pills {
+    display: flex;
+    justify-content: center;
+    gap: 0.7rem;
+    flex-wrap: wrap;
+    margin-top: 1.5rem;
+  }
+  .pill {
+    font-size: 0.82rem;
+    padding: 0.4rem 0.85rem;
+    border-radius: 999px;
+    background: var(--success-bg);
+    color: var(--success);
+    font-weight: 600;
+  }
+
+  /* Final CTA */
+  .final-cta { text-align: center; }
+  .final-cta .btn-filled { padding: 0.9rem 2rem; font-size: 1rem; }
+
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 2.2rem 0;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+  }
+  footer a { text-decoration: underline; }
+  footer .foot-links {
+    display: flex;
+    justify-content: center;
+    gap: 1.2rem;
+    margin-bottom: 0.8rem;
+    flex-wrap: wrap;
+  }
+  footer .foot-links a { text-decoration: none; color: var(--text-secondary); }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="#top">
+      <img src="assets/logo.png" alt="PushGit">
+      PushGit
+    </a>
+    <nav class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#compare">Why PushGit</a>
+      <a href="#privacy">Privacy</a>
+      <a href="https://github.com/TomCahill/pushgit" target="_blank" rel="noopener">GitHub</a>
+      <a class="nav-cta" href="https://github.com/TomCahill/pushgit/releases" target="_blank" rel="noopener">Download</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+  <section class="hero">
+    <div class="wrap">
+      <div class="badges">
+        <span class="badge">Linux · v1.3</span>
+        <span class="badge">AGPL-3.0-or-later</span>
+        <span class="badge">No telemetry · No account</span>
+      </div>
+      <h1>A git GUI that stays<br><span class="accent">out of your way.</span></h1>
+      <p class="lede">
+        PushGit is a fast, native git GUI with a proper visual commit graph. It does the
+        everyday operations — stage, commit, branch, merge, diff, stash, sync — quickly and
+        clearly, and refuses to become anything more than that.
+      </p>
+      <div class="cta-row">
+        <a class="btn btn-filled" href="https://github.com/TomCahill/pushgit/releases" target="_blank" rel="noopener">Download latest release</a>
+        <a class="btn btn-outline" href="https://github.com/TomCahill/pushgit" target="_blank" rel="noopener">View source on GitHub</a>
+      </div>
+      <p class="sub-cta">Free and open source · Linux builds today, cross-platform architecture from day one</p>
+
+      <div class="mockup-wrap">
+        <div class="mockup">
+          <div class="mockup-titlebar">
+            <span></span><span></span><span></span>
+            <span class="title">PushGit</span>
+          </div>
+          <div class="graph" role="img" aria-label="Illustration of PushGit's commit graph: colored branch lanes for main, develop, release, hotfix and feature branches, with ref badges, authors, short SHAs and dates on each row">
+            <svg class="rails" width="70" height="468" viewBox="0 0 70 468" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <!-- main -->
+              <g class="c-orange">
+                <path class="rail" d="M10,13 V468"/>
+                <circle class="dot-open" cx="10" cy="13" r="4"/>
+                <circle class="dot" cx="10" cy="39" r="4"/>
+                <circle class="dot" cx="10" cy="377" r="4"/>
+                <circle class="dot" cx="10" cy="455" r="4"/>
+              </g>
+              <!-- develop -->
+              <g class="c-blue">
+                <path class="rail" d="M26,65 V468"/>
+                <circle class="dot" cx="26" cy="65" r="4"/>
+                <circle class="dot" cx="26" cy="169" r="4"/>
+                <circle class="dot" cx="26" cy="247" r="4"/>
+                <circle class="dot" cx="26" cy="273" r="4"/>
+                <circle class="dot" cx="26" cy="351" r="4"/>
+                <circle class="dot" cx="26" cy="429" r="4"/>
+              </g>
+              <!-- release/v2.4.0: merged into both main and develop, forked off develop -->
+              <g class="c-green">
+                <path class="rail" d="M10,39 C10,65 42,65 42,91"/>
+                <path class="rail" d="M26,65 C26,78 42,78 42,91"/>
+                <path class="rail" d="M42,91 V117 C42,143 26,143 26,169"/>
+                <circle class="dot" cx="42" cy="91" r="4"/>
+                <circle class="dot" cx="42" cy="117" r="4"/>
+              </g>
+              <!-- feature/inline-blame -->
+              <g class="c-teal">
+                <path class="rail" d="M26,169 C26,182 42,182 42,195 V221 C42,234 26,234 26,247"/>
+                <circle class="dot" cx="42" cy="195" r="4"/>
+                <circle class="dot" cx="42" cy="221" r="4"/>
+              </g>
+              <!-- feature/interactive-rebase: still open, no merge edge at the top -->
+              <g class="c-pink">
+                <path class="rail" d="M58,143 V325 C58,338 26,338 26,351"/>
+                <circle class="dot" cx="58" cy="143" r="4"/>
+              </g>
+              <!-- feature/conflict-editor -->
+              <g class="c-vermilion">
+                <path class="rail" d="M26,273 C26,286 42,286 42,299 V325 C42,338 26,338 26,351"/>
+                <circle class="dot" cx="42" cy="299" r="4"/>
+                <circle class="dot" cx="42" cy="325" r="4"/>
+              </g>
+              <!-- hotfix/2.3.2: branched from and merged back into main -->
+              <g class="c-yellow">
+                <path class="rail" d="M10,377 C10,390 42,390 42,403 V429 C42,442 10,442 10,455"/>
+                <circle class="dot" cx="42" cy="403" r="4"/>
+              </g>
+            </svg>
+            <div class="scrollbar"></div>
+            <div class="rows" aria-hidden="true">
+              <div class="grow wip">
+                <span class="msg">Uncommitted changes (3 files)</span>
+              </div>
+              <div class="grow">
+                <span class="refs"><span class="ref head">main</span><span class="ref">origin/main</span><span class="ref">v2.4.0</span></span>
+                <span class="msg">Merge branch 'release/v2.4.0'</span>
+                <span class="gmeta">
+                  <span class="who"><i style="--who:#6b4fbb">TC</i><b>Tom Cahill</b></span>
+                  <span class="sha">7f3a9c1</span>
+                  <svg class="copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  <span class="when">12/09/2026</span>
+                </span>
+              </div>
+              <div class="grow">
+                <span class="refs"><span class="ref">develop</span><span class="ref">origin/develop</span></span>
+                <span class="msg">Merge branch 'release/v2.4.0' into develop</span>
+                <span class="gmeta">
+                  <span class="who"><i style="--who:#6b4fbb">TC</i><b>Tom Cahill</b></span>
+                  <span class="sha">2b81e4d</span>
+                  <svg class="copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  <span class="when">12/09/2026</span>
+                </span>
+              </div>
+              <div class="grow">
+                <span class="msg">chore(release): v2.4.0</span>
+                <span class="gmeta">
+                  <span class="who"><i style="--who:#6b4fbb">TC</i><b>Tom Cahill</b></span>
+                  <span class="sha">c4d07a8</span>
+                  <svg class="copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  <span class="when">12/09/2026</span>
+                </span>
+              </div>
+              <div class="grow">
+                <span class="msg">docs: refresh the keyboard shortcut reference</span>
+                <span class="gmeta">
+                  <span class="who"><i style="--who:#1d8a8c">AK</i><b>Aisha Khan</b></span>
+                  <span class="sha">91f6b32</span>
+                  <svg class="copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  <span class="when">11/09/2026</span>
+                </span>
+              </div>
+              <div class="grow">
+                <span class="refs"><span class="ref">feature/interactive-rebase</span></span>
+                <span class="msg">wip: drag-to-reorder for the rebase todo list</span>
+                <span class="gmeta">
+                  <span class="who"><i style="--who:#a02b5c">DO</i><b>Dan Okoye</b></span>
+                  <span class="sha">5a1e9d4</span>
+                  <svg class="copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  <span class="when">11/09/2026</span>
+                </span>
+              </div>
+              <div class="grow">
+                <span class="msg">Merge branch 'feature/inline-blame' into develop</span>
+                <span class="gmeta">
+                  <span class="who"><i style="--who:#1f7a5c">PR</i><b>Priya Raman</b></span>
+                  <span class="sha">5e2c8f0</span>
+                  <svg class="copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  <span class="when">10/09/2026</span>
+                </span>
+              </div>
+              <div class="grow sel">
+                <span class="msg">feat(blame): annotate the gutter with author and age</span>
+                <span class="gmeta">
+                  <span class="who"><i style="--who:#1f7a5c">PR</i><b>Priya Raman</b></span>
+                  <span class="sha">a07b5d9</span>
+                  <svg class="copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  <span class="when">10/09/2026</span>
+                </span>
+              </div>
+              <div class="grow">
+                <span class="msg">perf(blame): cache blame results per file revision</span>
+                <span class="gmeta">
+                  <span class="who"><i style="--who:#1f7a5c">PR</i><b>Priya Raman</b></span>
+                  <span class="sha">de49c16</span>
+                  <svg class="copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  <span class="when">09/09/2026</span>
+                </span>
+              </div>
+              <div class="grow">
+                <span class="msg">fix(diff): keep scroll position when a file refreshes</span>
+                <span class="gmeta">
+                  <span class="who"><i style="--who:#b5541d">MW</i><b>Marcus Webb</b></span>
+                  <span class="sha">3c9a0f7</span>
+                  <svg class="copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  <span class="when">09/09/2026</span>
+                </span>
+              </div>
+              <div class="grow">
+                <span class="msg">Merge branch 'feature/conflict-editor' into develop</span>
+                <span class="gmeta">
+                  <span class="who"><i style="--who:#1d6fb5">LF</i><b>Lena Fischer</b></span>
+                  <span class="sha">86b4e2a</span>
+                  <svg class="copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  <span class="when">08/09/2026</span>
+                </span>
+              </div>
+              <div class="grow">
+                <span class="msg">feat(merge): three-way conflict editor with per-hunk actions</span>
+                <span class="gmeta">
+                  <span class="who"><i style="--who:#1d6fb5">LF</i><b>Lena Fischer</b></span>
+                  <span class="sha">f15d803</span>
+                  <svg class="copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  <span class="when">08/09/2026</span>
+                </span>
+              </div>
+              <div class="grow">
+                <span class="msg">refactor(merge): extract conflict hunk resolution</span>
+                <span class="gmeta">
+                  <span class="who"><i style="--who:#a02b5c">DO</i><b>Dan Okoye</b></span>
+                  <span class="sha">7a2e961</span>
+                  <svg class="copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  <span class="when">07/09/2026</span>
+                </span>
+              </div>
+              <div class="grow">
+                <span class="msg">test: cover rename and typechange detection</span>
+                <span class="gmeta">
+                  <span class="who"><i style="--who:#4e7a1d">SM</i><b>Sofia Marchetti</b></span>
+                  <span class="sha">0d6c47b</span>
+                  <svg class="copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  <span class="when">06/09/2026</span>
+                </span>
+              </div>
+              <div class="grow">
+                <span class="refs"><span class="ref">v2.3.2</span></span>
+                <span class="msg">Merge branch 'hotfix/2.3.2'</span>
+                <span class="gmeta">
+                  <span class="who"><i style="--who:#6b4fbb">TC</i><b>Tom Cahill</b></span>
+                  <span class="sha">b93f1ce</span>
+                  <svg class="copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  <span class="when">05/09/2026</span>
+                </span>
+              </div>
+              <div class="grow">
+                <span class="msg">fix(ssh): retry the agent before prompting for a passphrase</span>
+                <span class="gmeta">
+                  <span class="who"><i style="--who:#b5321d">JB</i><b>Jonas Berg</b></span>
+                  <span class="sha">4e8a7d2</span>
+                  <svg class="copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  <span class="when">05/09/2026</span>
+                </span>
+              </div>
+              <div class="grow">
+                <span class="msg">feat(palette): fuzzy-match branch and tag names</span>
+                <span class="gmeta">
+                  <span class="who"><i style="--who:#4e7a1d">SM</i><b>Sofia Marchetti</b></span>
+                  <span class="sha">62c5b1f</span>
+                  <svg class="copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  <span class="when">04/09/2026</span>
+                </span>
+              </div>
+              <div class="grow">
+                <span class="refs"><span class="ref">v2.3.1</span></span>
+                <span class="msg">Merge branch 'release/v2.3.1'</span>
+                <span class="gmeta">
+                  <span class="who"><i style="--who:#6b4fbb">TC</i><b>Tom Cahill</b></span>
+                  <span class="sha">1fd9603</span>
+                  <svg class="copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  <span class="when">02/09/2026</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="positioning" id="compare">
+    <div class="wrap">
+      <h2>Built to prove a git GUI can be both rich and light</h2>
+      <p class="section-sub">
+        Most feature-rich git clients today are built on Electron. That choice shows up as
+        idle memory that climbs over a working day, multi-second startup, and installers in
+        the hundreds of megabytes. PushGit makes the opposite architectural bets from the
+        start &mdash; a native webview instead of bundled Chromium, an in-process git library
+        instead of shelling out per action &mdash; rather than retrofitting performance later.
+      </p>
+      <div class="problem-grid">
+        <div>
+          <p>
+            None of that bloat is a one-off bug in other tools &mdash; it's the accumulated
+            cost of years of feature accretion on top of a heavyweight runtime: dashboards,
+            AI text generation wired into every input, mandatory accounts, and telemetry with
+            no opt-out, all loaded before you've clicked a single commit.
+          </p>
+          <p>
+            PushGit's scope is narrow on purpose: render history clearly, and make staging,
+            branching, merging, diffing, stashing, and syncing fast. Every one of those is
+            bounded, well-understood, local-first work &mdash; there's no technical reason it
+            should cost hundreds of megabytes of idle RAM.
+          </p>
+        </div>
+        <div class="stat-cards">
+          <div class="stat-card">
+            <span class="label">Installed size</span>
+            <div class="bar">
+              <div class="bar-head"><span>Electron clients</span><span class="fig bad">~320&ndash;390MB</span></div>
+              <span class="track" aria-hidden="true"><span class="fill" style="--pct:100%"></span></span>
+            </div>
+            <div class="bar">
+              <div class="bar-head"><span>PushGit target</span><span class="fig good">≤15MB</span></div>
+              <span class="track" aria-hidden="true"><span class="fill good-fill" style="--pct:4%"></span></span>
+            </div>
+          </div>
+          <div class="stat-card">
+            <span class="label">Idle memory, repo open</span>
+            <div class="bar">
+              <div class="bar-head"><span>Electron clients, end of day</span><span class="fig bad">2&ndash;3GB</span></div>
+              <span class="track" aria-hidden="true"><span class="fill" style="--pct:100%"></span></span>
+            </div>
+            <div class="bar">
+              <div class="bar-head"><span>PushGit target</span><span class="fig good">≤100MB</span></div>
+              <span class="track" aria-hidden="true"><span class="fill good-fill" style="--pct:4%"></span></span>
+            </div>
+          </div>
+          <div class="stat-card">
+            <span class="label">Cold start to interactive</span>
+            <div class="bar">
+              <div class="bar-head"><span>Electron clients</span><span class="fig bad">~4 seconds</span></div>
+              <span class="track" aria-hidden="true"><span class="fill" style="--pct:100%"></span></span>
+            </div>
+            <div class="bar">
+              <div class="bar-head"><span>PushGit target</span><span class="fig good">≤1 second</span></div>
+              <span class="track" aria-hidden="true"><span class="fill good-fill" style="--pct:25%"></span></span>
+            </div>
+          </div>
+          <div class="stat-card">
+            <span class="label">First paint, 10k-commit repo</span>
+            <div class="bar">
+              <div class="bar-head"><span>Others, after tuning settings down</span><span class="fig bad">~3 seconds</span></div>
+              <span class="track" aria-hidden="true"><span class="fill" style="--pct:100%"></span></span>
+            </div>
+            <div class="bar">
+              <div class="bar-head"><span>PushGit target, no tuning</span><span class="fig good">≤500ms</span></div>
+              <span class="track" aria-hidden="true"><span class="fill good-fill" style="--pct:17%"></span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="features">
+    <div class="wrap">
+      <h2>Everything you actually do with git, done well</h2>
+      <p class="section-sub">
+        No project boards, no PR review, no AI text generation bolted onto every field. Just
+        the operations that make up a real git workflow.
+      </p>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <div class="icon">&#9737;</div>
+          <h3>Visual commit graph</h3>
+          <p>Stable lane layout, persistent branch/tag colors, a live "uncommitted changes" row, and instant search/filter by message, SHA, author, or ref &mdash; smooth even on large histories.</p>
+        </div>
+        <div class="feature-card">
+          <div class="icon">&#9998;</div>
+          <h3>Staging &amp; commits</h3>
+          <p>Stage whole files, individual hunks, or individual lines. Amend with one toggle, prefill from your commit template, and optionally skip hooks per commit.</p>
+        </div>
+        <div class="feature-card">
+          <div class="icon">&#8646;</div>
+          <h3>Diffing</h3>
+          <p>Inline or side-by-side views, syntax-highlighted per file type, with rename/copy/typechange detection so a moved file reads as one change, not a delete-and-add.</p>
+        </div>
+        <div class="feature-card">
+          <div class="icon">&#8618;</div>
+          <h3>Branching &amp; rebase</h3>
+          <p>Create, checkout, rename, delete (local and remote), merge, and both non-interactive and drag-to-reorder interactive rebase, with a real three-way conflict editor.</p>
+        </div>
+        <div class="feature-card">
+          <div class="icon">&#128190;</div>
+          <h3>Stash</h3>
+          <p>Create, apply, pop, drop, rename, and selectively stash just the files you choose &mdash; not the whole working directory.</p>
+        </div>
+        <div class="feature-card">
+          <div class="icon">&#8644;</div>
+          <h3>Remotes</h3>
+          <p>Fetch, pull, and push over SSH or HTTPS using your existing credentials, with ahead/behind tracking and unpulled remote commits shown greyed-out right on the graph.</p>
+        </div>
+        <div class="feature-card">
+          <div class="icon">&#9099;</div>
+          <h3>Undo, always</h3>
+          <p>A real undo/redo stack &mdash; not a single safety net &mdash; backed by full repository snapshots, covering commits, branch changes, merges, rebases, and stash actions.</p>
+        </div>
+        <div class="feature-card">
+          <div class="icon">&#8981;</div>
+          <h3>Command palette</h3>
+          <p>Fuzzy search commands, branches, files, and commits from the keyboard without ever touching the mouse.</p>
+        </div>
+        <div class="feature-card">
+          <div class="icon">&#9878;</div>
+          <h3>Cherry-pick &amp; blame</h3>
+          <p>Single- or multi-commit cherry-pick with conflict handling, plus per-line blame and file history for tracing where a change came from.</p>
+        </div>
+        <div class="feature-card">
+          <div class="icon">&#8916;</div>
+          <h3>GitFlow support</h3>
+          <p>Start and finish features, releases, and hotfixes against the same <code>git-flow</code> config the AVH CLI uses &mdash; interoperable with repos set up either way.</p>
+        </div>
+        <div class="feature-card">
+          <div class="icon">&#10022;</div>
+          <h3>AI commit messages &mdash; opt-in</h3>
+          <p>Off by default. When enabled, generate commit messages from your staged diff via your own API key, or entirely on-device with a bundled local model &mdash; your choice, never assumed.</p>
+        </div>
+        <div class="feature-card">
+          <div class="icon">&#9881;</div>
+          <h3>Repo maintenance</h3>
+          <p>A repo-health indicator based on loose/packed object counts, with a one-click <code>git gc</code> when it's actually worth running.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="privacy" id="privacy">
+    <div class="wrap">
+      <h2>A pure, local git client</h2>
+      <p class="section-sub" style="margin-bottom:0;">
+        PushGit talks to whatever remote you've configured over plain SSH or HTTPS, and
+        nothing else. No hosting integrations, no project-management surfaces, no accounts to
+        create.
+      </p>
+      <div class="privacy-pills">
+        <span class="pill">No telemetry</span>
+        <span class="pill">No crash reporting</span>
+        <span class="pill">No mandatory account</span>
+        <span class="pill">Works fully offline</span>
+        <span class="pill">No GitHub/GitLab/Jira integrations</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>Built on a lighter stack</h2>
+      <p class="section-sub">
+        Tauri pairs a Rust core with the OS's native webview instead of bundling Chromium.
+        Git access goes through <code>git2-rs</code> (libgit2) for the vast majority of
+        operations, so most actions never fork a <code>git</code> subprocess at all &mdash;
+        with the real git binary as an escape hatch only where libgit2 genuinely can't do
+        the job (interactive rebase, some credential-helper flows).
+      </p>
+      <div class="tech-strip">
+        <span><strong>Tauri</strong> — app shell</span>
+        <span><strong>Rust</strong> — backend core</span>
+        <span><strong>git2-rs</strong> — libgit2 bindings</span>
+        <span><strong>Svelte</strong> — frontend UI</span>
+        <span><strong>WebKitGTK</strong> — native Linux webview</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="final-cta">
+    <div class="wrap">
+      <h2>Get PushGit</h2>
+      <p class="section-sub">
+        Linux builds are available today. Grab a prebuilt binary, or build it yourself in a
+        few commands.
+      </p>
+      <a class="btn btn-filled" href="https://github.com/TomCahill/pushgit/releases" target="_blank" rel="noopener">Download the latest release</a>
+      <p class="sub-cta" style="margin-top:1rem;">
+        Prefer to build from source? <code>git clone</code> the repo and run
+        <code>npm install &amp;&amp; npm run tauri build</code>.
+      </p>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-links">
+      <a href="https://github.com/TomCahill/pushgit" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/TomCahill/pushgit/releases" target="_blank" rel="noopener">Releases</a>
+      <a href="https://github.com/TomCahill/pushgit/blob/main/LICENSE" target="_blank" rel="noopener">License</a>
+      <a href="https://github.com/TomCahill/pushgit/blob/main/SECURITY.md" target="_blank" rel="noopener">Security</a>
+    </div>
+    Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-or-later). If you fork
+    PushGit or run a modified version as a network service, you must share your changes back.
+  </div>
+</footer>
+
+</body>
+</html>

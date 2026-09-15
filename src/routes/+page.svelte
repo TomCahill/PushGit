@@ -77,6 +77,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   } from "$lib/git/api";
   import InteractiveRebaseEditor from "$lib/rebase/InteractiveRebaseEditor.svelte";
   import CherryPickRangePicker from "$lib/cherrypick/CherryPickRangePicker.svelte";
+  import CompareRefsPicker from "$lib/compare/CompareRefsPicker.svelte";
   import BlameView from "$lib/blame/BlameView.svelte";
   import BlameFileView from "$lib/blame/BlameFileView.svelte";
   import type {
@@ -101,7 +102,13 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   let folders = $state<RepoFolder[]>([]);
 
   let viewMode = $state<
-    "working" | "commit" | "conflict" | "interactive-rebase" | "cherry-pick-range" | "blame"
+    | "working"
+    | "commit"
+    | "conflict"
+    | "interactive-rebase"
+    | "cherry-pick-range"
+    | "compare"
+    | "blame"
   >("working");
   let rebaseOnto = $state<string | null>(null);
   let rebaseCommits = $state<RebaseCommitSummary[]>([]);
@@ -123,6 +130,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   let selectedCommitFilePath = $state<string | null>(null);
   let blameCenterDiff = $state<FileDiffSelection | null>(null);
   let blameLines = $state<BlameLine[] | null>(null);
+  let compareFiles = $state<FileDiff[] | null>(null);
+  let compareError = $state<string | null>(null);
+  let compareFilePath = $state<string | null>(null);
 
   function fileKey(file: FileDiff): string {
     return file.newPath ?? file.oldPath ?? "";
@@ -134,19 +144,27 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       : null,
   );
 
+  const compareSelectedFile = $derived(
+    compareFiles && compareFilePath
+      ? (compareFiles.find((f) => fileKey(f) === compareFilePath) ?? null)
+      : null,
+  );
+
   const centerDiff = $derived<FileDiffSelection | null>(
     viewMode === "working"
       ? workingCenterDiff
       : viewMode === "commit" && selectedCommitFile
         ? { file: selectedCommitFile }
-        : viewMode === "blame"
-          ? blameCenterDiff
-          : null,
+        : viewMode === "compare" && compareSelectedFile
+          ? { file: compareSelectedFile }
+          : viewMode === "blame"
+            ? blameCenterDiff
+            : null,
   );
 
   // Clears whichever selection is active whenever the view mode itself changes — both
   // switching views should never show a stale file's diff, and neither selection is
-  // meaningful outside "working"/"commit"/"blame" respectively.
+  // meaningful outside "working"/"commit"/"compare"/"blame" respectively.
   $effect(() => {
     void viewMode;
     workingSelectedFile = null;
@@ -154,7 +172,16 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     selectedCommitFilePath = null;
     blameCenterDiff = null;
     blameLines = null;
+    compareFiles = null;
+    compareError = null;
+    compareFilePath = null;
   });
+
+  function handleCompareResult(files: FileDiff[] | null, error: string | null) {
+    compareFiles = files;
+    compareError = error;
+    compareFilePath = null;
+  }
 
   function formatDateTime(unixSeconds: number): string {
     return new Date(unixSeconds * 1000).toLocaleString();
@@ -536,6 +563,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
             label: "Cherry-pick Commits…",
             run: showCherryPickRangePicker,
           },
+          {
+            id: "compare-refs",
+            label: "Compare Refs…",
+            run: () => (viewMode = "compare"),
+          },
         ]
       : []),
   ]);
@@ -686,6 +718,15 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         onConflicts={handleCherryPickRangeConflicts}
         onCancel={handleCherryPickRangeCancel}
       />
+    {:else if viewMode === "compare"}
+      <div class="compare-view">
+        <CompareRefsPicker {repoPath} onResult={handleCompareResult} />
+        {#if compareError}
+          <p class="error" role="alert">{compareError}</p>
+        {:else if compareFiles}
+          <CommitDiffView files={compareFiles} bind:selectedPath={compareFilePath} />
+        {/if}
+      </div>
     {:else if viewMode === "blame"}
       {#if blamePath}
         {#key blamePath}
@@ -942,6 +983,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
   .diff {
     padding: var(--space-4);
+  }
+
+  .compare-view {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
   }
 
   .error {

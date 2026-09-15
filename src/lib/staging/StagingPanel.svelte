@@ -479,6 +479,17 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     }
   }
 
+  async function handleUnstageAll() {
+    try {
+      for (const file of stagedFiles) {
+        await unstageFile(repoPath, fileKey(file));
+      }
+      await reload(repoPath, refreshKey);
+    } catch (err) {
+      loadError = String(err);
+    }
+  }
+
   async function handleDiscardFile(file: FileDiff) {
     const path = fileKey(file);
     if (
@@ -698,6 +709,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       <h3>
         Staged Changes ({stagedFiles.length})
         <DiffStat insertions={stagedStats.insertions} deletions={stagedStats.deletions} />
+        <button
+          type="button"
+          class="unstage-all"
+          disabled={stagedFiles.length === 0}
+          onclick={handleUnstageAll}
+        >
+          Unstage All
+        </button>
       </h3>
       <ul>
         {#each stagedFiles as file (fileKey(file))}
@@ -833,7 +852,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     color: var(--text-muted);
   }
 
-  .stage-all {
+  .stage-all,
+  .unstage-all {
     margin-left: auto;
     font: inherit;
     font-size: 0.72rem;
@@ -848,12 +868,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     transition: background-color 0.1s ease;
   }
 
-  .stage-all:hover:not(:disabled) {
+  .stage-all:hover:not(:disabled),
+  .unstage-all:hover:not(:disabled) {
     background: var(--surface-2);
     color: var(--accent);
   }
 
-  .stage-all:disabled {
+  .stage-all:disabled,
+  .unstage-all:disabled {
     opacity: 0.5;
     cursor: default;
   }

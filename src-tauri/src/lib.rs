@@ -157,6 +157,7 @@ pub fn run() {
         commands::head_commit_message,
         commands::commit_message_template,
         commands::list_branches,
+        commands::list_remote_branches,
         commands::create_branch,
         commands::checkout_branch,
         commands::checkout_commit,
