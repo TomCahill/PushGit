@@ -487,6 +487,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fast_forward_pull_refuses_to_overwrite_an_uncommitted_edit() {
+        let remote_dir = bare_remote();
+        let remote_url = remote_dir.path().to_str().unwrap();
+
+        let dest_a = tempfile::TempDir::new().unwrap().keep();
+        let repo_a = git2::Repository::init(&dest_a).unwrap();
+        set_test_identity(&repo_a);
+        fs::write(dest_a.join("shared.txt"), "seed\n").unwrap();
+        let mut index = repo_a.index().unwrap();
+        index.add_path(StdPath::new("shared.txt")).unwrap();
+        index.write().unwrap();
+        let tree = repo_a.find_tree(index.write_tree().unwrap()).unwrap();
+        let sig = repo_a.signature().unwrap();
+        repo_a
+            .commit(Some("HEAD"), &sig, &sig, "seed", &tree, &[])
+            .unwrap();
+        let head_name = repo_a.head().unwrap().shorthand().unwrap().to_string();
+        repo_a.remote("origin", remote_url).unwrap();
+        let (progress, cancel) = no_op_progress();
+        let hook_output = no_op_hook_output();
+        push(
+            &dest_a,
+            "origin",
+            &head_name,
+            false,
+            &progress,
+            &hook_output,
+            &cancel,
+        )
+        .await
+        .unwrap();
+
+        let dest_b = tempfile::TempDir::new().unwrap().keep();
+        clone(remote_url, &dest_b).await.unwrap();
+        let repo_b = crate::repo::open(&dest_b).unwrap();
+        let mut local_branch = repo_b.find_branch(&head_name, BranchType::Local).unwrap();
+        local_branch
+            .set_upstream(Some(&format!("origin/{head_name}")))
+            .unwrap();
+
+        // Uncommitted, unstaged local edit to the same file the remote is about to change —
+        // the exact "pull nuked my working-directory changes" scenario reported live.
+        fs::write(dest_b.join("shared.txt"), "MY UNSAVED WORK\n").unwrap();
+
+        // Remote advances with no local commits at all, so this pull is a pure fast-forward.
+        commit_file(&repo_a, "shared.txt", "seed + remote change\n");
+        push(
+            &dest_a,
+            "origin",
+            &head_name,
+            false,
+            &progress,
+            &hook_output,
+            &cancel,
+        )
+        .await
+        .unwrap();
+
+        let result = pull(&dest_b, "origin", &progress, &cancel).await;
+
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read_to_string(dest_b.join("shared.txt")).unwrap(),
+            "MY UNSAVED WORK\n"
+        );
+    }
+
+    #[tokio::test]
     async fn push_streams_progress_for_a_real_transfer() {
         let remote_dir = bare_remote();
         let remote_url = remote_dir.path().to_str().unwrap();

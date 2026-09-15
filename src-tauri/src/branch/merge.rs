@@ -24,6 +24,13 @@ pub fn merge_branch(repo: &Repository, branch_name: &str) -> PushGitResult<Merge
     }
 
     if analysis.is_fast_forward() {
+        // Safe (non-forced) checkout, and before HEAD moves: errors out if an uncommitted
+        // change would be overwritten, matching plain `git merge`'s own refusal, instead of
+        // silently discarding it. HEAD only advances once the checkout has actually
+        // succeeded, so a refusal here never leaves HEAD pointing past what the working
+        // directory reflects.
+        let their_commit = repo.find_commit(their_oid)?;
+        repo.checkout_tree(their_commit.as_object(), None)?;
         let mut head_ref = repo.head()?;
         head_ref.set_target(their_oid, "pushgit: fast-forward merge")?;
         repo.set_head(
@@ -31,7 +38,6 @@ pub fn merge_branch(repo: &Repository, branch_name: &str) -> PushGitResult<Merge
                 .name()
                 .ok_or_else(|| invalid("HEAD ref has no name"))?,
         )?;
-        repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))?;
         return Ok(MergeOutcome::FastForward);
     }
 
@@ -195,6 +201,48 @@ mod tests {
         assert_eq!(
             fs::read_to_string(dir.path().join("shared.txt")).unwrap(),
             "main version\n"
+        );
+    }
+
+    #[test]
+    fn fast_forward_refuses_to_overwrite_an_uncommitted_conflicting_edit() {
+        let (dir, repo) = repo_init();
+        commit_file(&repo, "shared.txt", "base\n");
+        create_branch(&repo, "feature", None).unwrap();
+        checkout_branch(&repo, "feature").unwrap();
+        commit_file(&repo, "shared.txt", "feature version\n");
+
+        checkout_branch(&repo, "main").unwrap();
+        let head_before = repo.head().unwrap().target().unwrap();
+        fs::write(dir.path().join("shared.txt"), "MY UNSAVED WORK\n").unwrap();
+
+        let result = merge_branch(&repo, "feature");
+
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read_to_string(dir.path().join("shared.txt")).unwrap(),
+            "MY UNSAVED WORK\n"
+        );
+        assert_eq!(repo.head().unwrap().target().unwrap(), head_before);
+    }
+
+    #[test]
+    fn fast_forward_still_succeeds_with_an_unrelated_uncommitted_edit() {
+        let (dir, repo) = repo_init();
+        create_branch(&repo, "feature", None).unwrap();
+        checkout_branch(&repo, "feature").unwrap();
+        let tip = commit_file(&repo, "a.txt", "a\n");
+
+        checkout_branch(&repo, "main").unwrap();
+        fs::write(dir.path().join("untouched.txt"), "still here\n").unwrap();
+
+        let outcome = merge_branch(&repo, "feature").unwrap();
+
+        assert!(matches!(outcome, MergeOutcome::FastForward));
+        assert_eq!(repo.head().unwrap().target().unwrap(), tip);
+        assert_eq!(
+            fs::read_to_string(dir.path().join("untouched.txt")).unwrap(),
+            "still here\n"
         );
     }
 }
