@@ -22,8 +22,8 @@ mod tag;
 
 pub use cherry_pick::{abort_cherry_pick, cherry_pick, is_multi_cherry_pick_in_progress};
 pub use conflict::{
-    conflict_sides, list_conflicts, resolve_conflict, resolve_conflict_as_deleted,
-    write_resolved_conflict,
+    conflict_raw_sides, conflict_sides, list_conflicts, resolve_conflict,
+    resolve_conflict_as_deleted, write_resolved_conflict,
 };
 pub use merge::{abort_merge, merge_branch, merge_branch_no_ff};
 pub use model::{BranchInfo, CherryPickOutcome, MergeOutcome, RebaseOutcome, RepoState, ResetMode};

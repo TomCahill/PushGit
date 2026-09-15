@@ -18,6 +18,7 @@ import type {
   CherryPickOutcome,
   CommitGraphPage,
   ConflictSides,
+  DiffSide,
   DownloadProgress,
   EngineVariant,
   FileDiff,
@@ -670,4 +671,45 @@ export function downloadLocalAi(
 /** Cancels whatever local-AI download is currently in progress, if any. */
 export function cancelLocalAiDownload(): Promise<void> {
   return invoke("cancel_local_ai_download");
+}
+
+/** Opens the external diff tool configured for `repoPath`, pointed at temp copies of
+ *  `oldSide`/`newSide`. Rejects with a clear message if no diff tool is configured (neither
+ *  Settings' override nor the repo's own `diff.tool`/`difftool.<tool>.cmd`). */
+export function openExternalDiffTool(
+  repoPath: string,
+  oldSide: DiffSide,
+  newSide: DiffSide,
+  oldPath: string,
+  newPath: string,
+): Promise<void> {
+  return invoke("open_external_diff_tool", { repoPath, oldSide, newSide, oldPath, newPath });
+}
+
+/** Opens the external merge tool configured for `repoPath` on one conflicted `path`; on
+ *  success the path is already resolved and staged, the same as `writeResolvedConflict`. */
+export function openExternalMergeTool(repoPath: string, path: string): Promise<void> {
+  return invoke("open_external_merge_tool", { repoPath, path });
+}
+
+/** The command that would actually run for "open in external diff tool" against `repoPath`
+ *  right now — `null` if nothing is configured. Purely informational, for a Settings hint. */
+export function resolvedExternalDiffCommand(repoPath: string): Promise<string | null> {
+  return invoke("resolved_external_diff_command", { repoPath });
+}
+
+/** Same as `resolvedExternalDiffCommand`, for the merge-tool command. */
+export function resolvedExternalMergeCommand(repoPath: string): Promise<string | null> {
+  return invoke("resolved_external_merge_command", { repoPath });
+}
+
+/** Persists an override for the external diff tool command (`null` clears it), returning the
+ *  resulting config. */
+export function setExternalDiffCommand(value: string | null): Promise<AppConfig> {
+  return invoke("set_external_diff_command", { value });
+}
+
+/** Same as `setExternalDiffCommand`, for the merge-tool override. */
+export function setExternalMergeCommand(value: string | null): Promise<AppConfig> {
+  return invoke("set_external_merge_command", { value });
 }

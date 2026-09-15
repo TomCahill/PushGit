@@ -26,6 +26,8 @@ import {
   setAutoFetchEnabled as setAutoFetchEnabledCommand,
   setAutoFetchIntervalMinutes as setAutoFetchIntervalMinutesCommand,
   setCheckForUpdatesEnabled as setCheckForUpdatesEnabledCommand,
+  setExternalDiffCommand as setExternalDiffCommandCommand,
+  setExternalMergeCommand as setExternalMergeCommandCommand,
   setMaxCommitsRendered as setMaxCommitsRenderedCommand,
   setReduceMotion as setReduceMotionCommand,
   setShowHookOutputAlways as setShowHookOutputAlwaysCommand,
@@ -35,6 +37,7 @@ import type {
   AiTransport,
   DownloadProgress,
   EngineVariant,
+  ExternalToolsSettings,
   LocalAiStatus,
 } from "$lib/git/types";
 
@@ -56,6 +59,11 @@ const DEFAULT_LOCAL_AI_STATUS: LocalAiStatus = {
   modelPresent: false,
   enginePresent: false,
   gpuDevice: null,
+};
+
+const DEFAULT_EXTERNAL_TOOLS: ExternalToolsSettings = {
+  diffCommand: null,
+  mergeCommand: null,
 };
 
 /** The saved `ManagedLocal` transport's engine variant, or the default (`"cpu"`) when no
@@ -82,6 +90,11 @@ interface SettingsState {
   checkForUpdatesEnabled: boolean;
   /** The version string of a release the user has already dismissed the update banner for. */
   dismissedUpdateVersion: string | null;
+  /** Overrides for the "open in external diff/merge tool" command — empty by default, falling
+   *  back to the open repo's own `diff.tool`/`merge.tool` git config (see
+   *  `resolvedExternalDiffCommand`/`resolvedExternalMergeCommand`, which aren't cached here
+   *  since they're per-repo, not app-wide). */
+  externalTools: ExternalToolsSettings;
   /** Whether an AI provider API key is currently saved — the key's value itself is never
    *  read back into the frontend, see `hasAiApiKey`. */
   hasAiApiKey: boolean;
@@ -101,6 +114,7 @@ export const settingsState: SettingsState = $state({
   showHookOutputAlways: true,
   checkForUpdatesEnabled: true,
   dismissedUpdateVersion: null,
+  externalTools: { ...DEFAULT_EXTERNAL_TOOLS },
   hasAiApiKey: false,
   localAiStatus: { ...DEFAULT_LOCAL_AI_STATUS },
   localAiDownloadProgress: null,
@@ -121,6 +135,7 @@ export async function loadAppConfig(): Promise<void> {
     settingsState.showHookOutputAlways = config.showHookOutputAlways;
     settingsState.checkForUpdatesEnabled = config.checkForUpdatesEnabled;
     settingsState.dismissedUpdateVersion = config.dismissedUpdateVersion;
+    settingsState.externalTools = config.externalTools;
   } catch {
     // Keep the hardcoded defaults.
   }
@@ -248,4 +263,18 @@ export async function setAiApiKey(key: string): Promise<void> {
 export async function clearAiApiKey(): Promise<void> {
   await clearAiApiKeyCommand();
   settingsState.hasAiApiKey = await hasAiApiKeyCommand();
+}
+
+/** Persists an override for the external diff tool command (blank/`null` clears it, falling
+ *  back to the open repo's own `diff.tool`/`difftool.<tool>.cmd`); `settingsState` is updated
+ *  from the backend's response. */
+export async function setExternalDiffCommand(value: string | null): Promise<void> {
+  const config = await setExternalDiffCommandCommand(value);
+  settingsState.externalTools = config.externalTools;
+}
+
+/** Same as `setExternalDiffCommand`, for the merge-tool override. */
+export async function setExternalMergeCommand(value: string | null): Promise<void> {
+  const config = await setExternalMergeCommandCommand(value);
+  settingsState.externalTools = config.externalTools;
 }

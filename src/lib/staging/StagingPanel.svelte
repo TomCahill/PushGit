@@ -17,6 +17,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     generateCommitMessage,
     getRepoConfig,
     headCommitMessage,
+    openExternalDiffTool,
     stageFile,
     stageHunk,
     stageLines,
@@ -37,9 +38,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   } from "$lib/shell/hookOutput.svelte";
   import Icon from "$lib/shell/Icon.svelte";
   import ResizeHandle from "$lib/shell/ResizeHandle.svelte";
+  import { notifyError } from "$lib/shell/toast.svelte";
   import { acknowledgeAiCloudWarning, settingsState } from "$lib/settings/settings.svelte";
   import { sectionHeightsState, setStagedHeight, setUnstagedHeight } from "./sectionHeights.svelte";
-  import type { AiTransport, FileDiff, FileDiffSelection, Hunk } from "$lib/git/types";
+  import type { AiTransport, DiffSide, FileDiff, FileDiffSelection, Hunk } from "$lib/git/types";
 
   let {
     repoPath,
@@ -429,10 +431,24 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     }
   }
 
+  /** Fire-and-forget — nothing to read back for a plain (read-only) diff, unlike the merge-tool
+   *  flow in `ConflictEditor.svelte`, so this doesn't need a busy/spinner state of its own. */
+  function openExternalDiff(oldSide: DiffSide, newSide: DiffSide, file: FileDiff) {
+    const oldPath = file.oldPath ?? file.newPath ?? "";
+    const newPath = file.newPath ?? file.oldPath ?? "";
+    openExternalDiffTool(repoPath, oldSide, newSide, oldPath, newPath).catch((err) => {
+      notifyError(String(err));
+    });
+  }
+
   function buildUnstagedMenu(file: FileDiff): ContextMenuItem[] {
     const path = fileKey(file);
     const items: ContextMenuItem[] = [
       { label: "Copy file path", onSelect: () => void copyText(path) },
+      {
+        label: "Open in external diff tool",
+        onSelect: () => openExternalDiff({ kind: "index" }, { kind: "workdir" }, file),
+      },
     ];
     if (onBlame) items.push({ label: "Blame", onSelect: () => onBlame?.(path) });
     if (file.status === "conflicted") return items;
@@ -449,7 +465,13 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   }
 
   function buildStagedMenu(file: FileDiff): ContextMenuItem[] {
-    return [{ label: "Copy file path", onSelect: () => void copyText(fileKey(file)) }];
+    return [
+      { label: "Copy file path", onSelect: () => void copyText(fileKey(file)) },
+      {
+        label: "Open in external diff tool",
+        onSelect: () => openExternalDiff({ kind: "commit", rev: "HEAD" }, { kind: "index" }, file),
+      },
+    ];
   }
 
   function handleStagedContextMenu(event: MouseEvent, file: FileDiff) {

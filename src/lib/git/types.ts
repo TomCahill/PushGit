@@ -309,8 +309,22 @@ export interface AppConfig {
   showHookOutputAlways: boolean;
   checkForUpdatesEnabled: boolean;
   dismissedUpdateVersion: string | null;
+  externalTools: ExternalToolsSettings;
 }
 
 export interface RepoConfig {
   defaultSkipHooks: boolean;
 }
+
+// Mirror of `src-tauri/src/config/mod.rs::ExternalToolsSettings`.
+export interface ExternalToolsSettings {
+  diffCommand: string | null;
+  mergeCommand: string | null;
+}
+
+// Mirror of `src-tauri/src/external_tools/mod.rs::DiffSide`.
+export type DiffSide =
+  | { kind: "empty" }
+  | { kind: "workdir" }
+  | { kind: "index" }
+  | { kind: "commit"; rev: string };

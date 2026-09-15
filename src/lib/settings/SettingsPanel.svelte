@@ -15,6 +15,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     getCommitTemplatePath,
     getRepoConfig,
     initWorkflow,
+    resolvedExternalDiffCommand,
+    resolvedExternalMergeCommand,
     setCommitTemplatePath,
     setRepoDefaultSkipHooks,
   } from "$lib/git/api";
@@ -29,6 +31,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     setAutoFetchEnabled,
     setAutoFetchIntervalMinutes,
     setCheckForUpdatesEnabled,
+    setExternalDiffCommand,
+    setExternalMergeCommand,
     setMaxCommitsRendered,
     setReduceMotion,
     setShowHookOutputAlways,
@@ -370,6 +374,56 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       notifyError(String(err));
     }
   }
+
+  // External diff/merge tool commands — drafted from `settingsState.externalTools` once at
+  // mount, same "local draft + explicit Save" pattern as the AI transport fields above.
+  let externalDiffCommandDraft = $state(settingsState.externalTools.diffCommand ?? "");
+  let externalMergeCommandDraft = $state(settingsState.externalTools.mergeCommand ?? "");
+  let externalToolsSaved = $state(false);
+
+  // The command that will actually run against the open repo right now (this override if set,
+  // else the repo's own `diff.tool`/`merge.tool` git config) — purely a hint shown under a
+  // blank override field, re-fetched whenever the repo or the saved override changes.
+  let resolvedDiffCommand = $state<string | null>(null);
+  let resolvedMergeCommand = $state<string | null>(null);
+
+  async function loadResolvedExternalCommands(path: string) {
+    if (!path) {
+      resolvedDiffCommand = null;
+      resolvedMergeCommand = null;
+      return;
+    }
+    try {
+      const [diffCmd, mergeCmd] = await Promise.all([
+        resolvedExternalDiffCommand(path),
+        resolvedExternalMergeCommand(path),
+      ]);
+      resolvedDiffCommand = diffCmd;
+      resolvedMergeCommand = mergeCmd;
+    } catch {
+      // Leave the previous value; this is a hint only.
+    }
+  }
+
+  $effect(() => {
+    void loadResolvedExternalCommands(repoPath ?? "");
+  });
+
+  function handleExternalToolsInput() {
+    externalToolsSaved = false;
+  }
+
+  async function handleExternalToolsSubmit(event: SubmitEvent) {
+    event.preventDefault();
+    try {
+      await setExternalDiffCommand(externalDiffCommandDraft.trim() || null);
+      await setExternalMergeCommand(externalMergeCommandDraft.trim() || null);
+      externalToolsSaved = true;
+      await loadResolvedExternalCommands(repoPath ?? "");
+    } catch (err) {
+      notifyError(String(err));
+    }
+  }
 </script>
 
 <div class="settings-panel">
@@ -604,6 +658,46 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         <div class="row">
           <Button variant="tonal" type="submit">Save</Button>
         </div>
+      </form>
+    </section>
+
+    <section class="settings-card">
+      <div class="card-header">
+        <Icon name="wrench" size={16} />
+        <h3>External Tools</h3>
+      </div>
+
+      <form onsubmit={handleExternalToolsSubmit}>
+        <TextField
+          id="external-diff-command"
+          label="Diff tool command"
+          placeholder={resolvedDiffCommand ?? "e.g. meld $LOCAL $REMOTE"}
+          bind:value={externalDiffCommandDraft}
+          oninput={handleExternalToolsInput}
+        />
+        <TextField
+          id="external-merge-command"
+          label="Merge tool command"
+          placeholder={resolvedMergeCommand ?? "e.g. meld $BASE $LOCAL $REMOTE -o $MERGED"}
+          bind:value={externalMergeCommandDraft}
+          oninput={handleExternalToolsInput}
+        />
+        <div class="row">
+          <Button variant="tonal" type="submit">Save</Button>
+        </div>
+        <p class="hint">
+          {externalToolsSaved
+            ? "Saved."
+            : "Leave blank to use the open repo's own diff.tool/merge.tool git config, if set. Supports $LOCAL, $REMOTE, $BASE, $MERGED."}
+        </p>
+        {#if repoPath && (resolvedDiffCommand || resolvedMergeCommand)}
+          <p class="hint">
+            {#if resolvedDiffCommand}Diff tool that will run: <code>{resolvedDiffCommand}</code>{/if}
+            {#if resolvedDiffCommand && resolvedMergeCommand}<br />{/if}
+            {#if resolvedMergeCommand}Merge tool that will run: <code>{resolvedMergeCommand}</code
+              >{/if}
+          </p>
+        {/if}
       </form>
     </section>
 

@@ -197,4 +197,44 @@ describe("ConflictEditor", () => {
     await waitFor(() => expect(onResolved).toHaveBeenCalled());
     expect(calls).toEqual([{ repoPath: "/repo", path: "shared.txt" }]);
   });
+
+  it("opens the external merge tool and resolves on success", async () => {
+    const calls: unknown[] = [];
+    const onResolved = vi.fn();
+    mockIPC((cmd, args) => {
+      switch (cmd) {
+        case "conflict_sides":
+          return makeConflictSides();
+        case "open_external_merge_tool":
+          calls.push(args);
+          return null;
+        default:
+          throw new Error(`unexpected command ${cmd}`);
+      }
+    });
+
+    const { findByText, getByText } = render(ConflictEditor, {
+      props: { repoPath: "/repo", path: "shared.txt", onResolved, onCancel: vi.fn() },
+    });
+    await findByText("Open in external merge tool");
+
+    await fireEvent.click(getByText("Open in external merge tool"));
+
+    await waitFor(() => expect(onResolved).toHaveBeenCalled());
+    expect(calls).toEqual([{ repoPath: "/repo", path: "shared.txt" }]);
+  });
+
+  it("hides the external merge tool button for a binary conflict", async () => {
+    mockIPC((cmd) => {
+      if (cmd === "conflict_sides") return makeConflictSides({ isBinary: true, hunks: [] });
+      throw new Error(`unexpected command ${cmd}`);
+    });
+
+    const { findByText, queryByText } = render(ConflictEditor, {
+      props: { repoPath: "/repo", path: "image.png", onResolved: vi.fn(), onCancel: vi.fn() },
+    });
+    await findByText("Keep ours");
+
+    expect(queryByText("Open in external merge tool")).toBeNull();
+  });
 });

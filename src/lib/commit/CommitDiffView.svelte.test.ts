@@ -66,4 +66,27 @@ describe("CommitDiffView", () => {
     const selected = container.querySelector("li.selected");
     expect(selected?.textContent).toContain("a.txt");
   });
+
+  it("omits the external-diff button when onOpenExternalDiff isn't supplied", async () => {
+    const files = [makeFileDiff({ newPath: "a.txt" })];
+
+    const { findByText, queryByText } = render(CommitDiffView, { props: { files } });
+    await findByText("a.txt");
+
+    expect(queryByText("External diff")).toBeNull();
+  });
+
+  it("calls onOpenExternalDiff with the clicked file, without selecting it", async () => {
+    const files = [makeFileDiff({ newPath: "a.txt" })];
+    const onOpenExternalDiff = vi.fn();
+
+    const { container, findByText } = render(CommitDiffView, {
+      props: { files, onOpenExternalDiff },
+    });
+
+    await fireEvent.click(await findByText("External diff"));
+
+    expect(onOpenExternalDiff).toHaveBeenCalledWith(files[0]);
+    expect(container.querySelector("li.selected")).toBeNull();
+  });
 });

@@ -69,6 +69,11 @@ pub struct AppConfig {
     /// newer release ships, since that release's version won't match this one.
     #[serde(default)]
     pub dismissed_update_version: Option<String>,
+    /// Overrides for the command PushGit shells out to for "open in external diff/merge tool".
+    /// Empty by default — falls back to the repo's own `diff.tool`/`merge.tool` git config, see
+    /// `external_tools::resolve_diff_command`/`resolve_merge_command`.
+    #[serde(default)]
+    pub external_tools: ExternalToolsSettings,
 }
 
 impl Default for AppConfig {
@@ -82,8 +87,22 @@ impl Default for AppConfig {
             show_hook_output_always: true,
             check_for_updates_enabled: true,
             dismissed_update_version: None,
+            external_tools: ExternalToolsSettings::default(),
         }
     }
+}
+
+/// A user-configured override for the external diff/merge tool command, taking precedence over
+/// whatever `diff.tool`/`merge.tool` resolve to in the repo's own git config. App-wide (not
+/// `RepoConfig`) since this is a personal, per-machine tool preference, the same reasoning
+/// `AiSettings` and auto-fetch already follow.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalToolsSettings {
+    #[serde(default)]
+    pub diff_command: Option<String>,
+    #[serde(default)]
+    pub merge_command: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -241,6 +260,10 @@ mod tests {
             show_hook_output_always: false,
             check_for_updates_enabled: false,
             dismissed_update_version: Some("1.2.0".to_string()),
+            external_tools: ExternalToolsSettings {
+                diff_command: Some("meld $LOCAL $REMOTE".to_string()),
+                merge_command: Some("meld $BASE $LOCAL $REMOTE -o $MERGED".to_string()),
+            },
         };
 
         save_app_config_to(dir.path(), &config);
@@ -271,6 +294,7 @@ mod tests {
                 show_hook_output_always: true,
                 check_for_updates_enabled: true,
                 dismissed_update_version: None,
+                external_tools: ExternalToolsSettings::default(),
             }
         );
     }

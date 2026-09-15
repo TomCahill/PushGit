@@ -19,6 +19,7 @@ use crate::cherry_pick_range;
 use crate::config;
 use crate::diff::{self, ConflictSides, FileDiff, Hunk};
 use crate::error::{PushGitError, PushGitResult};
+use crate::external_tools::{self, DiffSide};
 use crate::graph::{CommitGraphPage, GraphFilter};
 use crate::hooks::HookOutputLine;
 use crate::interactive_rebase::{self, RebaseCommitSummary, RebaseStep};
@@ -1321,4 +1322,100 @@ pub async fn download_local_ai(
 pub async fn cancel_local_ai_download(state: State<'_, AppState>) -> PushGitResult<()> {
     state.local_ai_cancellation.cancel().await;
     Ok(())
+}
+
+/// Opens the external diff tool configured for this repo (`AppConfig` override, else this
+/// repo's `diff.tool`/`difftool.<tool>.cmd`) pointed at temp copies of `old_side`/`new_side`.
+/// Errors with a clear "not configured" message before writing any temp files if neither
+/// resolves to anything — see `external_tools` for the full design. `async` + `spawn_blocking`
+/// for the same reason `commit` is: an interactive GUI diff tool can stay open indefinitely,
+/// and running that synchronously would block the WebView's IPC dispatch thread.
+#[tauri::command]
+pub async fn open_external_diff_tool(
+    repo_path: String,
+    old_side: DiffSide,
+    new_side: DiffSide,
+    old_path: String,
+    new_path: String,
+) -> PushGitResult<()> {
+    tokio::task::spawn_blocking(move || {
+        let repo = repo::open(Path::new(&repo_path))?;
+        let cmd = external_tools::resolve_diff_command(&repo, &config::load_app_config())
+            .ok_or_else(|| {
+                PushGitError::Invalid(
+                    "no external diff tool configured — set one in Settings, or set \
+                     difftool.<tool>.cmd in git config"
+                        .to_string(),
+                )
+            })?;
+        external_tools::open_diff(&repo, &cmd, (old_side, &old_path), (new_side, &new_path))
+    })
+    .await
+    .map_err(|e| PushGitError::Invalid(format!("external diff tool task panicked: {e}")))??;
+    Ok(())
+}
+
+/// Opens the external merge tool configured for this repo on one conflicted path, then
+/// writes+stages whatever it resolves to. See `external_tools::open_merge`. `async` +
+/// `spawn_blocking` for the same reason as `open_external_diff_tool`.
+#[tauri::command]
+pub async fn open_external_merge_tool(repo_path: String, path: String) -> PushGitResult<()> {
+    tokio::task::spawn_blocking(move || {
+        let repo = repo::open(Path::new(&repo_path))?;
+        let cmd = external_tools::resolve_merge_command(&repo, &config::load_app_config())
+            .ok_or_else(|| {
+                PushGitError::Invalid(
+                    "no external merge tool configured — set one in Settings, or set \
+                     mergetool.<tool>.cmd in git config"
+                        .to_string(),
+                )
+            })?;
+        external_tools::open_merge(&repo, &cmd, &path)
+    })
+    .await
+    .map_err(|e| PushGitError::Invalid(format!("external merge tool task panicked: {e}")))??;
+    Ok(())
+}
+
+/// The command that would actually run for "open in external diff tool" against this repo
+/// right now — `AppConfig`'s override if set, else this repo's `diff.tool`/
+/// `difftool.<tool>.cmd`, else `None`. Purely informational, for a Settings-panel hint shown
+/// under a blank override field.
+#[tauri::command]
+pub fn resolved_external_diff_command(repo_path: String) -> PushGitResult<Option<String>> {
+    let repo = repo::open(Path::new(&repo_path))?;
+    Ok(external_tools::resolve_diff_command(
+        &repo,
+        &config::load_app_config(),
+    ))
+}
+
+/// Same as `resolved_external_diff_command`, for the merge-tool command.
+#[tauri::command]
+pub fn resolved_external_merge_command(repo_path: String) -> PushGitResult<Option<String>> {
+    let repo = repo::open(Path::new(&repo_path))?;
+    Ok(external_tools::resolve_merge_command(
+        &repo,
+        &config::load_app_config(),
+    ))
+}
+
+/// Persists an override for the external diff tool command (or clears it, `None`), returning
+/// the resulting config. Same load-existing-config-first reasoning as
+/// `set_max_commits_rendered`.
+#[tauri::command]
+pub fn set_external_diff_command(value: Option<String>) -> config::AppConfig {
+    let mut config = config::load_app_config();
+    config.external_tools.diff_command = value;
+    config::save_app_config(&config);
+    config
+}
+
+/// Same as `set_external_diff_command`, for the merge-tool override.
+#[tauri::command]
+pub fn set_external_merge_command(value: Option<String>) -> config::AppConfig {
+    let mut config = config::load_app_config();
+    config.external_tools.merge_command = value;
+    config::save_app_config(&config);
+    config
 }

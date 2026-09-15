@@ -12,6 +12,7 @@ mod commands;
 mod config;
 mod diff;
 pub mod error;
+mod external_tools;
 mod graph;
 mod hooks;
 mod interactive_rebase;
@@ -243,6 +244,12 @@ pub fn run() {
         commands::get_local_ai_status,
         commands::download_local_ai,
         commands::cancel_local_ai_download,
+        commands::open_external_diff_tool,
+        commands::open_external_merge_tool,
+        commands::resolved_external_diff_command,
+        commands::resolved_external_merge_command,
+        commands::set_external_diff_command,
+        commands::set_external_merge_command,
     ])
     .build(tauri::generate_context!())
     .expect("error while running tauri application")

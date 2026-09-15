@@ -23,11 +23,10 @@ pub fn resolve_conflict(repo: &Repository, path: &str) -> PushGitResult<()> {
     Ok(())
 }
 
-/// The base/ours/theirs content of one unresolved conflict, plus the ours-vs-theirs diff
-/// driving the 3-way conflict editor's per-hunk resolution controls.
-pub fn conflict_sides(repo: &Repository, path: &str) -> PushGitResult<ConflictSides> {
+/// Locates the unresolved conflict at `path` in the index, if any — shared by `conflict_sides`
+/// and `conflict_raw_sides` so the "scan every conflict for a matching path" loop exists once.
+fn find_conflict(repo: &Repository, path: &str) -> PushGitResult<git2::IndexConflict> {
     let index = repo.index()?;
-    let mut found = None;
     for conflict in index.conflicts()? {
         let conflict = conflict?;
         let entry = conflict
@@ -36,27 +35,23 @@ pub fn conflict_sides(repo: &Repository, path: &str) -> PushGitResult<ConflictSi
             .or(conflict.their.as_ref())
             .or(conflict.ancestor.as_ref());
         if entry.map(|e| e.path == path.as_bytes()).unwrap_or(false) {
-            found = Some(conflict);
-            break;
+            return Ok(conflict);
         }
     }
-    let conflict = found.ok_or_else(|| invalid(format!("no conflict at path '{path}'")))?;
+    Err(invalid(format!("no conflict at path '{path}'")))
+}
 
-    let base_blob = conflict
-        .ancestor
-        .as_ref()
-        .map(|e| repo.find_blob(e.id))
-        .transpose()?;
-    let ours_blob = conflict
-        .our
-        .as_ref()
-        .map(|e| repo.find_blob(e.id))
-        .transpose()?;
-    let theirs_blob = conflict
-        .their
-        .as_ref()
-        .map(|e| repo.find_blob(e.id))
-        .transpose()?;
+/// The base/ours/theirs content of one unresolved conflict, plus the ours-vs-theirs diff
+/// driving the 3-way conflict editor's per-hunk resolution controls.
+pub fn conflict_sides(repo: &Repository, path: &str) -> PushGitResult<ConflictSides> {
+    let conflict = find_conflict(repo, path)?;
+
+    let find_blob = |entry: &Option<git2::IndexEntry>| -> PushGitResult<Option<git2::Blob>> {
+        Ok(entry.as_ref().map(|e| repo.find_blob(e.id)).transpose()?)
+    };
+    let base_blob = find_blob(&conflict.ancestor)?;
+    let ours_blob = find_blob(&conflict.our)?;
+    let theirs_blob = find_blob(&conflict.their)?;
 
     let (hunks, is_binary) =
         diff::diff_blob_content(repo, ours_blob.as_ref(), theirs_blob.as_ref())?;
@@ -68,6 +63,31 @@ pub fn conflict_sides(repo: &Repository, path: &str) -> PushGitResult<ConflictSi
         is_binary,
         hunks,
     })
+}
+
+/// Base/ours/theirs raw blob content, in that order.
+pub type ConflictRawSides = (Option<Vec<u8>>, Option<Vec<u8>>, Option<Vec<u8>>);
+
+/// Raw base/ours/theirs blob content for one unresolved conflict — the counterpart to
+/// `conflict_sides` for callers (the external merge tool hookup) that want the bytes
+/// directly rather than pre-diffed, UTF-8-decoded content, so binary conflicts aren't lossily
+/// mangled before reaching the external tool.
+pub fn conflict_raw_sides(repo: &Repository, path: &str) -> PushGitResult<ConflictRawSides> {
+    let conflict = find_conflict(repo, path)?;
+
+    let blob_content = |entry: &Option<git2::IndexEntry>| -> PushGitResult<Option<Vec<u8>>> {
+        Ok(entry
+            .as_ref()
+            .map(|e| repo.find_blob(e.id))
+            .transpose()?
+            .map(|b| b.content().to_vec()))
+    };
+
+    Ok((
+        blob_content(&conflict.ancestor)?,
+        blob_content(&conflict.our)?,
+        blob_content(&conflict.their)?,
+    ))
 }
 
 /// Writes the conflict editor's resolved content to the working tree and stages it in one

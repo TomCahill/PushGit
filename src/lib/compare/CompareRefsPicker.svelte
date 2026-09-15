@@ -20,7 +20,15 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     onResult,
   }: {
     repoPath: string;
-    onResult: (files: FileDiff[] | null, error: string | null) => void;
+    /** `fromRef`/`toRef` are the exact strings compared, reported alongside the result so the
+     *  caller can reuse them (e.g. for "open in external diff tool") without duplicating this
+     *  component's own input state. */
+    onResult: (
+      files: FileDiff[] | null,
+      error: string | null,
+      fromRef: string,
+      toRef: string,
+    ) => void;
   } = $props();
 
   let from = $state("HEAD");
@@ -60,10 +68,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     try {
       const files = await diffBetweenCommits(repoPath, fromRef, toRef);
       if (myGeneration !== compareGeneration) return;
-      onResult(files, null);
+      onResult(files, null, fromRef, toRef);
     } catch (err) {
       if (myGeneration !== compareGeneration) return;
-      onResult(null, String(err));
+      onResult(null, String(err), fromRef, toRef);
     } finally {
       if (myGeneration === compareGeneration) busy = false;
     }

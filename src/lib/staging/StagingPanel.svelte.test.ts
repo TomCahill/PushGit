@@ -126,6 +126,80 @@ describe("StagingPanel", () => {
     expect(writeText).toHaveBeenCalledWith("a.txt");
   });
 
+  it("opens the external diff tool for an unstaged file with index vs. workdir sides", async () => {
+    const calls: unknown[] = [];
+    mockIPC((cmd, args) => {
+      switch (cmd) {
+        case "diff_unstaged":
+          return [makeFileDiff({ newPath: "a.txt" })];
+        case "diff_staged":
+          return [];
+        case "open_external_diff_tool":
+          calls.push(args);
+          return null;
+        default:
+          throw new Error(`unexpected command ${cmd}`);
+      }
+    });
+
+    render(ContextMenu);
+    const { findByRole, findByText } = render(StagingPanel, {
+      props: { repoPath: "/repo", refreshKey: 0 },
+    });
+
+    await fireEvent.contextMenu(await findByText("a.txt"));
+    await fireEvent.click(await findByRole("menuitem", { name: "Open in external diff tool" }));
+
+    await waitFor(() =>
+      expect(calls).toEqual([
+        {
+          repoPath: "/repo",
+          oldSide: { kind: "index" },
+          newSide: { kind: "workdir" },
+          oldPath: "a.txt",
+          newPath: "a.txt",
+        },
+      ]),
+    );
+  });
+
+  it("opens the external diff tool for a staged file with HEAD vs. index sides", async () => {
+    const calls: unknown[] = [];
+    mockIPC((cmd, args) => {
+      switch (cmd) {
+        case "diff_unstaged":
+          return [];
+        case "diff_staged":
+          return [makeFileDiff({ newPath: "a.txt" })];
+        case "open_external_diff_tool":
+          calls.push(args);
+          return null;
+        default:
+          throw new Error(`unexpected command ${cmd}`);
+      }
+    });
+
+    render(ContextMenu);
+    const { findByRole, findByText } = render(StagingPanel, {
+      props: { repoPath: "/repo", refreshKey: 0 },
+    });
+
+    await fireEvent.contextMenu(await findByText("a.txt"));
+    await fireEvent.click(await findByRole("menuitem", { name: "Open in external diff tool" }));
+
+    await waitFor(() =>
+      expect(calls).toEqual([
+        {
+          repoPath: "/repo",
+          oldSide: { kind: "commit", rev: "HEAD" },
+          newSide: { kind: "index" },
+          oldPath: "a.txt",
+          newPath: "a.txt",
+        },
+      ]),
+    );
+  });
+
   it("calls onBlame with the file's path when Blame is chosen from the right-click menu", async () => {
     mockIPC((cmd) => {
       switch (cmd) {
