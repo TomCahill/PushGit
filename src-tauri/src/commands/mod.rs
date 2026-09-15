@@ -272,6 +272,12 @@ pub fn list_branches(repo_path: String) -> PushGitResult<Vec<BranchInfo>> {
     branch::list_branches(&repo::open(Path::new(&repo_path))?)
 }
 
+/// Remote-tracking branch shorthand names (e.g. `"origin/feature"`), for a ref picker.
+#[tauri::command]
+pub fn list_remote_branches(repo_path: String) -> PushGitResult<Vec<String>> {
+    branch::list_remote_branches(&repo::open(Path::new(&repo_path))?)
+}
+
 /// Creates a local branch at `at` (any commit-ish), or at HEAD if `at` is not given.
 #[tauri::command]
 pub fn create_branch(repo_path: String, name: String, at: Option<String>) -> PushGitResult<()> {

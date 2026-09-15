@@ -81,6 +81,27 @@ pub fn list_branches(repo: &Repository) -> PushGitResult<Vec<BranchInfo>> {
     Ok(result)
 }
 
+/// Remote-tracking branch shorthand names (e.g. `"origin/feature"`), for populating a ref
+/// picker alongside local branches and tags. Excludes a remote's symbolic `<remote>/HEAD`
+/// entry — not a real ref to diff/checkout against, just a pointer at the remote's default
+/// branch, which already appears under its own name.
+pub fn list_remote_branches(repo: &Repository) -> PushGitResult<Vec<String>> {
+    let mut result = Vec::new();
+
+    for branch in repo.branches(Some(BranchType::Remote))? {
+        let (branch, _) = branch?;
+        if branch.get().target().is_none() {
+            continue;
+        }
+        let Some(name) = branch.name()?.map(str::to_string) else {
+            continue;
+        };
+        result.push(name);
+    }
+
+    Ok(result)
+}
+
 /// Creates a local branch at `at` (any commit-ish, e.g. a full/short oid or another ref
 /// name), or at the current HEAD if `at` is `None`.
 pub fn create_branch(repo: &Repository, name: &str, at: Option<&str>) -> PushGitResult<()> {
@@ -279,6 +300,30 @@ mod tests {
     fn checkout_remote_branch_errors_for_a_malformed_name_without_a_slash() {
         let (_dir, repo) = repo_init();
         assert!(checkout_remote_branch(&repo, "feature").is_err());
+    }
+
+    #[test]
+    fn list_remote_branches_returns_shorthand_names_excluding_symbolic_head() {
+        let (dir, repo) = repo_init();
+        let remote_path = dir.path().to_str().unwrap();
+        repo.remote("origin", remote_path).unwrap();
+        let oid = repo.head().unwrap().target().unwrap();
+        repo.reference("refs/remotes/origin/feature", oid, true, "")
+            .unwrap();
+        repo.reference("refs/remotes/origin/main", oid, true, "")
+            .unwrap();
+        repo.reference_symbolic(
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+            true,
+            "",
+        )
+        .unwrap();
+
+        let mut names = list_remote_branches(&repo).unwrap();
+        names.sort();
+
+        assert_eq!(names, vec!["origin/feature", "origin/main"]);
     }
 
     #[test]
