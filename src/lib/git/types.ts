@@ -117,7 +117,7 @@ export interface FileDiffSelection {
   hunkActionLabel?: string;
   onHunkAction?: (hunk: Hunk) => void;
   lineActionLabel?: string;
-  onLineAction?: (hunk: Hunk, lineIndices: number[]) => void;
+  onLineAction?: (hunk: Hunk, lineIndices: number[]) => Promise<void>;
 }
 
 // Mirror of `src-tauri/src/diff/model.rs`'s `ConflictSides`.
