@@ -8,7 +8,7 @@ use std::path::Path;
 
 use git2::{ApplyLocation, Diff, Oid, Repository};
 
-use crate::diff::{Hunk, LineOrigin};
+use crate::diff::{Hunk, Line, LineOrigin};
 use crate::error::{PushGitError, PushGitResult};
 use crate::hooks;
 
@@ -104,14 +104,17 @@ fn apply_hunk(
 /// deletion is downgraded to a context line (so it's kept rather than removed). Header
 /// counts are recomputed from what's actually emitted; `old_start`/`new_start` (post
 /// direction-swap) are left as reported, since nothing before this hunk shifts regardless
-/// of which of *its own* lines are selected.
+/// of which of *its own* lines are selected. `selected_lines` is first widened by
+/// `expand_replacement_groups` — see that function for why a lone selected addition or
+/// deletion isn't always safe to apply on its own.
 fn build_hunk_patch(
     path: &str,
     hunk: &Hunk,
     reverse: bool,
     selected_lines: Option<&[usize]>,
 ) -> String {
-    let selected: Option<HashSet<usize>> = selected_lines.map(|s| s.iter().copied().collect());
+    let selected: Option<HashSet<usize>> =
+        selected_lines.map(|s| expand_replacement_groups(&hunk.lines, s));
 
     let mut body = String::new();
     let mut old_count = 0u32;
@@ -155,11 +158,17 @@ fn build_hunk_patch(
         }
     }
 
-    let (old_start, new_start) = if reverse {
-        (hunk.new_start, hunk.old_start)
-    } else {
-        (hunk.old_start, hunk.new_start)
-    };
+    // Deliberately *not* `hunk.new_start`/`hunk.old_start` post-swap: those encode this
+    // hunk's position in the fully-applied multi-hunk diff, but this patch is applied in
+    // isolation — no other hunk from that diff has touched the target yet. So the position
+    // this hunk starts at is identical on both sides; they only diverge *after* its own
+    // insertions/deletions, which `old_count`/`new_count` above already capture. Using the
+    // original cumulative `new_start` here works for a lone first hunk (nothing precedes it
+    // to create a gap) but breaks any later hunk once an earlier one in the same diff has a
+    // different old/new line count — libgit2's `apply` (unlike `git apply`'s fuzzy search)
+    // requires the header's own position to be exact and fails with "hunk did not apply".
+    let old_start = if reverse { hunk.new_start } else { hunk.old_start };
+    let new_start = old_start;
 
     let mut out = String::new();
     out.push_str(&format!("diff --git a/{path} b/{path}\n"));
@@ -179,6 +188,40 @@ fn reverse_origin(origin: LineOrigin) -> LineOrigin {
         LineOrigin::Deletion => LineOrigin::Addition,
         LineOrigin::Context => LineOrigin::Context,
     }
+}
+
+/// Widens a raw line selection so a "replacement" group — a maximal run of consecutive
+/// non-context lines containing both a deletion and an addition, i.e. how git represents an
+/// *edited* line (delete the old content, add the new) rather than a pure insertion or pure
+/// removal — is always selected as a whole. Without this, selecting only the addition half of
+/// an edited line keeps the old line in place *and* inserts the new one: a literal duplicate,
+/// with the old line still pending as an unstaged deletion afterward — which reads to a user
+/// as "staging this line did nothing," since the file still shows up as changed. Pure-addition
+/// and pure-deletion runs (a genuine standalone inserted or removed line) are left untouched,
+/// so independent per-line selection still works exactly as before for those.
+fn expand_replacement_groups(lines: &[Line], selected: &[usize]) -> HashSet<usize> {
+    let selected: HashSet<usize> = selected.iter().copied().collect();
+    let mut expanded = selected.clone();
+
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i].origin == LineOrigin::Context {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < lines.len() && lines[i].origin != LineOrigin::Context {
+            i += 1;
+        }
+        let group = &lines[start..i];
+        let is_replacement = group.iter().any(|l| l.origin == LineOrigin::Addition)
+            && group.iter().any(|l| l.origin == LineOrigin::Deletion);
+        if is_replacement && (start..i).any(|idx| selected.contains(&idx)) {
+            expanded.extend(start..i);
+        }
+    }
+
+    expanded
 }
 
 /// Commits the current index tree. When `amend` is true, rewrites HEAD in place instead of
@@ -415,6 +458,53 @@ mod tests {
         let head = repo.head().unwrap().peel_to_commit().unwrap();
         repo.commit(Some("HEAD"), &sig, &sig, name, &tree, &[&head])
             .unwrap()
+    }
+
+    /// Regression test: when an earlier hunk in the same diff inserts a different number of
+    /// lines than it deletes, every later hunk's `new_start` (as reported by the *full*
+    /// diff) no longer matches its `old_start` — the two only coincide when nothing before
+    /// a hunk has shifted. Applying a later hunk in isolation (nothing before it actually
+    /// touched the target yet) used to reuse that mismatched `new_start` verbatim, and
+    /// libgit2's `apply` — unlike `git apply`'s fuzzy position search — rejected the hunk
+    /// outright with "hunk did not apply".
+    #[test]
+    fn stage_hunk_stages_a_later_hunk_after_an_earlier_one_shifted_the_line_count() {
+        let (dir, repo) = repo_init();
+        let lines: Vec<String> = (1..=30).map(|i| format!("line {i}")).collect();
+        commit_file(&repo, "f.txt", &format!("{}\n", lines.join("\n")));
+
+        let mut modified = Vec::new();
+        for (i, line) in lines.iter().enumerate() {
+            if i == 1 {
+                // Net +2 lines, so every hunk after this one has new_start != old_start.
+                modified.push("line 2 CHANGED A".to_string());
+                modified.push("line 2 CHANGED B".to_string());
+                modified.push("line 2 CHANGED C".to_string());
+            } else if i == 24 {
+                modified.push("line 25 CHANGED".to_string());
+            } else {
+                modified.push(line.clone());
+            }
+        }
+        fs::write(
+            dir.path().join("f.txt"),
+            format!("{}\n", modified.join("\n")),
+        )
+        .unwrap();
+
+        let unstaged = diff::diff_unstaged(&repo).unwrap();
+        assert_eq!(unstaged[0].hunks.len(), 2, "well-separated edits should form two hunks");
+        let second_hunk = &unstaged[0].hunks[1];
+        assert_ne!(
+            second_hunk.old_start, second_hunk.new_start,
+            "the second hunk needs a shifted new_start for this test to be meaningful"
+        );
+
+        stage_hunk(&repo, "f.txt", second_hunk).unwrap();
+
+        let content = staged_content(&repo, "f.txt");
+        assert!(content.contains("line 25 CHANGED"));
+        assert!(!content.contains("line 2 CHANGED"), "the first hunk must stay unstaged");
     }
 
     #[test]
@@ -675,6 +765,151 @@ mod tests {
         assert!(!is_unstaged(&repo, "f.txt"));
         let content = staged_content(&repo, "f.txt");
         assert!(content.contains("line 4 CHANGED"));
+    }
+
+    /// Regression test: an edited line (not a pure insertion or pure removal) is represented
+    /// in the hunk as a deletion of the old content immediately followed by an addition of the
+    /// new content. Selecting only the addition half used to keep the old line in place *and*
+    /// insert the new one — a literal duplicate — leaving the file still showing as unstaged
+    /// afterward, which read as "staging this line did nothing."
+    #[test]
+    fn stage_lines_selecting_only_the_addition_of_an_edited_line_stages_the_whole_edit() {
+        let (dir, repo) = repo_init();
+        let lines: Vec<String> = (1..=10).map(|i| format!("line {i}")).collect();
+        commit_file(&repo, "f.txt", &format!("{}\n", lines.join("\n")));
+
+        let mut modified = lines.clone();
+        modified[3] = "line 4 CHANGED".to_string();
+        fs::write(
+            dir.path().join("f.txt"),
+            format!("{}\n", modified.join("\n")),
+        )
+        .unwrap();
+
+        let unstaged = diff::diff_unstaged(&repo).unwrap();
+        let hunk = &unstaged[0].hunks[0];
+        let additions = addition_indices(hunk);
+        assert_eq!(additions.len(), 1);
+
+        stage_lines(&repo, "f.txt", hunk, &additions).unwrap();
+
+        let content = staged_content(&repo, "f.txt");
+        assert!(content.contains("line 4 CHANGED"));
+        assert!(
+            !content.contains("line 4\n"),
+            "the old line must not survive alongside the new one: {content:?}"
+        );
+        assert!(
+            !is_unstaged(&repo, "f.txt"),
+            "selecting the addition half of a full-line edit should fully stage it"
+        );
+    }
+
+    /// Same edited-line scenario as above, selecting only the deletion half instead.
+    #[test]
+    fn stage_lines_selecting_only_the_deletion_of_an_edited_line_stages_the_whole_edit() {
+        let (dir, repo) = repo_init();
+        let lines: Vec<String> = (1..=10).map(|i| format!("line {i}")).collect();
+        commit_file(&repo, "f.txt", &format!("{}\n", lines.join("\n")));
+
+        let mut modified = lines.clone();
+        modified[3] = "line 4 CHANGED".to_string();
+        fs::write(
+            dir.path().join("f.txt"),
+            format!("{}\n", modified.join("\n")),
+        )
+        .unwrap();
+
+        let unstaged = diff::diff_unstaged(&repo).unwrap();
+        let hunk = &unstaged[0].hunks[0];
+        let deletions = deletion_indices(hunk);
+        assert_eq!(deletions.len(), 1);
+
+        stage_lines(&repo, "f.txt", hunk, &deletions).unwrap();
+
+        let content = staged_content(&repo, "f.txt");
+        assert!(content.contains("line 4 CHANGED"));
+        assert!(!content.contains("line 4\n"));
+        assert!(!is_unstaged(&repo, "f.txt"));
+    }
+
+    /// Mirrors the staging regression test for the unstage direction: unstaging only one half
+    /// of an already-staged full-line edit must fully revert it, not leave a duplicate.
+    #[test]
+    fn unstage_lines_selecting_only_the_addition_of_an_edited_line_unstages_the_whole_edit() {
+        let (dir, repo) = repo_init();
+        let lines: Vec<String> = (1..=10).map(|i| format!("line {i}")).collect();
+        commit_file(&repo, "f.txt", &format!("{}\n", lines.join("\n")));
+
+        let mut modified = lines.clone();
+        modified[3] = "line 4 CHANGED".to_string();
+        fs::write(
+            dir.path().join("f.txt"),
+            format!("{}\n", modified.join("\n")),
+        )
+        .unwrap();
+        stage_file(&repo, "f.txt").unwrap();
+
+        let staged = diff::diff_staged(&repo).unwrap();
+        let hunk = &staged[0].hunks[0];
+        let additions = addition_indices(hunk);
+        assert_eq!(additions.len(), 1);
+
+        unstage_lines(&repo, "f.txt", hunk, &additions).unwrap();
+
+        let content = staged_content(&repo, "f.txt");
+        assert!(content.contains("line 4\n"));
+        assert!(!content.contains("line 4 CHANGED"));
+        assert!(diff::diff_staged(&repo).unwrap().is_empty());
+    }
+
+    /// Pure insertions/deletions elsewhere in the *same* hunk as an edited line must still be
+    /// selectable independently — only the mixed delete+add run gets the atomic treatment.
+    #[test]
+    fn stage_lines_leaves_unrelated_pure_additions_independently_selectable() {
+        let (dir, repo) = repo_init();
+        let lines: Vec<String> = (1..=10).map(|i| format!("line {i}")).collect();
+        commit_file(&repo, "f.txt", &format!("{}\n", lines.join("\n")));
+
+        // "line 4" edited (delete+add pair) and a brand-new pure-insertion line right after
+        // "line 5" — both close enough to land in one hunk.
+        let mut modified = Vec::new();
+        for (i, line) in lines.iter().enumerate() {
+            if i == 3 {
+                modified.push("line 4 CHANGED".to_string());
+            } else {
+                modified.push(line.clone());
+            }
+            if i == 4 {
+                modified.push("BRAND NEW".to_string());
+            }
+        }
+        fs::write(
+            dir.path().join("f.txt"),
+            format!("{}\n", modified.join("\n")),
+        )
+        .unwrap();
+
+        let unstaged = diff::diff_unstaged(&repo).unwrap();
+        let hunk = &unstaged[0].hunks[0];
+        let pure_addition_index = hunk
+            .lines
+            .iter()
+            .position(|l| l.content.trim_end() == "BRAND NEW")
+            .unwrap();
+
+        // Select only the pure insertion, not the edited-line pair.
+        stage_lines(&repo, "f.txt", hunk, &[pure_addition_index]).unwrap();
+
+        let content = staged_content(&repo, "f.txt");
+        assert!(
+            content.contains("BRAND NEW"),
+            "the selected pure insertion should stage"
+        );
+        assert!(
+            content.contains("line 4\n") && !content.contains("line 4 CHANGED"),
+            "the unrelated edited-line pair must stay untouched: {content:?}"
+        );
     }
 
     #[test]
