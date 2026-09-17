@@ -34,6 +34,49 @@ describe("HunkDiff", () => {
     expect(queryByText("hello", { exact: false })).toBeNull();
   });
 
+  it("renders an image preview for a binary image file when resolveImagePreview is given", async () => {
+    const file = makeFileDiff({ isBinary: true, hunks: [], newPath: "logo.png" });
+    const resolveImagePreview = vi.fn().mockResolvedValue({
+      old: null,
+      new: { kind: "content", base64: "AQID", byteLen: 3 },
+    });
+
+    const { findByAltText, queryByText } = render(HunkDiff, {
+      props: { file, resolveImagePreview },
+    });
+
+    expect(await findByAltText("After")).toBeTruthy();
+    expect(resolveImagePreview).toHaveBeenCalledWith(file);
+    expect(queryByText("Binary file — no diff to show.")).toBeNull();
+  });
+
+  it("keeps the plain placeholder for a binary non-image file even with resolveImagePreview given", async () => {
+    const file = makeFileDiff({ isBinary: true, hunks: [], newPath: "archive.zip" });
+    const resolveImagePreview = vi.fn();
+
+    const { findByText } = render(HunkDiff, { props: { file, resolveImagePreview } });
+
+    expect(await findByText("Binary file — no diff to show.")).toBeTruthy();
+    expect(resolveImagePreview).not.toHaveBeenCalled();
+  });
+
+  it("keeps the plain placeholder for a binary image file when resolveImagePreview is omitted", async () => {
+    const file = makeFileDiff({ isBinary: true, hunks: [], newPath: "logo.png" });
+
+    const { findByText } = render(HunkDiff, { props: { file } });
+
+    expect(await findByText("Binary file — no diff to show.")).toBeTruthy();
+  });
+
+  it("falls back to the plain placeholder when the preview fetch rejects", async () => {
+    const file = makeFileDiff({ isBinary: true, hunks: [], newPath: "logo.png" });
+    const resolveImagePreview = vi.fn().mockRejectedValue(new Error("boom"));
+
+    const { findByText } = render(HunkDiff, { props: { file, resolveImagePreview } });
+
+    expect(await findByText("Binary file — no diff to show.")).toBeTruthy();
+  });
+
   it("renders no hunk action button when onHunkAction is omitted", async () => {
     const file = makeFileDiff();
 

@@ -12,10 +12,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   // (Svelte-escaped) text. Shared between StagingPanel (which passes a stage/unstage action
   // per hunk, plus a sub-hunk line-selection action) and the read-only selected-commit view
   // (`CommitDiffView`), which passes none of it.
-  import type { FileDiff, Hunk, Line } from "$lib/git/types";
+  import type { BinaryPreview, FileDiff, Hunk, Line } from "$lib/git/types";
   import { diffViewState } from "./diffViewMode.svelte";
   import { highlightSource, splitHighlightedHtml } from "./highlight";
+  import ImageDiff from "./ImageDiff.svelte";
   import { detectLanguage } from "./languages";
+  import { isImagePath, imageMimeType } from "./isImagePath";
   import { pairHunkLines } from "./pairHunkLines";
   import { lineCheckboxGroups } from "./lineCheckboxGroups";
 
@@ -25,6 +27,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     onHunkAction,
     lineActionLabel,
     onLineAction,
+    resolveImagePreview,
   }: {
     file: FileDiff;
     hunkActionLabel?: string;
@@ -37,7 +40,43 @@ SPDX-License-Identifier: AGPL-3.0-or-later
      *  already covers that mode. */
     lineActionLabel?: string;
     onLineAction?: (hunk: Hunk, lineIndices: number[]) => Promise<void>;
+    /** Parent-owned, same "caller knows which sides apply here" contract as
+     *  `CommitDiffView`'s `onOpenExternalDiff` — only the caller knows whether this diff's
+     *  old/new sides are workdir/index/a commit-ish. Only consulted for a binary file whose
+     *  path looks like a supported image format; every other binary file keeps the plain
+     *  placeholder regardless of whether this prop is given. */
+    resolveImagePreview?: (
+      file: FileDiff,
+    ) => Promise<{ old: BinaryPreview | null; new: BinaryPreview | null }>;
   } = $props();
+
+  const isImageFile = $derived(file.isBinary && isImagePath(file.newPath ?? file.oldPath));
+
+  let imagePreview = $state<{ old: BinaryPreview | null; new: BinaryPreview | null } | null>(
+    null,
+  );
+  let imagePreviewFailed = $state(false);
+
+  // Generation-guarded so switching to a different binary file quickly can't have an
+  // earlier fetch's result land after a later one's, matching `+page.svelte`'s `loadDiff`.
+  let imagePreviewGeneration = 0;
+
+  $effect(() => {
+    const currentFile = file;
+    imagePreview = null;
+    imagePreviewFailed = false;
+    if (!isImageFile || !resolveImagePreview) return;
+
+    const myGeneration = ++imagePreviewGeneration;
+    resolveImagePreview(currentFile).then(
+      (result) => {
+        if (myGeneration === imagePreviewGeneration) imagePreview = result;
+      },
+      () => {
+        if (myGeneration === imagePreviewGeneration) imagePreviewFailed = true;
+      },
+    );
+  });
 
   // Lines currently mid-flight (checked, action in progress) per hunk — checkbox shows
   // checked-and-disabled for these so a second click can't fire a duplicate action while
@@ -124,7 +163,17 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 </script>
 
 {#if file.isBinary}
-  <p class="placeholder">Binary file — no diff to show.</p>
+  {#if isImageFile && imagePreview}
+    <ImageDiff
+      oldPreview={imagePreview.old}
+      newPreview={imagePreview.new}
+      mimeType={imageMimeType(file.newPath ?? file.oldPath ?? "")}
+    />
+  {:else if isImageFile && resolveImagePreview && !imagePreviewFailed}
+    <p class="placeholder">Loading preview…</p>
+  {:else}
+    <p class="placeholder">Binary file — no diff to show.</p>
+  {/if}
 {:else}
   <div class="view-toggle">
     <button type="button" onclick={toggleViewMode}>

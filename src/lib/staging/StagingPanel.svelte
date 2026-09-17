@@ -7,6 +7,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   // Working-directory staging UI: unstaged/staged file lists, per-hunk and per-line
   // stage/unstage, and the commit box.
   import {
+    binaryFilePreview,
     cancelAiGeneration,
     commitChanges,
     commitMessageTemplate,
@@ -415,6 +416,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       lineActionLabel: sel.staged ? "Unstage" : "Stage",
       onLineAction: (hunk: Hunk, lineIndices: number[]) =>
         handleLinesToggle(sel.path, sel.staged, hunk, lineIndices),
+      resolveImagePreview: (f: FileDiff) => resolveImagePreviewFor(sel.staged, f),
     });
   });
 
@@ -431,6 +433,15 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     }
   }
 
+  /** The `DiffSide`s for a file's diff depending on which list it's selected from — shared by
+   *  "open in external diff tool" and the inline image-diff preview, both of which need
+   *  exactly the same pair. */
+  function diffSidesFor(staged: boolean): { oldSide: DiffSide; newSide: DiffSide } {
+    return staged
+      ? { oldSide: { kind: "commit", rev: "HEAD" }, newSide: { kind: "index" } }
+      : { oldSide: { kind: "index" }, newSide: { kind: "workdir" } };
+  }
+
   /** Fire-and-forget — nothing to read back for a plain (read-only) diff, unlike the merge-tool
    *  flow in `ConflictEditor.svelte`, so this doesn't need a busy/spinner state of its own. */
   function openExternalDiff(oldSide: DiffSide, newSide: DiffSide, file: FileDiff) {
@@ -441,13 +452,25 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     });
   }
 
+  async function resolveImagePreviewFor(staged: boolean, file: FileDiff) {
+    const { oldSide, newSide } = diffSidesFor(staged);
+    const [old, newer] = await Promise.all([
+      file.oldPath ? binaryFilePreview(repoPath, oldSide, file.oldPath) : null,
+      file.newPath ? binaryFilePreview(repoPath, newSide, file.newPath) : null,
+    ]);
+    return { old, new: newer };
+  }
+
   function buildUnstagedMenu(file: FileDiff): ContextMenuItem[] {
     const path = fileKey(file);
     const items: ContextMenuItem[] = [
       { label: "Copy file path", onSelect: () => void copyText(path) },
       {
         label: "Open in external diff tool",
-        onSelect: () => openExternalDiff({ kind: "index" }, { kind: "workdir" }, file),
+        onSelect: () => {
+          const { oldSide, newSide } = diffSidesFor(false);
+          openExternalDiff(oldSide, newSide, file);
+        },
       },
     ];
     if (onBlame) items.push({ label: "Blame", onSelect: () => onBlame?.(path) });
@@ -469,7 +492,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       { label: "Copy file path", onSelect: () => void copyText(fileKey(file)) },
       {
         label: "Open in external diff tool",
-        onSelect: () => openExternalDiff({ kind: "commit", rev: "HEAD" }, { kind: "index" }, file),
+        onSelect: () => {
+          const { oldSide, newSide } = diffSidesFor(true);
+          openExternalDiff(oldSide, newSide, file);
+        },
       },
     ];
   }

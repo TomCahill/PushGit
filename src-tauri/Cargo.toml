@@ -40,6 +40,7 @@ reqwest = { version = "0.13.4", features = ["json", "stream"] }
 bytes = "1.12.1"
 futures-util = "0.3.33"
 sha2 = "0.10"
+base64 = "0.22"
 flate2 = "1"
 tar = "0.4"
 semver = "1"

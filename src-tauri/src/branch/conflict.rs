@@ -203,6 +203,61 @@ mod tests {
     }
 
     #[test]
+    fn conflict_raw_sides_reports_the_exact_bytes_of_each_side() {
+        let (_dir, repo) = conflicted_repo();
+
+        let (base, ours, theirs) = conflict_raw_sides(&repo, "shared.txt").unwrap();
+
+        assert_eq!(base, Some(b"base\n".to_vec()));
+        assert_eq!(ours, Some(b"main version\n".to_vec()));
+        assert_eq!(theirs, Some(b"feature version\n".to_vec()));
+    }
+
+    #[test]
+    fn conflict_raw_sides_preserves_binary_content_unmangled() {
+        let (dir, repo) = repo_init();
+        let binary_bytes = [0u8, 159, 146, 150, 0, 1];
+        fs::write(dir.path().join("logo.png"), binary_bytes).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("logo.png")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let sig = repo.signature().unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "add logo", &tree, &[&head])
+            .unwrap();
+
+        create_branch(&repo, "feature", None).unwrap();
+        fs::write(dir.path().join("logo.png"), [1u8, 2, 3]).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("logo.png")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "main logo", &tree, &[&head])
+            .unwrap();
+
+        checkout_branch(&repo, "feature").unwrap();
+        fs::write(dir.path().join("logo.png"), [4u8, 5, 6, 7]).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("logo.png")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "feature logo", &tree, &[&head])
+            .unwrap();
+
+        checkout_branch(&repo, "main").unwrap();
+        crate::branch::merge_branch(&repo, "feature").unwrap();
+
+        let (base, ours, theirs) = conflict_raw_sides(&repo, "logo.png").unwrap();
+
+        assert_eq!(base, Some(binary_bytes.to_vec()));
+        assert_eq!(ours, Some(vec![1, 2, 3]));
+        assert_eq!(theirs, Some(vec![4, 5, 6, 7]));
+    }
+
+    #[test]
     fn conflict_sides_errors_for_a_path_with_no_conflict() {
         let (_dir, repo) = conflicted_repo();
 

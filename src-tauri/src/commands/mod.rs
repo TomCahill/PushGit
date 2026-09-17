@@ -656,6 +656,23 @@ pub fn conflict_sides(repo_path: String, path: String) -> PushGitResult<Conflict
     branch::conflict_sides(&repo::open(Path::new(&repo_path))?, &path)
 }
 
+/// Raw ours/theirs preview bytes for a binary (e.g. image) conflict, for `ConflictEditor`'s
+/// before/after visual — the counterpart to `conflict_sides` for content that shouldn't be
+/// lossily UTF-8 decoded. `base` is dropped, matching `ConflictEditor`'s existing binary UI,
+/// which never shows base either.
+#[tauri::command]
+pub fn conflict_binary_preview(
+    repo_path: String,
+    path: String,
+) -> PushGitResult<(Option<diff::BinaryPreview>, Option<diff::BinaryPreview>)> {
+    let (_base, ours, theirs) =
+        branch::conflict_raw_sides(&repo::open(Path::new(&repo_path))?, &path)?;
+    Ok((
+        ours.map(diff::preview_from_bytes),
+        theirs.map(diff::preview_from_bytes),
+    ))
+}
+
 /// Writes the conflict editor's resolved content to the working tree and stages it.
 #[tauri::command]
 pub fn write_resolved_conflict(
@@ -1322,6 +1339,23 @@ pub async fn download_local_ai(
 pub async fn cancel_local_ai_download(state: State<'_, AppState>) -> PushGitResult<()> {
     state.local_ai_cancellation.cancel().await;
     Ok(())
+}
+
+/// Raw preview bytes for one side of a diff (working directory, index, or a commit-ish),
+/// for `HunkDiff`'s inline image-diff preview — reuses the same `DiffSide` resolution
+/// `open_external_diff_tool` uses, just wraps the result for display instead of writing it
+/// to a temp file and shelling out. Sync (not `async`) — resolving one blob/file and
+/// base64-encoding it is well under the "block the IPC thread" threshold `commit`/
+/// `open_external_diff_tool` exist to avoid, same class as `conflict_sides` itself.
+#[tauri::command]
+pub fn binary_file_preview(
+    repo_path: String,
+    side: DiffSide,
+    path: String,
+) -> PushGitResult<diff::BinaryPreview> {
+    let repo = repo::open(Path::new(&repo_path))?;
+    let bytes = external_tools::resolve_side_bytes(&repo, &side, &path)?;
+    Ok(diff::preview_from_bytes(bytes))
 }
 
 /// Opens the external diff tool configured for this repo (`AppConfig` override, else this

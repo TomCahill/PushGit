@@ -11,14 +11,17 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   // `resolve_conflict_as_deleted`. The *ours-vs-theirs* diff — not a base-relative 3-way
   // merge — drives per-hunk resolution, since that's the actual disagreement needing a
   // decision; base is shown read-only, for reference/context only.
-  import type { ConflictSides, Hunk, Line } from "$lib/git/types";
+  import type { BinaryPreview, ConflictSides, Hunk, Line } from "$lib/git/types";
   import {
+    conflictBinaryPreview,
     conflictSides,
     openExternalMergeTool,
     resolveConflictAsDeleted,
     writeResolvedConflict,
   } from "$lib/git/api";
   import { highlightSource, splitHighlightedHtml } from "$lib/diff/highlight";
+  import ImageDiff from "$lib/diff/ImageDiff.svelte";
+  import { isImagePath, imageMimeType } from "$lib/diff/isImagePath";
   import { detectLanguage } from "$lib/diff/languages";
   import { pairHunkLines } from "$lib/diff/pairHunkLines";
   import { buildResolvedContent, type HunkDecision } from "./buildResolvedContent";
@@ -40,6 +43,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   let actionError = $state<string | null>(null);
   let submitting = $state(false);
   let decisions = $state<Map<number, HunkDecision>>(new Map());
+  let imagePreview = $state<{ ours: BinaryPreview | null; theirs: BinaryPreview | null } | null>(
+    null,
+  );
   let generation = 0;
 
   $effect(() => {
@@ -51,11 +57,26 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     sides = null;
     loadError = null;
     decisions = new Map();
+    imagePreview = null;
+
+    let result: ConflictSides;
     try {
-      const result = await conflictSides(rp, p);
-      if (myGeneration === generation) sides = result;
+      result = await conflictSides(rp, p);
     } catch (err) {
       if (myGeneration === generation) loadError = String(err);
+      return;
+    }
+    if (myGeneration !== generation) return;
+    sides = result;
+
+    if (result.isBinary && isImagePath(p)) {
+      try {
+        const [ours, theirs] = await conflictBinaryPreview(rp, p);
+        if (myGeneration === generation) imagePreview = { ours, theirs };
+      } catch {
+        // A nice-to-have layered on top of the still-functional keep-ours/keep-theirs whole-file
+        // actions — a failed preview fetch shouldn't block conflict resolution.
+      }
     }
   }
 
@@ -183,6 +204,15 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     <p class="placeholder">Loading…</p>
   {:else if sides.isBinary}
     <p class="placeholder">Binary file — pick a side to keep, whole file.</p>
+    {#if imagePreview}
+      <ImageDiff
+        oldPreview={imagePreview.ours}
+        newPreview={imagePreview.theirs}
+        mimeType={imageMimeType(path)}
+        oldLabel="Ours"
+        newLabel="Theirs"
+      />
+    {/if}
     <div class="whole-file-actions">
       <button
         type="button"

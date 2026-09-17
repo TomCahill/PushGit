@@ -3725,6 +3725,7 @@ dependencies = [
 name = "pushgit"
 version = "1.4.0"
 dependencies = [
+ "base64 0.22.1",
  "bytes",
  "criterion",
  "directories",

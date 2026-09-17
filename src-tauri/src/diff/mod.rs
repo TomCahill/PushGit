@@ -5,8 +5,10 @@
 //! hunk parsing feeding the diff viewer.
 
 mod model;
+mod preview;
 
 pub use model::{ConflictSides, FileDiff, FileStatus, Hunk, Line, LineOrigin};
+pub use preview::{preview_from_bytes, BinaryPreview};
 
 use git2::{Blob, Delta, Diff, DiffFindOptions, DiffLineType, DiffOptions, Patch, Repository};
 

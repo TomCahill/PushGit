@@ -167,7 +167,11 @@ fn build_hunk_patch(
     // to create a gap) but breaks any later hunk once an earlier one in the same diff has a
     // different old/new line count — libgit2's `apply` (unlike `git apply`'s fuzzy search)
     // requires the header's own position to be exact and fails with "hunk did not apply".
-    let old_start = if reverse { hunk.new_start } else { hunk.old_start };
+    let old_start = if reverse {
+        hunk.new_start
+    } else {
+        hunk.old_start
+    };
     let new_start = old_start;
 
     let mut out = String::new();
@@ -493,7 +497,11 @@ mod tests {
         .unwrap();
 
         let unstaged = diff::diff_unstaged(&repo).unwrap();
-        assert_eq!(unstaged[0].hunks.len(), 2, "well-separated edits should form two hunks");
+        assert_eq!(
+            unstaged[0].hunks.len(),
+            2,
+            "well-separated edits should form two hunks"
+        );
         let second_hunk = &unstaged[0].hunks[1];
         assert_ne!(
             second_hunk.old_start, second_hunk.new_start,
@@ -504,7 +512,10 @@ mod tests {
 
         let content = staged_content(&repo, "f.txt");
         assert!(content.contains("line 25 CHANGED"));
-        assert!(!content.contains("line 2 CHANGED"), "the first hunk must stay unstaged");
+        assert!(
+            !content.contains("line 2 CHANGED"),
+            "the first hunk must stay unstaged"
+        );
     }
 
     #[test]

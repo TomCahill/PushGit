@@ -118,6 +118,10 @@ export interface FileDiffSelection {
   onHunkAction?: (hunk: Hunk) => void;
   lineActionLabel?: string;
   onLineAction?: (hunk: Hunk, lineIndices: number[]) => Promise<void>;
+  /** Forwarded to `HunkDiff`'s prop of the same name — see that component's doc comment. */
+  resolveImagePreview?: (
+    file: FileDiff,
+  ) => Promise<{ old: BinaryPreview | null; new: BinaryPreview | null }>;
 }
 
 // Mirror of `src-tauri/src/diff/model.rs`'s `ConflictSides`.
@@ -328,3 +332,8 @@ export type DiffSide =
   | { kind: "workdir" }
   | { kind: "index" }
   | { kind: "commit"; rev: string };
+
+// Mirror of `src-tauri/src/diff/preview.rs::BinaryPreview`.
+export type BinaryPreview =
+  | { kind: "content"; base64: string; byteLen: number }
+  | { kind: "tooLarge"; byteLen: number };

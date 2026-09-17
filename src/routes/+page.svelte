@@ -58,6 +58,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import { openCommandPalette } from "$lib/palette/commandPalette.svelte";
   import type { PaletteCommand } from "$lib/palette/commandPalette.svelte";
   import {
+    binaryFilePreview,
     createBranch,
     createStash,
     diffBetweenCommits,
@@ -83,6 +84,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import BlameView from "$lib/blame/BlameView.svelte";
   import BlameFileView from "$lib/blame/BlameFileView.svelte";
   import type {
+    BinaryPreview,
     BlameLine,
     CommitRow,
     DiffSide,
@@ -162,9 +164,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     viewMode === "working"
       ? workingCenterDiff
       : viewMode === "commit" && selectedCommitFile
-        ? { file: selectedCommitFile }
+        ? { file: selectedCommitFile, resolveImagePreview: resolveImagePreviewForSelectedCommit }
         : viewMode === "compare" && compareSelectedFile
-          ? { file: compareSelectedFile }
+          ? { file: compareSelectedFile, resolveImagePreview: resolveImagePreviewForCompare }
           : viewMode === "blame"
             ? blameCenterDiff
             : null,
@@ -214,9 +216,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   /** Builds the `DiffSide`s for the currently-selected commit's own diff, matching whichever
    *  `diffMode` produced `selectedFiles` (see `loadDiff`) — "parent" uses the commit's actual
    *  first parent (or `Empty` for a root commit) rather than `<oid>~1`, since that relative-ref
-   *  form has no parent to resolve at all for a root commit. */
-  function openExternalDiffForSelectedCommit(file: FileDiff) {
-    if (!selectedCommit) return;
+   *  form has no parent to resolve at all for a root commit. Shared by "open in external diff
+   *  tool" and the inline image-diff preview — both need exactly the same pair. */
+  function diffSidesForSelectedCommit(): { oldSide: DiffSide; newSide: DiffSide } | null {
+    if (!selectedCommit) return null;
     const oldSide: DiffSide =
       diffMode === "parent"
         ? selectedCommit.parents.length > 0
@@ -229,16 +232,54 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         : diffMode === "workdir"
           ? { kind: "workdir" }
           : { kind: "commit", rev: selectedCommit.oid };
-    openExternalDiff(oldSide, newSide, file);
+    return { oldSide, newSide };
+  }
+
+  function openExternalDiffForSelectedCommit(file: FileDiff) {
+    const sides = diffSidesForSelectedCommit();
+    if (!sides) return;
+    openExternalDiff(sides.oldSide, sides.newSide, file);
+  }
+
+  function resolveImagePreviewForSelectedCommit(file: FileDiff) {
+    const sides = diffSidesForSelectedCommit();
+    return resolveImagePreview(sides, file);
+  }
+
+  function diffSidesForCompare(): { oldSide: DiffSide; newSide: DiffSide } | null {
+    if (!compareFromRef || !compareToRef) return null;
+    return {
+      oldSide: { kind: "commit", rev: compareFromRef },
+      newSide: { kind: "commit", rev: compareToRef },
+    };
   }
 
   function openExternalDiffForCompare(file: FileDiff) {
-    if (!compareFromRef || !compareToRef) return;
-    openExternalDiff(
-      { kind: "commit", rev: compareFromRef },
-      { kind: "commit", rev: compareToRef },
-      file,
-    );
+    const sides = diffSidesForCompare();
+    if (!sides) return;
+    openExternalDiff(sides.oldSide, sides.newSide, file);
+  }
+
+  function resolveImagePreviewForCompare(file: FileDiff) {
+    return resolveImagePreview(diffSidesForCompare(), file);
+  }
+
+  /** Fetches both sides' `BinaryPreview`s for `HunkDiff`'s inline image-diff preview, given
+   *  the `DiffSide` pair a caller (selected-commit or compare view) already resolved — `null`
+   *  sides is treated the same as "nothing selected yet" (e.g. `diffSidesForCompare` before a
+   *  compare has run), matching how neither caller can produce a `FileDiff` without one either.
+   *  A side whose path doesn't exist on that side (per `file.status`) is skipped rather than
+   *  fetched, since there's nothing there to preview. */
+  async function resolveImagePreview(
+    sides: { oldSide: DiffSide; newSide: DiffSide } | null,
+    file: FileDiff,
+  ): Promise<{ old: BinaryPreview | null; new: BinaryPreview | null }> {
+    if (!sides) return { old: null, new: null };
+    const [old, newer] = await Promise.all([
+      file.oldPath ? binaryFilePreview(repoPath, sides.oldSide, file.oldPath) : null,
+      file.newPath ? binaryFilePreview(repoPath, sides.newSide, file.newPath) : null,
+    ]);
+    return { old, new: newer };
   }
 
   function formatDateTime(unixSeconds: number): string {
@@ -697,6 +738,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
             onHunkAction={centerDiff.onHunkAction}
             lineActionLabel={centerDiff.lineActionLabel}
             onLineAction={centerDiff.onLineAction}
+            resolveImagePreview={centerDiff.resolveImagePreview}
           />
         </div>
       </section>

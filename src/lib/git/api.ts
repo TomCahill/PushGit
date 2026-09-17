@@ -13,6 +13,7 @@ import type {
   AiSettings,
   AiTransport,
   AppConfig,
+  BinaryPreview,
   BlameLine,
   BranchInfo,
   CherryPickOutcome,
@@ -298,6 +299,16 @@ export function repositoryState(repoPath: string): Promise<RepoState> {
 
 export function conflictSides(repoPath: string, path: string): Promise<ConflictSides> {
   return invoke("conflict_sides", { repoPath, path });
+}
+
+/** Raw ours/theirs preview bytes for a binary conflict at `path`, for the conflict editor's
+ *  before/after image preview — the counterpart to `conflictSides` for content that
+ *  shouldn't be lossily UTF-8 decoded. */
+export function conflictBinaryPreview(
+  repoPath: string,
+  path: string,
+): Promise<[BinaryPreview | null, BinaryPreview | null]> {
+  return invoke("conflict_binary_preview", { repoPath, path });
 }
 
 export function writeResolvedConflict(
@@ -671,6 +682,16 @@ export function downloadLocalAi(
 /** Cancels whatever local-AI download is currently in progress, if any. */
 export function cancelLocalAiDownload(): Promise<void> {
   return invoke("cancel_local_ai_download");
+}
+
+/** Raw preview bytes for one side of a diff (working directory, index, or a commit-ish),
+ *  for `HunkDiff`'s inline image-diff preview. */
+export function binaryFilePreview(
+  repoPath: string,
+  side: DiffSide,
+  path: string,
+): Promise<BinaryPreview> {
+  return invoke("binary_file_preview", { repoPath, side, path });
 }
 
 /** Opens the external diff tool configured for `repoPath`, pointed at temp copies of
