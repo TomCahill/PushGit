@@ -36,7 +36,7 @@ thiserror = "2"
 tauri-plugin-wdio = { version = "1", optional = true }
 tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 keyring = "4.1.5"
-reqwest = { version = "0.13.4", features = ["json", "stream"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "http2", "json", "stream"] }
 bytes = "1.12.1"
 futures-util = "0.3.33"
 sha2 = "0.10"
