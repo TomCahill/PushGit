@@ -64,12 +64,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   }
 </script>
 
-{#snippet column(preview: BinaryPreview | null, label: string, dimensions: { width: number; height: number } | null, side: "old" | "new")}
+{#snippet column(preview: BinaryPreview, label: string, dimensions: { width: number; height: number } | null, side: "old" | "new")}
   <div class="column">
     <div class="column-label">{label}</div>
-    {#if preview === null}
-      <p class="placeholder">No file</p>
-    {:else if preview.kind === "tooLarge"}
+    {#if preview.kind === "tooLarge"}
       <p class="placeholder">{formatBytes(preview.byteLen)} — too large to preview</p>
     {:else}
       <img
@@ -87,16 +85,34 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   </div>
 {/snippet}
 
-<div class="image-diff">
-  {@render column(oldPreview, oldLabel, oldDimensions, "old")}
-  {@render column(newPreview, newLabel, newDimensions, "new")}
-</div>
+{#if oldPreview && newPreview}
+  <div class="image-diff">
+    {@render column(oldPreview, oldLabel, oldDimensions, "old")}
+    {@render column(newPreview, newLabel, newDimensions, "new")}
+  </div>
+{:else if newPreview}
+  <div class="image-diff single">
+    {@render column(newPreview, newLabel, newDimensions, "new")}
+  </div>
+{:else if oldPreview}
+  <div class="image-diff single">
+    {@render column(oldPreview, oldLabel, oldDimensions, "old")}
+  </div>
+{/if}
 
 <style>
   .image-diff {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.75rem;
+  }
+
+  .image-diff.single {
+    grid-template-columns: 1fr;
+  }
+
+  .image-diff.single .column img {
+    max-height: 480px;
   }
 
   .column {

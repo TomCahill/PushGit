@@ -83,6 +83,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import CompareRefsPicker from "$lib/compare/CompareRefsPicker.svelte";
   import BlameView from "$lib/blame/BlameView.svelte";
   import BlameFileView from "$lib/blame/BlameFileView.svelte";
+  import { hasOldSide, hasNewSide } from "$lib/diff/binaryPreviewSides";
   import type {
     BinaryPreview,
     BlameLine,
@@ -276,8 +277,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   ): Promise<{ old: BinaryPreview | null; new: BinaryPreview | null }> {
     if (!sides) return { old: null, new: null };
     const [old, newer] = await Promise.all([
-      file.oldPath ? binaryFilePreview(repoPath, sides.oldSide, file.oldPath) : null,
-      file.newPath ? binaryFilePreview(repoPath, sides.newSide, file.newPath) : null,
+      file.oldPath && hasOldSide(file.status)
+        ? binaryFilePreview(repoPath, sides.oldSide, file.oldPath)
+        : null,
+      file.newPath && hasNewSide(file.status)
+        ? binaryFilePreview(repoPath, sides.newSide, file.newPath)
+        : null,
     ]);
     return { old, new: newer };
   }

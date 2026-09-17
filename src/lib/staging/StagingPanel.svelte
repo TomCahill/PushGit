@@ -26,6 +26,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     unstageHunk,
     unstageLines,
   } from "$lib/git/api";
+  import { hasOldSide, hasNewSide } from "$lib/diff/binaryPreviewSides";
   import DiffStat from "$lib/diff/DiffStat.svelte";
   import FileStatusIcon from "$lib/diff/FileStatusIcon.svelte";
   import { confirmAsync } from "$lib/shell/confirmDialog.svelte";
@@ -455,8 +456,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   async function resolveImagePreviewFor(staged: boolean, file: FileDiff) {
     const { oldSide, newSide } = diffSidesFor(staged);
     const [old, newer] = await Promise.all([
-      file.oldPath ? binaryFilePreview(repoPath, oldSide, file.oldPath) : null,
-      file.newPath ? binaryFilePreview(repoPath, newSide, file.newPath) : null,
+      file.oldPath && hasOldSide(file.status)
+        ? binaryFilePreview(repoPath, oldSide, file.oldPath)
+        : null,
+      file.newPath && hasNewSide(file.status)
+        ? binaryFilePreview(repoPath, newSide, file.newPath)
+        : null,
     ]);
     return { old, new: newer };
   }

@@ -13,12 +13,29 @@ const content = (base64: string, byteLen: number): BinaryPreview => ({
 });
 
 describe("ImageDiff", () => {
-  it("renders 'No file' for a side that doesn't exist", async () => {
-    const { findAllByText } = render(ImageDiff, {
-      props: { oldPreview: null, newPreview: content("AQID", 3), mimeType: "image/png" },
+  it("renders only the existing side, full width, when the other side doesn't exist", async () => {
+    const { findByAltText, queryByAltText, container } = render(ImageDiff, {
+      props: {
+        oldPreview: null,
+        newPreview: content("AQID", 3),
+        mimeType: "image/png",
+        oldLabel: "Before",
+        newLabel: "After",
+      },
     });
 
-    expect(await findAllByText("No file")).toHaveLength(1);
+    expect(await findByAltText("After")).toBeTruthy();
+    expect(queryByAltText("Before")).toBeNull();
+    expect(container.querySelectorAll(".column")).toHaveLength(1);
+    expect(container.querySelector(".image-diff")?.classList.contains("single")).toBe(true);
+  });
+
+  it("renders nothing when neither side exists", () => {
+    const { container } = render(ImageDiff, {
+      props: { oldPreview: null, newPreview: null, mimeType: "image/png" },
+    });
+
+    expect(container.querySelector(".image-diff")).toBeNull();
   });
 
   it("renders a too-large caption without attempting an image", async () => {
