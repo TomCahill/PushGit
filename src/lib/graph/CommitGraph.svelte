@@ -53,6 +53,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   } from "$lib/git/types";
   import { colorFor } from "./palette";
   import { decideDragAction, type DragActionResult, type DragTarget } from "./dragAction";
+  import {
+    requestVerification,
+    resetCommitVerification,
+    verificationStatus,
+  } from "./commitVerification.svelte";
   import { settingsState } from "$lib/settings/settings.svelte";
   import { confirmAsync, promptAsync } from "$lib/shell/confirmDialog.svelte";
   import { notifySuccess } from "$lib/shell/toast.svelte";
@@ -64,6 +69,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import { createPointerDrag } from "$lib/shell/pointerDrag.svelte";
   import Avatar from "$lib/shell/Avatar.svelte";
   import CopyButton from "$lib/shell/CopyButton.svelte";
+  import Icon from "$lib/shell/Icon.svelte";
 
   // Menu-triggered fetch/pull/push always target "origin" — there's no `list_remotes`
   // backend command yet, matching the same narrowing `RemotePanel.svelte` already uses.
@@ -229,6 +235,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       const laneNumbers = [row.lane, ...row.rails.flatMap((r) => [r.fromLane, r.toLane])];
       maxLane = Math.max(maxLane, ...laneNumbers);
     }
+
+    // Only this page's actually-signed oids, never a whole-history scan — see
+    // `commitVerification.svelte.ts`. Fire-and-forget: a badge fills in once resolved,
+    // never blocks rendering the page itself.
+    const signedOids = page.rows.filter((row) => row.hasSignature).map((row) => row.oid);
+    if (signedOids.length > 0) void requestVerification(repoPath, signedOids);
   }
 
   // `refreshKey` bumps on every sibling action (stage/commit, branch/tag/stash change, a
@@ -241,6 +253,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   // instead of blanking the pane on every single background refresh — the visible "flash"
   // this used to cause was barely noticeable on small test repos but glaring on a large one.
   async function reset(path: string, currentFilter: GraphFilter, _refreshKey: number) {
+    resetCommitVerification(path);
     const myGeneration = ++generation;
     const previousSession = sessionId;
     const filterKey = JSON.stringify(currentFilter);
@@ -751,6 +764,50 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   function formatDate(unixSeconds: number): string {
     return new Date(unixSeconds * 1000).toLocaleDateString();
   }
+
+  // `undefined` (not yet verified — the batched `verify_commits` call for this page hasn't
+  // resolved yet) renders identically to `unsigned`'s "no badge at all", matching the plan's
+  // "signed+bad/unknown/error, or no badge" three-state framing — a brief unbadged moment
+  // right after a page loads is preferable to a fourth "checking…" visual state for
+  // something this fast.
+  function signatureTitle(oid: string): string | undefined {
+    const status = verificationStatus(oid);
+    if (!status) return undefined;
+    switch (status.status) {
+      case "good":
+        return `Verified signature (${status.signer})`;
+      case "bad":
+        return "Signature does not match this commit's content";
+      case "unknownKey":
+        return "Signed with a key PushGit doesn't recognize";
+      case "noAllowedSigners":
+        return "SSH signature — no allowed signers file configured to verify against";
+      case "error":
+        return `Could not verify signature: ${status.message}`;
+      case "unsigned":
+        return undefined;
+    }
+  }
+
+  /** `"good"`, `"bad"`, `"unsure"` (unknown key / no allowed signers / verification error —
+   *  can't confirm the signature, but nothing proves it's forged either), or `null` while
+   *  unverified/verification hasn't been requested yet. */
+  function signatureBadgeState(oid: string): "good" | "bad" | "unsure" | null {
+    const status = verificationStatus(oid);
+    if (!status) return null;
+    switch (status.status) {
+      case "good":
+        return "good";
+      case "bad":
+        return "bad";
+      case "unknownKey":
+      case "noAllowedSigners":
+      case "error":
+        return "unsure";
+      case "unsigned":
+        return null;
+    }
+  }
 </script>
 
 <div
@@ -852,6 +909,15 @@ SPDX-License-Identifier: AGPL-3.0-or-later
             <Avatar name={commit.authorName} email={commit.authorEmail} />
             <span class="oid" title={commit.oid}>{commit.shortOid}</span>
             <CopyButton text={commit.oid} label="Copy commit SHA" />
+            {#if commit.hasSignature}
+              <span
+                class="signature-badge"
+                data-state={signatureBadgeState(commit.oid) ?? "pending"}
+                title={signatureTitle(commit.oid)}
+              >
+                <Icon name="lock" size={11} />
+              </span>
+            {/if}
             <span class="date">{formatDate(commit.authorTime)}</span>
           </div>
         {/if}
@@ -1050,5 +1116,23 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
   .oid {
     font-family: var(--font-mono);
+  }
+
+  .signature-badge {
+    display: flex;
+    align-items: center;
+    color: var(--text-muted);
+  }
+
+  .signature-badge[data-state="good"] {
+    color: var(--success);
+  }
+
+  .signature-badge[data-state="bad"] {
+    color: var(--danger);
+  }
+
+  .signature-badge[data-state="unsure"] {
+    color: var(--warning);
   }
 </style>

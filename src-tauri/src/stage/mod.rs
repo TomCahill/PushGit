@@ -11,6 +11,7 @@ use git2::{ApplyLocation, Diff, Oid, Repository};
 use crate::diff::{Hunk, Line, LineOrigin};
 use crate::error::{PushGitError, PushGitResult};
 use crate::hooks;
+use crate::signing;
 
 /// Stages a whole file: adds its current working-tree content to the index, or — if the
 /// file no longer exists on disk — stages the deletion.
@@ -246,11 +247,13 @@ fn expand_replacement_groups(lines: &[Line], selected: &[usize]) -> HashSet<usiz
 /// that module's doc comment for why `git2` alone never does this). `post-commit` always
 /// runs afterward regardless of `skip_hooks`, matching real git: `--no-verify` only ever
 /// bypasses `pre-commit`/`commit-msg`.
+#[allow(clippy::too_many_arguments)]
 pub fn commit(
     repo: &Repository,
     message: &str,
     amend: bool,
     skip_hooks: bool,
+    sign: bool,
     on_hook_line: &mut dyn FnMut(hooks::HookOutputLine),
 ) -> PushGitResult<Oid> {
     if !skip_hooks {
@@ -269,14 +272,22 @@ pub fn commit(
     let signature = repo.signature()?;
 
     let oid = if amend {
+        // Not `Commit::amend` — it has no signing hook at all, and (per
+        // `signing::create_commit`'s callers) every real commit-creation path in this
+        // codebase should be able to sign. Existing behavior preserved: both author and
+        // committer reset to the current user's signature on amend, not just committer.
         let head_commit = repo.head()?.peel_to_commit()?;
-        head_commit.amend(
+        let parents: Vec<git2::Commit> = head_commit.parents().collect();
+        let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
+        signing::create_commit(
+            repo,
             Some("HEAD"),
-            Some(&signature),
-            Some(&signature),
-            None,
-            Some(&message),
-            Some(&tree),
+            &signature,
+            &signature,
+            &message,
+            &tree,
+            &parent_refs,
+            Some(sign),
         )?
     } else {
         let head_commit = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
@@ -294,7 +305,16 @@ pub fn commit(
             None => signature.clone(),
         };
 
-        let oid = repo.commit(Some("HEAD"), &author, &signature, &message, &tree, &parents)?;
+        let oid = signing::create_commit(
+            repo,
+            Some("HEAD"),
+            &author,
+            &signature,
+            &message,
+            &tree,
+            &parents,
+            Some(sign),
+        )?;
 
         if is_merge || is_cherry_pick {
             repo.cleanup_state()?;
@@ -952,7 +972,7 @@ mod tests {
         fs::write(dir.path().join("new.txt"), "hello\n").unwrap();
         stage_file(&repo, "new.txt").unwrap();
 
-        let new_oid = commit(&repo, "add new.txt", false, false, &mut |_| {}).unwrap();
+        let new_oid = commit(&repo, "add new.txt", false, false, false, &mut |_| {}).unwrap();
 
         assert_ne!(new_oid, head_before);
         let head_after = repo.head().unwrap().target().unwrap();
@@ -984,7 +1004,7 @@ mod tests {
         fs::write(dir.path().join("new.txt"), "hello\n").unwrap();
         stage_file(&repo, "new.txt").unwrap();
 
-        let err = commit(&repo, "add new.txt", false, false, &mut |_| {}).unwrap_err();
+        let err = commit(&repo, "add new.txt", false, false, false, &mut |_| {}).unwrap_err();
 
         assert!(err.to_string().contains("lint failed"));
         assert_eq!(repo.head().unwrap().target().unwrap(), head_before);
@@ -1001,7 +1021,7 @@ mod tests {
         fs::write(dir.path().join("new.txt"), "hello\n").unwrap();
         stage_file(&repo, "new.txt").unwrap();
 
-        let oid = commit(&repo, "original message", false, false, &mut |_| {}).unwrap();
+        let oid = commit(&repo, "original message", false, false, false, &mut |_| {}).unwrap();
 
         assert_eq!(
             repo.find_commit(oid).unwrap().message(),
@@ -1016,7 +1036,7 @@ mod tests {
         fs::write(dir.path().join("new.txt"), "hello\n").unwrap();
         stage_file(&repo, "new.txt").unwrap();
 
-        let oid = commit(&repo, "add new.txt", false, true, &mut |_| {}).unwrap();
+        let oid = commit(&repo, "add new.txt", false, true, false, &mut |_| {}).unwrap();
 
         assert_eq!(
             repo.find_commit(oid).unwrap().message(),
@@ -1036,7 +1056,7 @@ mod tests {
         fs::write(dir.path().join("new.txt"), "hello\n").unwrap();
         stage_file(&repo, "new.txt").unwrap();
 
-        commit(&repo, "add new.txt", false, true, &mut |_| {}).unwrap();
+        commit(&repo, "add new.txt", false, true, false, &mut |_| {}).unwrap();
 
         assert!(
             marker.exists(),
@@ -1053,11 +1073,79 @@ mod tests {
         fs::write(dir.path().join("new.txt"), "hello\n").unwrap();
         stage_file(&repo, "new.txt").unwrap();
 
-        let amended_oid = commit(&repo, "amended message", true, false, &mut |_| {}).unwrap();
+        let amended_oid =
+            commit(&repo, "amended message", true, false, false, &mut |_| {}).unwrap();
 
         let amended = repo.find_commit(amended_oid).unwrap();
         assert_eq!(amended.parent_count(), original_parent_count);
         assert_eq!(amended.message(), Some("amended message"));
+    }
+
+    #[test]
+    fn commit_signs_when_the_sign_checkbox_is_true() {
+        let gnupghome = crate::test_support::gnupg_home();
+        let (dir, repo) = repo_init();
+        let key = crate::test_support::with_gnupg_home(gnupghome.path(), || {
+            crate::test_support::gen_gpg_key(gnupghome.path())
+        });
+        repo.config()
+            .unwrap()
+            .set_str("user.signingkey", &key)
+            .unwrap();
+
+        fs::write(dir.path().join("new.txt"), "hello\n").unwrap();
+        stage_file(&repo, "new.txt").unwrap();
+        let oid = crate::test_support::with_gnupg_home(gnupghome.path(), || {
+            commit(&repo, "add new.txt", false, false, true, &mut |_| {})
+        })
+        .unwrap();
+
+        assert!(repo
+            .find_commit(oid)
+            .unwrap()
+            .header_field_bytes("gpgsig")
+            .is_ok());
+    }
+
+    #[test]
+    fn amending_a_signed_commit_re_signs_the_new_content() {
+        // `Commit::amend` (the pre-signing implementation) doesn't carry a `gpgsig` header
+        // over at all — proving the amend path actually re-signs, not just that it happens
+        // to leave a stale header behind.
+        let gnupghome = crate::test_support::gnupg_home();
+        let (dir, repo) = repo_init();
+        let key = crate::test_support::with_gnupg_home(gnupghome.path(), || {
+            crate::test_support::gen_gpg_key(gnupghome.path())
+        });
+        repo.config()
+            .unwrap()
+            .set_str("user.signingkey", &key)
+            .unwrap();
+
+        fs::write(dir.path().join("new.txt"), "hello\n").unwrap();
+        stage_file(&repo, "new.txt").unwrap();
+        crate::test_support::with_gnupg_home(gnupghome.path(), || {
+            commit(&repo, "add new.txt", false, false, true, &mut |_| {})
+        })
+        .unwrap();
+
+        fs::write(dir.path().join("new.txt"), "hello again\n").unwrap();
+        stage_file(&repo, "new.txt").unwrap();
+        let amended_oid = crate::test_support::with_gnupg_home(gnupghome.path(), || {
+            commit(&repo, "amended message", true, false, true, &mut |_| {})
+        })
+        .unwrap();
+
+        let amended = repo.find_commit(amended_oid).unwrap();
+        assert!(amended.header_field_bytes("gpgsig").is_ok());
+        let status = crate::test_support::with_gnupg_home(gnupghome.path(), || {
+            crate::signing::verify_commit(&repo, &amended_oid.to_string())
+        })
+        .unwrap();
+        assert!(
+            matches!(status, crate::signing::VerificationStatus::Good { .. }),
+            "{status:?}"
+        );
     }
 
     #[test]
@@ -1083,8 +1171,15 @@ mod tests {
         fs::write(dir.path().join("shared.txt"), "resolved\n").unwrap();
         stage_file(&repo, "shared.txt").unwrap();
 
-        let merge_commit_oid =
-            commit(&repo, "Merge branch 'feature'", false, false, &mut |_| {}).unwrap();
+        let merge_commit_oid = commit(
+            &repo,
+            "Merge branch 'feature'",
+            false,
+            false,
+            false,
+            &mut |_| {},
+        )
+        .unwrap();
 
         let merge_commit = repo.find_commit(merge_commit_oid).unwrap();
         assert_eq!(merge_commit.parent_count(), 2);
@@ -1134,7 +1229,7 @@ mod tests {
         fs::write(dir.path().join("shared.txt"), "resolved\n").unwrap();
         stage_file(&repo, "shared.txt").unwrap();
 
-        let new_oid = commit(&repo, "shared.txt", false, false, &mut |_| {}).unwrap();
+        let new_oid = commit(&repo, "shared.txt", false, false, false, &mut |_| {}).unwrap();
 
         let new_commit = repo.find_commit(new_oid).unwrap();
         assert_eq!(new_commit.parent_count(), 1);

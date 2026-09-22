@@ -19,6 +19,7 @@ mod interactive_rebase;
 mod maintenance;
 mod remote;
 pub mod repo;
+mod signing;
 mod stage;
 mod stash;
 mod state;
@@ -158,6 +159,11 @@ pub fn run() {
         commands::commit,
         commands::head_commit_message,
         commands::commit_message_template,
+        commands::commit_signing_enabled_by_default,
+        commands::signing_config,
+        commands::set_signing_config,
+        commands::verify_commits,
+        commands::list_gpg_secret_keys,
         commands::list_branches,
         commands::list_remote_branches,
         commands::create_branch,

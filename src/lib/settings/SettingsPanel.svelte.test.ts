@@ -302,10 +302,7 @@ describe("SettingsPanel", () => {
       await fireEvent.click(form.getByText("Save"));
 
       expect(await waitFor(() => form.getByText("Saved."))).toBeTruthy();
-      expect(calls).toEqual([
-        { value: "meld $LOCAL $REMOTE" },
-        { value: null },
-      ]);
+      expect(calls).toEqual([{ value: "meld $LOCAL $REMOTE" }, { value: null }]);
     });
 
     it("shows the command that would actually run once a repo is open", async () => {
@@ -344,7 +341,11 @@ describe("SettingsPanel", () => {
         if (cmd === "set_ai_transport") {
           calls.push(args);
           return {
-            transport: { kind: "openAiCompatible", baseUrl: "http://localhost:11434/v1", model: "llama3.1" },
+            transport: {
+              kind: "openAiCompatible",
+              baseUrl: "http://localhost:11434/v1",
+              model: "llama3.1",
+            },
             instructions: "",
             cloudWarningAcknowledged: false,
           };
@@ -450,7 +451,11 @@ describe("SettingsPanel", () => {
       mockIPC((cmd, args) => {
         if (cmd === "set_ai_instructions") {
           calls.push(args);
-          return { transport: null, instructions: "Use Conventional Commits.", cloudWarningAcknowledged: false };
+          return {
+            transport: null,
+            instructions: "Use Conventional Commits.",
+            cloudWarningAcknowledged: false,
+          };
         }
         throw new Error(`unexpected command ${cmd}`);
       });
@@ -529,7 +534,9 @@ describe("SettingsPanel", () => {
         mockIPC((cmd, args) => {
           if (cmd === "get_local_ai_status") {
             requestedVariants.push((args as { engineVariant: string }).engineVariant);
-            return (args as { engineVariant: string }).engineVariant === "vulkan" ? READY : NOT_DOWNLOADED;
+            return (args as { engineVariant: string }).engineVariant === "vulkan"
+              ? READY
+              : NOT_DOWNLOADED;
           }
           throw new Error(`unexpected command ${cmd} before Save is clicked`);
         });
@@ -564,7 +571,9 @@ describe("SettingsPanel", () => {
       it("shows a no-GPU warning line when Vulkan is selected but no device is detected", async () => {
         mockIPC((cmd, args) => {
           if (cmd === "get_local_ai_status") {
-            return (args as { engineVariant: string }).engineVariant === "vulkan" ? READY : NOT_DOWNLOADED;
+            return (args as { engineVariant: string }).engineVariant === "vulkan"
+              ? READY
+              : NOT_DOWNLOADED;
           }
           throw new Error(`unexpected command ${cmd} before Save is clicked`);
         });
@@ -656,9 +665,7 @@ describe("SettingsPanel", () => {
         await fireEvent.click(form.getByText("Save"));
 
         await waitFor(() =>
-          expect(calls).toEqual([
-            { transport: { kind: "managedLocal", engineVariant: "vulkan" } },
-          ]),
+          expect(calls).toEqual([{ transport: { kind: "managedLocal", engineVariant: "vulkan" } }]),
         );
       });
     });
@@ -765,6 +772,167 @@ describe("SettingsPanel", () => {
       await fireEvent.click(templateForm.getByText("Save"));
 
       expect(await waitFor(() => templateForm.getByText("Saved.", { exact: false }))).toBeTruthy();
+    });
+
+    it("loads and shows the repo's commit-signing config", async () => {
+      mockIPC((cmd) => {
+        switch (cmd) {
+          case "get_repo_config":
+            return { defaultSkipHooks: false };
+          case "get_commit_template_path":
+            return null;
+          case "signing_config":
+            return {
+              format: "ssh",
+              key: "/home/user/.ssh/id_ed25519",
+              gpgProgram: null,
+              sshProgram: null,
+              signByDefault: true,
+            };
+          default:
+            throw new Error(`unexpected command ${cmd}`);
+        }
+      });
+
+      const { getByLabelText } = render(SettingsPanel, { props: { repoPath: "/repo" } });
+
+      await waitFor(() =>
+        expect((getByLabelText("Signing key file") as HTMLInputElement).value).toBe(
+          "/home/user/.ssh/id_ed25519",
+        ),
+      );
+      expect((getByLabelText("Format") as HTMLSelectElement).value).toBe("ssh");
+      expect((getByLabelText("Sign commits by default") as HTMLInputElement).checked).toBe(true);
+    });
+
+    it("saves the commit-signing config on submit", async () => {
+      const calls: unknown[] = [];
+      mockIPC((cmd, args) => {
+        switch (cmd) {
+          case "get_repo_config":
+            return { defaultSkipHooks: false };
+          case "get_commit_template_path":
+            return null;
+          case "signing_config":
+            return {
+              format: "openpgp",
+              key: null,
+              gpgProgram: null,
+              sshProgram: null,
+              signByDefault: false,
+            };
+          case "set_signing_config":
+            calls.push(args);
+            return {
+              format: "openpgp",
+              key: "ABCDEF1234567890",
+              gpgProgram: null,
+              sshProgram: null,
+              signByDefault: true,
+            };
+          default:
+            throw new Error(`unexpected command ${cmd}`);
+        }
+      });
+
+      const { getByLabelText } = render(SettingsPanel, { props: { repoPath: "/repo" } });
+      const keyInput = await waitFor(() => getByLabelText("Signing key ID") as HTMLInputElement);
+      const signingForm = within(keyInput.closest("form")!);
+
+      await fireEvent.input(keyInput, { target: { value: "ABCDEF1234567890" } });
+      await fireEvent.click(getByLabelText("Sign commits by default") as HTMLInputElement);
+      await fireEvent.click(signingForm.getByText("Save"));
+
+      await waitFor(() =>
+        expect(calls).toEqual([
+          {
+            repoPath: "/repo",
+            format: "openpgp",
+            key: "ABCDEF1234567890",
+            gpgProgram: null,
+            sshProgram: null,
+            signByDefault: true,
+          },
+        ]),
+      );
+      expect(await waitFor(() => signingForm.getByText("Saved.", { exact: false }))).toBeTruthy();
+    });
+
+    it("shows an SSH key file field and a Browse button when SSH format is selected", async () => {
+      mockIPC((cmd) => {
+        switch (cmd) {
+          case "get_repo_config":
+            return { defaultSkipHooks: false };
+          case "get_commit_template_path":
+            return null;
+          case "signing_config":
+            return {
+              format: "openpgp",
+              key: null,
+              gpgProgram: null,
+              sshProgram: null,
+              signByDefault: false,
+            };
+          default:
+            throw new Error(`unexpected command ${cmd}`);
+        }
+      });
+
+      const { getByLabelText, queryByText, getByText } = render(SettingsPanel, {
+        props: { repoPath: "/repo" },
+      });
+      await waitFor(() => getByLabelText("Signing key ID"));
+      expect(queryByText("Detect GPG keys")).toBeTruthy();
+      expect(queryByText("Browse…")).toBeNull();
+
+      const formatSelect = getByLabelText("Format") as HTMLSelectElement;
+      await fireEvent.change(formatSelect, { target: { value: "ssh" } });
+
+      expect(await waitFor(() => getByLabelText("Signing key file"))).toBeTruthy();
+      expect(getByText("Browse…")).toBeTruthy();
+      expect(queryByText("Detect GPG keys")).toBeNull();
+    });
+
+    it("detects GPG keys and fills the key field when one is selected", async () => {
+      mockIPC((cmd) => {
+        switch (cmd) {
+          case "get_repo_config":
+            return { defaultSkipHooks: false };
+          case "get_commit_template_path":
+            return null;
+          case "signing_config":
+            return {
+              format: "openpgp",
+              key: null,
+              gpgProgram: null,
+              sshProgram: null,
+              signByDefault: false,
+            };
+          case "list_gpg_secret_keys":
+            return [
+              {
+                keyId: "ABCDEF1234567890ABCDEF1234567890ABCDEF12",
+                userId: "Ada <ada@example.com>",
+              },
+            ];
+          default:
+            throw new Error(`unexpected command ${cmd}`);
+        }
+      });
+
+      const { getByLabelText, findByText } = render(SettingsPanel, {
+        props: { repoPath: "/repo" },
+      });
+      await waitFor(() => getByLabelText("Signing key ID"));
+
+      await fireEvent.click(await findByText("Detect GPG keys"));
+
+      const keyOption = await findByText("Ada <ada@example.com>", { exact: false });
+      await fireEvent.click(keyOption);
+
+      expect((getByLabelText("Signing key ID") as HTMLInputElement).value).toBe(
+        "ABCDEF1234567890ABCDEF1234567890ABCDEF12",
+      );
     });
 
     it("shows the GitFlow setup form and initializes it on submit", async () => {

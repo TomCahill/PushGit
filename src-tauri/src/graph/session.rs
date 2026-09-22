@@ -253,6 +253,7 @@ impl GraphSession {
                             committer_time: committer.when().seconds(),
                             parents: parent_ids.iter().map(Oid::to_string).collect(),
                             is_merge: parent_ids.len() > 1,
+                            has_signature: commit.header_field_bytes("gpgsig").is_ok(),
                             is_local: local_oids.contains(&oid),
                             lane: layout.lane,
                             color_id: layout.color_id,
@@ -284,6 +285,7 @@ impl GraphSession {
                             committer_time: 0,
                             parents: vec![parent.to_string()],
                             is_merge: false,
+                            has_signature: false,
                             is_local: true,
                             lane: layout.lane,
                             color_id: layout.color_id,
@@ -321,6 +323,7 @@ impl GraphSession {
                             committer_time: committer.when().seconds(),
                             parents: vec![parent.to_string()],
                             is_merge: false,
+                            has_signature: commit.header_field_bytes("gpgsig").is_ok(),
                             is_local: true,
                             lane: layout.lane,
                             color_id: layout.color_id,
@@ -816,6 +819,53 @@ mod tests {
             .find(|r| r.oid == a.id().to_string())
             .unwrap();
         assert!(!single_parent_row.is_merge);
+    }
+
+    #[test]
+    fn has_signature_is_true_only_for_a_commit_with_a_real_gpgsig_header() {
+        let (dir, repo) = repo_init();
+        let base = repo.head().unwrap().peel_to_commit().unwrap();
+        let unsigned = commit_file(&repo, "a.txt", "a", &[&base]);
+
+        // A real `gpgsig` header, injected directly via `commit_signed` — no real `gpg`
+        // subprocess needed to prove `has_signature` is a header check, not a verification.
+        let tree = repo
+            .find_tree(repo.index().unwrap().write_tree().unwrap())
+            .unwrap();
+        let sig = repo.signature().unwrap();
+        let content = repo
+            .commit_create_buffer(
+                &sig,
+                &sig,
+                "signed",
+                &tree,
+                &[&repo.find_commit(unsigned).unwrap()],
+            )
+            .unwrap();
+        let content = std::str::from_utf8(&content).unwrap();
+        let fake_signature =
+            "-----BEGIN PGP SIGNATURE-----\n\nnotarealsignature\n-----END PGP SIGNATURE-----";
+        let signed = repo
+            .commit_signed(content, fake_signature, Some("gpgsig"))
+            .unwrap();
+        repo.reference("refs/heads/main", signed, true, "").unwrap();
+        repo.set_head("refs/heads/main").unwrap();
+
+        let mut session = GraphSession::open(dir.path(), &GraphFilter::default()).unwrap();
+        let page = session.next_page(10).unwrap();
+
+        let signed_row = page
+            .rows
+            .iter()
+            .find(|r| r.oid == signed.to_string())
+            .unwrap();
+        assert!(signed_row.has_signature);
+        let unsigned_row = page
+            .rows
+            .iter()
+            .find(|r| r.oid == unsigned.to_string())
+            .unwrap();
+        assert!(!unsigned_row.has_signature);
     }
 
     #[test]

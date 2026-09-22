@@ -9,6 +9,7 @@ use git2::{Repository, ResetType};
 use super::collect_conflict_paths;
 use super::model::CherryPickOutcome;
 use crate::error::PushGitResult;
+use crate::signing;
 
 /// Applies `commit_oid`'s changes onto HEAD as a new commit, preserving the original
 /// author (matching plain `git cherry-pick`'s default behavior) with the current user as
@@ -32,13 +33,17 @@ pub fn cherry_pick(repo: &Repository, commit_oid: &str) -> PushGitResult<CherryP
     let head_commit = repo.head()?.peel_to_commit()?;
     let message = commit.message().unwrap_or_default();
 
-    let oid = repo.commit(
+    // No per-action override, same reasoning as `merge_branch` — follows `commit.gpgsign`
+    // like plain `git cherry-pick` does.
+    let oid = signing::create_commit(
+        repo,
         Some("HEAD"),
         &commit.author(),
         &committer,
         message,
         &tree,
         &[&head_commit],
+        None,
     )?;
     repo.cleanup_state()?;
 
@@ -133,6 +138,40 @@ mod tests {
             crate::branch::repo_state(&repo),
             crate::branch::RepoState::Clean
         );
+    }
+
+    #[test]
+    fn cherry_pick_signs_the_new_commit_when_commit_gpgsign_is_set() {
+        // No per-action override, same reasoning as merge's equivalent test — follows
+        // `commit.gpgsign` like plain `git cherry-pick`.
+        let gnupghome = crate::test_support::gnupg_home();
+        let (_dir, repo) = repo_init();
+        let key = crate::test_support::with_gnupg_home(gnupghome.path(), || {
+            crate::test_support::gen_gpg_key(gnupghome.path())
+        });
+        {
+            let mut config = repo.config().unwrap();
+            config.set_str("user.signingkey", &key).unwrap();
+            config.set_bool("commit.gpgsign", true).unwrap();
+        }
+
+        create_branch(&repo, "feature", None).unwrap();
+        checkout_branch(&repo, "feature").unwrap();
+        let feature_commit = commit_file(&repo, "a.txt", "a\n");
+        checkout_branch(&repo, "main").unwrap();
+
+        let outcome = crate::test_support::with_gnupg_home(gnupghome.path(), || {
+            cherry_pick(&repo, &feature_commit.to_string())
+        })
+        .unwrap();
+
+        let CherryPickOutcome::CherryPicked { oid } = outcome else {
+            panic!("expected a clean cherry-pick, got {outcome:?}");
+        };
+        let new_commit = repo
+            .find_commit(git2::Oid::from_str(&oid).unwrap())
+            .unwrap();
+        assert!(new_commit.header_field_bytes("gpgsig").is_ok());
     }
 
     #[test]

@@ -8,6 +8,7 @@ use git2::{BranchType, Repository, ResetType};
 use super::model::MergeOutcome;
 use super::{collect_conflict_paths, invalid};
 use crate::error::PushGitResult;
+use crate::signing;
 
 /// Merges `branch_name` into the current HEAD, taking the fast-forward path when possible
 /// and otherwise performing a real 3-way merge. Conflicts are left staged in the index
@@ -78,13 +79,17 @@ fn commit_merge(
     let head_commit = repo.head()?.peel_to_commit()?;
     let their_commit = repo.find_commit(their_oid)?;
     let message = format!("Merge branch '{branch_name}'");
-    repo.commit(
+    // No per-action override (unlike `stage::commit`'s "Sign commit" checkbox) — a plain
+    // merge simply follows `commit.gpgsign`, matching `git merge`'s own behavior.
+    signing::create_commit(
+        repo,
         Some("HEAD"),
         &signature,
         &signature,
         &message,
         &tree,
         &[&head_commit, &their_commit],
+        None,
     )?;
     repo.cleanup_state()?;
 
@@ -170,6 +175,38 @@ mod tests {
         assert!(matches!(outcome, MergeOutcome::Merged));
         let head = repo.head().unwrap().peel_to_commit().unwrap();
         assert_eq!(head.parent_count(), 2);
+    }
+
+    #[test]
+    fn a_diverging_merge_signs_its_merge_commit_when_commit_gpgsign_is_set() {
+        // No per-action override exists for merge (unlike `stage::commit`'s "Sign commit"
+        // checkbox) — this proves it still follows `commit.gpgsign`, matching plain `git
+        // merge`.
+        let gnupghome = crate::test_support::gnupg_home();
+        let (_dir, repo) = repo_init();
+        let key = crate::test_support::with_gnupg_home(gnupghome.path(), || {
+            crate::test_support::gen_gpg_key(gnupghome.path())
+        });
+        {
+            let mut config = repo.config().unwrap();
+            config.set_str("user.signingkey", &key).unwrap();
+            config.set_bool("commit.gpgsign", true).unwrap();
+        }
+
+        create_branch(&repo, "feature", None).unwrap();
+        commit_file(&repo, "main-only.txt", "main\n");
+        checkout_branch(&repo, "feature").unwrap();
+        commit_file(&repo, "feature-only.txt", "feature\n");
+        checkout_branch(&repo, "main").unwrap();
+
+        let outcome = crate::test_support::with_gnupg_home(gnupghome.path(), || {
+            merge_branch(&repo, "feature")
+        })
+        .unwrap();
+
+        assert!(matches!(outcome, MergeOutcome::Merged));
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        assert!(head.header_field_bytes("gpgsig").is_ok());
     }
 
     #[test]

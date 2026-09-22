@@ -26,6 +26,7 @@ import type {
   FileHistoryEntry,
   FinishOutcome,
   GitVersionCheck,
+  GpgSecretKey,
   GraphFilter,
   HookOutputLine,
   Hunk,
@@ -41,8 +42,11 @@ import type {
   RepoHealth,
   RepoState,
   ResetMode,
+  SignFormat,
+  SigningConfigView,
   StashEntry,
   UndoRedoStatus,
+  VerificationStatus,
   WorkflowBranchKind,
   WorkflowConfig,
   WorktreeInfo,
@@ -170,13 +174,16 @@ export function unstageLines(
 }
 
 /** `skipHooks` bypasses `pre-commit`/`commit-msg` — real `git commit --no-verify`'s
- *  equivalent. `post-commit` always runs regardless. `onHookOutput`, if given, is called with
- *  each hook output line as it's produced (see `HookOutputModal`). */
+ *  equivalent. `post-commit` always runs regardless. `sign` is an explicit per-commit
+ *  override for the "Sign commit" checkbox — see `commitSigningEnabledByDefault` for what
+ *  prefills it. `onHookOutput`, if given, is called with each hook output line as it's
+ *  produced (see `HookOutputModal`). */
 export function commitChanges(
   repoPath: string,
   message: string,
   amend: boolean,
   skipHooks: boolean,
+  sign: boolean,
   onHookOutput?: (line: HookOutputLine) => void,
 ): Promise<string> {
   return invoke("commit", {
@@ -184,6 +191,7 @@ export function commitChanges(
     message,
     amend,
     skipHooks,
+    sign,
     hookOutput: hookOutputChannel(onHookOutput),
   });
 }
@@ -208,6 +216,61 @@ export function getCommitTemplatePath(repoPath: string): Promise<string | null> 
  *  `.git/config` — not app-owned storage. */
 export function setCommitTemplatePath(repoPath: string, path: string | null): Promise<void> {
   return invoke("set_commit_template_path", { repoPath, path });
+}
+
+/** Whether a fresh commit should default to signed (`commit.gpgsign`), to prefill the
+ *  commit box's "Sign commit" checkbox — the user can still flip it per commit. */
+export function commitSigningEnabledByDefault(repoPath: string): Promise<boolean> {
+  return invoke("commit_signing_enabled_by_default", { repoPath });
+}
+
+/** This repo's real git commit-signing config, for the Settings panel's "Commit signing"
+ *  section. */
+export function signingConfig(repoPath: string): Promise<SigningConfigView> {
+  return invoke("signing_config", { repoPath });
+}
+
+/** Writes this repo's commit-signing config directly to `.git/config` — not app-owned
+ *  storage, so a terminal `git config user.signingkey ...` and this settings panel stay
+ *  interchangeable. */
+export function setSigningConfig(
+  repoPath: string,
+  format: SignFormat,
+  key: string | null,
+  gpgProgram: string | null,
+  sshProgram: string | null,
+  signByDefault: boolean,
+): Promise<SigningConfigView> {
+  return invoke("set_signing_config", {
+    repoPath,
+    format,
+    key,
+    gpgProgram,
+    sshProgram,
+    signByDefault,
+  });
+}
+
+/** Verifies a batch of commits' signatures — call with only the currently-visible page's
+ *  `hasSignature: true` oids (see `CommitRow`), never a whole-history scan. Returns a map
+ *  keyed by oid. */
+export function verifyCommits(
+  repoPath: string,
+  oids: string[],
+): Promise<Record<string, VerificationStatus>> {
+  return invoke("verify_commits", { repoPath, oids });
+}
+
+/** Lists the user's OpenPGP secret keys (`gpg --list-secret-keys`), for the Settings
+ *  panel's "Detect GPG keys" picker. SSH format has no equivalent — a file picker is used
+ *  there instead. */
+export function listGpgSecretKeys(): Promise<GpgSecretKey[]> {
+  return invoke("list_gpg_secret_keys");
+}
+
+/** File (not directory) picker for an SSH signing key — `null` if the user cancels. */
+export function pickSshKeyFile(): Promise<string | null> {
+  return openFolderPicker({ directory: false, multiple: false, title: "Select SSH signing key" });
 }
 
 export function listBranches(repoPath: string): Promise<BranchInfo[]> {

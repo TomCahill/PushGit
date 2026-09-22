@@ -4,6 +4,7 @@
 //! Thin `#[tauri::command]` wrappers over the modules in this crate; owns `spawn_blocking`
 //! dispatch for git2 calls and the `Channel`/progress-streaming plumbing.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use git2::Repository;
@@ -26,6 +27,7 @@ use crate::interactive_rebase::{self, RebaseCommitSummary, RebaseStep};
 use crate::maintenance::{self, RepoHealth};
 use crate::remote::{self, GitVersionCheck, RemoteProgress};
 use crate::repo;
+use crate::signing;
 use crate::stage;
 use crate::stash::{self, StashEntry};
 use crate::state::AppState;
@@ -221,19 +223,24 @@ pub fn unstage_lines(
 
 /// Commits the current index tree; `amend` rewrites HEAD in place instead of creating a
 /// new commit. `skip_hooks` bypasses `pre-commit`/`commit-msg` (real `git commit
-/// --no-verify`'s equivalent) — see `hooks/mod.rs` and `stage::commit`. `async` + `spawn_blocking`
-/// because a `pre-commit`/`commit-msg` hook can run arbitrary, arbitrarily slow user scripts —
-/// running that synchronously (as a plain non-`async` command) would block the WebView's IPC
-/// dispatch thread, which on Linux/WebKitGTK is the GTK main loop, freezing the whole window.
-/// `hook_output` streams each hook's output lines live as they're produced (see
-/// `hooks::output::stream_command`), so the frontend can show a running transcript instead of
-/// only the final rejection message on failure.
+/// --no-verify`'s equivalent) — see `hooks/mod.rs` and `stage::commit`. `sign` is an
+/// explicit per-commit override for the "Sign commit" checkbox (see
+/// `commit_signing_enabled_by_default` for what prefills it) — always sent explicitly by
+/// the frontend, the same non-`Option` style `skip_hooks` already uses. `async` +
+/// `spawn_blocking` because a `pre-commit`/`commit-msg` hook can run arbitrary, arbitrarily
+/// slow user scripts — running that synchronously (as a plain non-`async` command) would
+/// block the WebView's IPC dispatch thread, which on Linux/WebKitGTK is the GTK main loop,
+/// freezing the whole window. `hook_output` streams each hook's output lines live as
+/// they're produced (see `hooks::output::stream_command`), so the frontend can show a
+/// running transcript instead of only the final rejection message on failure.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn commit(
     repo_path: String,
     message: String,
     amend: bool,
     skip_hooks: bool,
+    sign: bool,
     app: AppHandle,
     hook_output: Channel<HookOutputLine>,
 ) -> PushGitResult<String> {
@@ -245,7 +252,7 @@ pub async fn commit(
     let oid = tokio::task::spawn_blocking(move || {
         let state = app.state::<AppState>();
         with_undo(&state, &repo_path, label, |repo| {
-            stage::commit(repo, &message, amend, skip_hooks, &mut |line| {
+            stage::commit(repo, &message, amend, skip_hooks, sign, &mut |line| {
                 let _ = hook_output.send(line);
             })
         })
@@ -266,6 +273,76 @@ pub fn head_commit_message(repo_path: String) -> PushGitResult<Option<String>> {
 #[tauri::command]
 pub fn commit_message_template(repo_path: String) -> PushGitResult<Option<String>> {
     stage::commit_message_template(&repo::open(Path::new(&repo_path))?)
+}
+
+/// Whether a fresh commit should default to signed, so the commit box's "Sign commit"
+/// checkbox can prefill from `commit.gpgsign` — the user can still flip it per commit.
+#[tauri::command]
+pub fn commit_signing_enabled_by_default(repo_path: String) -> PushGitResult<bool> {
+    signing::should_sign(&repo::open(Path::new(&repo_path))?, None)
+}
+
+/// This repo's real git commit-signing config (`gpg.format`/`user.signingkey`/
+/// `gpg.program`/`gpg.ssh.program`/`commit.gpgsign`), for the Settings panel's "Commit
+/// signing" section.
+#[tauri::command]
+pub fn signing_config(repo_path: String) -> PushGitResult<signing::SigningConfigView> {
+    signing::config_view(&repo::open(Path::new(&repo_path))?)
+}
+
+/// Writes this repo's commit-signing config — see `signing::set_signing_config`. Real git
+/// config, not a PushGit-side store: a terminal `git config user.signingkey ...` and this
+/// settings panel stay interchangeable.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub fn set_signing_config(
+    repo_path: String,
+    format: signing::SignFormat,
+    key: Option<String>,
+    gpg_program: Option<String>,
+    ssh_program: Option<String>,
+    sign_by_default: bool,
+) -> PushGitResult<signing::SigningConfigView> {
+    let repo = repo::open(Path::new(&repo_path))?;
+    signing::set_signing_config(
+        &repo,
+        format,
+        key.as_deref(),
+        gpg_program.as_deref(),
+        ssh_program.as_deref(),
+        sign_by_default,
+    )?;
+    signing::config_view(&repo)
+}
+
+/// Verifies a batch of commits' signatures, called once per fetched graph page with only
+/// that page's `hasSignature: true` oids (`graph::model::CommitRow`) — never a
+/// whole-history scan. `async` + `spawn_blocking` since each verification shells out to
+/// real `git verify-commit`.
+#[tauri::command]
+pub async fn verify_commits(
+    repo_path: String,
+    oids: Vec<String>,
+) -> PushGitResult<HashMap<String, signing::VerificationStatus>> {
+    tokio::task::spawn_blocking(move || {
+        let repo = repo::open(Path::new(&repo_path))?;
+        let mut results = HashMap::new();
+        for oid in oids {
+            let status = signing::verify_commit(&repo, &oid)?;
+            results.insert(oid, status);
+        }
+        Ok(results)
+    })
+    .await
+    .map_err(|e| PushGitError::Invalid(format!("verify_commits task panicked: {e}")))?
+}
+
+/// Shells to `gpg --list-secret-keys --with-colons` to populate the Settings panel's
+/// "Detect GPG keys" dropdown — OpenPGP format only, there's no equivalent primitive for
+/// SSH signing keys (the UI offers a file picker for those instead).
+#[tauri::command]
+pub fn list_gpg_secret_keys() -> PushGitResult<Vec<signing::GpgSecretKey>> {
+    signing::list_gpg_secret_keys()
 }
 
 /// Local branches with ahead/behind counts against their upstream, if any.
