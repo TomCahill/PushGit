@@ -6,9 +6,10 @@
 //! instead of only handing back a result once the process exits.
 
 use std::io::{BufRead, BufReader};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
 use serde::Serialize;
 
@@ -31,6 +32,24 @@ pub struct HookOutputLine {
     pub text: String,
 }
 
+/// Retries `command.spawn()` on `ETXTBSY` — a just-`chmod +x`'d-and-exec'd file can spuriously
+/// report the executable as busy under `posix_spawn`'s vfork/CLONE_VM fast path when another
+/// thread in this process forks concurrently (a known Linux/glibc race, not specific to this
+/// codebase); harmless to retry since nothing has been spawned yet on that path.
+fn spawn_retrying_on_busy(command: &mut Command) -> std::io::Result<Child> {
+    let mut delay = Duration::from_millis(1);
+    for _ in 0..50 {
+        match command.spawn() {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                thread::sleep(delay);
+                delay = (delay * 2).min(Duration::from_millis(20));
+            }
+            result => return result,
+        }
+    }
+    command.spawn()
+}
+
 /// Spawns `command` with piped stdout/stderr, reads both concurrently (one `std::thread` per
 /// stream — simplest option for a `std::process::Command` child, and fine here since this
 /// already runs on a `spawn_blocking` thread with no async runtime to hand the reads to),
@@ -46,10 +65,8 @@ pub fn stream_command(
     hook: &str,
     on_line: &mut dyn FnMut(HookOutputLine),
 ) -> std::io::Result<(ExitStatus, String)> {
-    let mut child = command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = spawn_retrying_on_busy(&mut command)?;
 
     let stdout = child.stdout.take().expect("stdout was piped above");
     let stderr = child.stderr.take().expect("stderr was piped above");
