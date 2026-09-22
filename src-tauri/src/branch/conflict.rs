@@ -23,11 +23,10 @@ pub fn resolve_conflict(repo: &Repository, path: &str) -> PushGitResult<()> {
     Ok(())
 }
 
-/// The base/ours/theirs content of one unresolved conflict, plus the ours-vs-theirs diff
-/// driving the 3-way conflict editor's per-hunk resolution controls.
-pub fn conflict_sides(repo: &Repository, path: &str) -> PushGitResult<ConflictSides> {
+/// Locates the unresolved conflict at `path` in the index, if any — shared by `conflict_sides`
+/// and `conflict_raw_sides` so the "scan every conflict for a matching path" loop exists once.
+fn find_conflict(repo: &Repository, path: &str) -> PushGitResult<git2::IndexConflict> {
     let index = repo.index()?;
-    let mut found = None;
     for conflict in index.conflicts()? {
         let conflict = conflict?;
         let entry = conflict
@@ -36,27 +35,23 @@ pub fn conflict_sides(repo: &Repository, path: &str) -> PushGitResult<ConflictSi
             .or(conflict.their.as_ref())
             .or(conflict.ancestor.as_ref());
         if entry.map(|e| e.path == path.as_bytes()).unwrap_or(false) {
-            found = Some(conflict);
-            break;
+            return Ok(conflict);
         }
     }
-    let conflict = found.ok_or_else(|| invalid(format!("no conflict at path '{path}'")))?;
+    Err(invalid(format!("no conflict at path '{path}'")))
+}
 
-    let base_blob = conflict
-        .ancestor
-        .as_ref()
-        .map(|e| repo.find_blob(e.id))
-        .transpose()?;
-    let ours_blob = conflict
-        .our
-        .as_ref()
-        .map(|e| repo.find_blob(e.id))
-        .transpose()?;
-    let theirs_blob = conflict
-        .their
-        .as_ref()
-        .map(|e| repo.find_blob(e.id))
-        .transpose()?;
+/// The base/ours/theirs content of one unresolved conflict, plus the ours-vs-theirs diff
+/// driving the 3-way conflict editor's per-hunk resolution controls.
+pub fn conflict_sides(repo: &Repository, path: &str) -> PushGitResult<ConflictSides> {
+    let conflict = find_conflict(repo, path)?;
+
+    let find_blob = |entry: &Option<git2::IndexEntry>| -> PushGitResult<Option<git2::Blob>> {
+        Ok(entry.as_ref().map(|e| repo.find_blob(e.id)).transpose()?)
+    };
+    let base_blob = find_blob(&conflict.ancestor)?;
+    let ours_blob = find_blob(&conflict.our)?;
+    let theirs_blob = find_blob(&conflict.their)?;
 
     let (hunks, is_binary) =
         diff::diff_blob_content(repo, ours_blob.as_ref(), theirs_blob.as_ref())?;
@@ -68,6 +63,31 @@ pub fn conflict_sides(repo: &Repository, path: &str) -> PushGitResult<ConflictSi
         is_binary,
         hunks,
     })
+}
+
+/// Base/ours/theirs raw blob content, in that order.
+pub type ConflictRawSides = (Option<Vec<u8>>, Option<Vec<u8>>, Option<Vec<u8>>);
+
+/// Raw base/ours/theirs blob content for one unresolved conflict — the counterpart to
+/// `conflict_sides` for callers (the external merge tool hookup) that want the bytes
+/// directly rather than pre-diffed, UTF-8-decoded content, so binary conflicts aren't lossily
+/// mangled before reaching the external tool.
+pub fn conflict_raw_sides(repo: &Repository, path: &str) -> PushGitResult<ConflictRawSides> {
+    let conflict = find_conflict(repo, path)?;
+
+    let blob_content = |entry: &Option<git2::IndexEntry>| -> PushGitResult<Option<Vec<u8>>> {
+        Ok(entry
+            .as_ref()
+            .map(|e| repo.find_blob(e.id))
+            .transpose()?
+            .map(|b| b.content().to_vec()))
+    };
+
+    Ok((
+        blob_content(&conflict.ancestor)?,
+        blob_content(&conflict.our)?,
+        blob_content(&conflict.their)?,
+    ))
 }
 
 /// Writes the conflict editor's resolved content to the working tree and stages it in one
@@ -180,6 +200,61 @@ mod tests {
         assert_eq!(sides.theirs.as_deref(), Some("feature version\n"));
         assert!(!sides.is_binary);
         assert!(!sides.hunks.is_empty());
+    }
+
+    #[test]
+    fn conflict_raw_sides_reports_the_exact_bytes_of_each_side() {
+        let (_dir, repo) = conflicted_repo();
+
+        let (base, ours, theirs) = conflict_raw_sides(&repo, "shared.txt").unwrap();
+
+        assert_eq!(base, Some(b"base\n".to_vec()));
+        assert_eq!(ours, Some(b"main version\n".to_vec()));
+        assert_eq!(theirs, Some(b"feature version\n".to_vec()));
+    }
+
+    #[test]
+    fn conflict_raw_sides_preserves_binary_content_unmangled() {
+        let (dir, repo) = repo_init();
+        let binary_bytes = [0u8, 159, 146, 150, 0, 1];
+        fs::write(dir.path().join("logo.png"), binary_bytes).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("logo.png")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let sig = repo.signature().unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "add logo", &tree, &[&head])
+            .unwrap();
+
+        create_branch(&repo, "feature", None).unwrap();
+        fs::write(dir.path().join("logo.png"), [1u8, 2, 3]).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("logo.png")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "main logo", &tree, &[&head])
+            .unwrap();
+
+        checkout_branch(&repo, "feature").unwrap();
+        fs::write(dir.path().join("logo.png"), [4u8, 5, 6, 7]).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("logo.png")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "feature logo", &tree, &[&head])
+            .unwrap();
+
+        checkout_branch(&repo, "main").unwrap();
+        crate::branch::merge_branch(&repo, "feature").unwrap();
+
+        let (base, ours, theirs) = conflict_raw_sides(&repo, "logo.png").unwrap();
+
+        assert_eq!(base, Some(binary_bytes.to_vec()));
+        assert_eq!(ours, Some(vec![1, 2, 3]));
+        assert_eq!(theirs, Some(vec![4, 5, 6, 7]));
     }
 
     #[test]

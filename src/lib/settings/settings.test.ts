@@ -15,17 +15,24 @@ import {
   setAutoFetchEnabled,
   setAutoFetchIntervalMinutes,
   setCheckForUpdatesEnabled,
+  setExternalDiffCommand,
+  setExternalMergeCommand,
   setMaxCommitsRendered,
   setReduceMotion,
   setShowHookOutputAlways,
   settingsState,
 } from "./settings.svelte";
-import type { AiSettings } from "$lib/git/types";
+import type { AiSettings, ExternalToolsSettings } from "$lib/git/types";
 
 const DEFAULT_AI_SETTINGS: AiSettings = {
   transport: null,
   instructions: "",
   cloudWarningAcknowledged: false,
+};
+
+const DEFAULT_EXTERNAL_TOOLS: ExternalToolsSettings = {
+  diffCommand: null,
+  mergeCommand: null,
 };
 
 describe("settingsState", () => {
@@ -38,6 +45,7 @@ describe("settingsState", () => {
     settingsState.showHookOutputAlways = true;
     settingsState.checkForUpdatesEnabled = true;
     settingsState.dismissedUpdateVersion = null;
+    settingsState.externalTools = { ...DEFAULT_EXTERNAL_TOOLS };
     settingsState.hasAiApiKey = false;
   });
 
@@ -58,6 +66,7 @@ describe("settingsState", () => {
           showHookOutputAlways: false,
           checkForUpdatesEnabled: false,
           dismissedUpdateVersion: "1.2.0",
+          externalTools: { diffCommand: "meld $LOCAL $REMOTE", mergeCommand: null },
         };
       }
       if (cmd === "has_ai_api_key") return true;
@@ -74,6 +83,10 @@ describe("settingsState", () => {
     expect(settingsState.showHookOutputAlways).toBe(false);
     expect(settingsState.checkForUpdatesEnabled).toBe(false);
     expect(settingsState.dismissedUpdateVersion).toBe("1.2.0");
+    expect(settingsState.externalTools).toEqual({
+      diffCommand: "meld $LOCAL $REMOTE",
+      mergeCommand: null,
+    });
     expect(settingsState.hasAiApiKey).toBe(true);
   });
 
@@ -278,5 +291,44 @@ describe("settingsState", () => {
     await clearAiApiKey();
 
     expect(settingsState.hasAiApiKey).toBe(false);
+  });
+
+  it("setExternalDiffCommand persists through the backend and updates settingsState from its response", async () => {
+    mockIPC((cmd, args) => {
+      if (cmd === "set_external_diff_command") {
+        expect(args).toEqual({ value: "meld $LOCAL $REMOTE" });
+        return {
+          maxCommitsRendered: DEFAULT_MAX_COMMITS_RENDERED,
+          reduceMotion: false,
+          externalTools: { diffCommand: "meld $LOCAL $REMOTE", mergeCommand: null },
+        };
+      }
+      throw new Error(`unexpected command ${cmd}`);
+    });
+
+    await setExternalDiffCommand("meld $LOCAL $REMOTE");
+
+    expect(settingsState.externalTools).toEqual({
+      diffCommand: "meld $LOCAL $REMOTE",
+      mergeCommand: null,
+    });
+  });
+
+  it("setExternalMergeCommand persists through the backend and updates settingsState from its response", async () => {
+    mockIPC((cmd, args) => {
+      if (cmd === "set_external_merge_command") {
+        expect(args).toEqual({ value: null });
+        return {
+          maxCommitsRendered: DEFAULT_MAX_COMMITS_RENDERED,
+          reduceMotion: false,
+          externalTools: { diffCommand: null, mergeCommand: null },
+        };
+      }
+      throw new Error(`unexpected command ${cmd}`);
+    });
+
+    await setExternalMergeCommand(null);
+
+    expect(settingsState.externalTools).toEqual({ diffCommand: null, mergeCommand: null });
   });
 });

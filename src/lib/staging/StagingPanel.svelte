@@ -7,6 +7,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   // Working-directory staging UI: unstaged/staged file lists, per-hunk and per-line
   // stage/unstage, and the commit box.
   import {
+    binaryFilePreview,
     cancelAiGeneration,
     commitChanges,
     commitMessageTemplate,
@@ -17,6 +18,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     generateCommitMessage,
     getRepoConfig,
     headCommitMessage,
+    openExternalDiffTool,
     stageFile,
     stageHunk,
     stageLines,
@@ -24,6 +26,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     unstageHunk,
     unstageLines,
   } from "$lib/git/api";
+  import { hasOldSide, hasNewSide } from "$lib/diff/binaryPreviewSides";
   import DiffStat from "$lib/diff/DiffStat.svelte";
   import FileStatusIcon from "$lib/diff/FileStatusIcon.svelte";
   import { confirmAsync } from "$lib/shell/confirmDialog.svelte";
@@ -37,9 +40,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   } from "$lib/shell/hookOutput.svelte";
   import Icon from "$lib/shell/Icon.svelte";
   import ResizeHandle from "$lib/shell/ResizeHandle.svelte";
+  import { notifyError } from "$lib/shell/toast.svelte";
   import { acknowledgeAiCloudWarning, settingsState } from "$lib/settings/settings.svelte";
   import { sectionHeightsState, setStagedHeight, setUnstagedHeight } from "./sectionHeights.svelte";
-  import type { AiTransport, FileDiff, FileDiffSelection, Hunk } from "$lib/git/types";
+  import type { AiTransport, DiffSide, FileDiff, FileDiffSelection, Hunk } from "$lib/git/types";
 
   let {
     repoPath,
@@ -413,6 +417,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       lineActionLabel: sel.staged ? "Unstage" : "Stage",
       onLineAction: (hunk: Hunk, lineIndices: number[]) =>
         handleLinesToggle(sel.path, sel.staged, hunk, lineIndices),
+      resolveImagePreview: (f: FileDiff) => resolveImagePreviewFor(sel.staged, f),
     });
   });
 
@@ -429,10 +434,49 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     }
   }
 
+  /** The `DiffSide`s for a file's diff depending on which list it's selected from — shared by
+   *  "open in external diff tool" and the inline image-diff preview, both of which need
+   *  exactly the same pair. */
+  function diffSidesFor(staged: boolean): { oldSide: DiffSide; newSide: DiffSide } {
+    return staged
+      ? { oldSide: { kind: "commit", rev: "HEAD" }, newSide: { kind: "index" } }
+      : { oldSide: { kind: "index" }, newSide: { kind: "workdir" } };
+  }
+
+  /** Fire-and-forget — nothing to read back for a plain (read-only) diff, unlike the merge-tool
+   *  flow in `ConflictEditor.svelte`, so this doesn't need a busy/spinner state of its own. */
+  function openExternalDiff(oldSide: DiffSide, newSide: DiffSide, file: FileDiff) {
+    const oldPath = file.oldPath ?? file.newPath ?? "";
+    const newPath = file.newPath ?? file.oldPath ?? "";
+    openExternalDiffTool(repoPath, oldSide, newSide, oldPath, newPath).catch((err) => {
+      notifyError(String(err));
+    });
+  }
+
+  async function resolveImagePreviewFor(staged: boolean, file: FileDiff) {
+    const { oldSide, newSide } = diffSidesFor(staged);
+    const [old, newer] = await Promise.all([
+      file.oldPath && hasOldSide(file.status)
+        ? binaryFilePreview(repoPath, oldSide, file.oldPath)
+        : null,
+      file.newPath && hasNewSide(file.status)
+        ? binaryFilePreview(repoPath, newSide, file.newPath)
+        : null,
+    ]);
+    return { old, new: newer };
+  }
+
   function buildUnstagedMenu(file: FileDiff): ContextMenuItem[] {
     const path = fileKey(file);
     const items: ContextMenuItem[] = [
       { label: "Copy file path", onSelect: () => void copyText(path) },
+      {
+        label: "Open in external diff tool",
+        onSelect: () => {
+          const { oldSide, newSide } = diffSidesFor(false);
+          openExternalDiff(oldSide, newSide, file);
+        },
+      },
     ];
     if (onBlame) items.push({ label: "Blame", onSelect: () => onBlame?.(path) });
     if (file.status === "conflicted") return items;
@@ -449,7 +493,16 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   }
 
   function buildStagedMenu(file: FileDiff): ContextMenuItem[] {
-    return [{ label: "Copy file path", onSelect: () => void copyText(fileKey(file)) }];
+    return [
+      { label: "Copy file path", onSelect: () => void copyText(fileKey(file)) },
+      {
+        label: "Open in external diff tool",
+        onSelect: () => {
+          const { oldSide, newSide } = diffSidesFor(true);
+          openExternalDiff(oldSide, newSide, file);
+        },
+      },
+    ];
   }
 
   function handleStagedContextMenu(event: MouseEvent, file: FileDiff) {

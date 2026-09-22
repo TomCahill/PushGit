@@ -80,7 +80,7 @@ describe("CompareRefsPicker", () => {
     await waitFor(() =>
       expect(calls).toEqual([{ repoPath: "/repo", fromOid: "HEAD", toOid: "feature" }]),
     );
-    await waitFor(() => expect(onResult).toHaveBeenCalledWith(files, null));
+    await waitFor(() => expect(onResult).toHaveBeenCalledWith(files, null, "HEAD", "feature"));
   });
 
   it("reports an error when the compare fails", async () => {
@@ -102,7 +102,7 @@ describe("CompareRefsPicker", () => {
     await fireEvent.click(await findByRole("button", { name: "Compare" }));
 
     await waitFor(() =>
-      expect(onResult).toHaveBeenCalledWith(null, expect.stringContaining("bogus")),
+      expect(onResult).toHaveBeenCalledWith(null, expect.stringContaining("bogus"), "HEAD", "bogus"),
     );
   });
 });

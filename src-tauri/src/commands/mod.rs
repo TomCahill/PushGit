@@ -19,6 +19,7 @@ use crate::cherry_pick_range;
 use crate::config;
 use crate::diff::{self, ConflictSides, FileDiff, Hunk};
 use crate::error::{PushGitError, PushGitResult};
+use crate::external_tools::{self, DiffSide};
 use crate::graph::{CommitGraphPage, GraphFilter};
 use crate::hooks::HookOutputLine;
 use crate::interactive_rebase::{self, RebaseCommitSummary, RebaseStep};
@@ -32,6 +33,7 @@ use crate::undo::{OperationSummary, UndoRedoStatus};
 use crate::update_check;
 use crate::watcher;
 use crate::workflow::{self, FinishOutcome, WorkflowBranchKind, WorkflowConfig};
+use crate::worktree::{self, WorktreeInfo};
 
 /// Runs `op` against a freshly opened `repo_path`, recording an undo/redo entry labeled
 /// `label` beforehand — the shared wrapper behind every "destructive/hard-to-reverse"
@@ -653,6 +655,23 @@ pub fn resolve_conflict(
 #[tauri::command]
 pub fn conflict_sides(repo_path: String, path: String) -> PushGitResult<ConflictSides> {
     branch::conflict_sides(&repo::open(Path::new(&repo_path))?, &path)
+}
+
+/// Raw ours/theirs preview bytes for a binary (e.g. image) conflict, for `ConflictEditor`'s
+/// before/after visual — the counterpart to `conflict_sides` for content that shouldn't be
+/// lossily UTF-8 decoded. `base` is dropped, matching `ConflictEditor`'s existing binary UI,
+/// which never shows base either.
+#[tauri::command]
+pub fn conflict_binary_preview(
+    repo_path: String,
+    path: String,
+) -> PushGitResult<(Option<diff::BinaryPreview>, Option<diff::BinaryPreview>)> {
+    let (_base, ours, theirs) =
+        branch::conflict_raw_sides(&repo::open(Path::new(&repo_path))?, &path)?;
+    Ok((
+        ours.map(diff::preview_from_bytes),
+        theirs.map(diff::preview_from_bytes),
+    ))
 }
 
 /// Writes the conflict editor's resolved content to the working tree and stages it.
@@ -1321,4 +1340,165 @@ pub async fn download_local_ai(
 pub async fn cancel_local_ai_download(state: State<'_, AppState>) -> PushGitResult<()> {
     state.local_ai_cancellation.cancel().await;
     Ok(())
+}
+
+/// Raw preview bytes for one side of a diff (working directory, index, or a commit-ish),
+/// for `HunkDiff`'s inline image-diff preview — reuses the same `DiffSide` resolution
+/// `open_external_diff_tool` uses, just wraps the result for display instead of writing it
+/// to a temp file and shelling out. Sync (not `async`) — resolving one blob/file and
+/// base64-encoding it is well under the "block the IPC thread" threshold `commit`/
+/// `open_external_diff_tool` exist to avoid, same class as `conflict_sides` itself.
+#[tauri::command]
+pub fn binary_file_preview(
+    repo_path: String,
+    side: DiffSide,
+    path: String,
+) -> PushGitResult<diff::BinaryPreview> {
+    let repo = repo::open(Path::new(&repo_path))?;
+    let bytes = external_tools::resolve_side_bytes(&repo, &side, &path)?;
+    Ok(diff::preview_from_bytes(bytes))
+}
+
+/// Opens the external diff tool configured for this repo (`AppConfig` override, else this
+/// repo's `diff.tool`/`difftool.<tool>.cmd`) pointed at temp copies of `old_side`/`new_side`.
+/// Errors with a clear "not configured" message before writing any temp files if neither
+/// resolves to anything — see `external_tools` for the full design. `async` + `spawn_blocking`
+/// for the same reason `commit` is: an interactive GUI diff tool can stay open indefinitely,
+/// and running that synchronously would block the WebView's IPC dispatch thread.
+#[tauri::command]
+pub async fn open_external_diff_tool(
+    repo_path: String,
+    old_side: DiffSide,
+    new_side: DiffSide,
+    old_path: String,
+    new_path: String,
+) -> PushGitResult<()> {
+    tokio::task::spawn_blocking(move || {
+        let repo = repo::open(Path::new(&repo_path))?;
+        let cmd = external_tools::resolve_diff_command(&repo, &config::load_app_config())
+            .ok_or_else(|| {
+                PushGitError::Invalid(
+                    "no external diff tool configured — set one in Settings, or set \
+                     difftool.<tool>.cmd in git config"
+                        .to_string(),
+                )
+            })?;
+        external_tools::open_diff(&repo, &cmd, (old_side, &old_path), (new_side, &new_path))
+    })
+    .await
+    .map_err(|e| PushGitError::Invalid(format!("external diff tool task panicked: {e}")))??;
+    Ok(())
+}
+
+/// Opens the external merge tool configured for this repo on one conflicted path, then
+/// writes+stages whatever it resolves to. See `external_tools::open_merge`. `async` +
+/// `spawn_blocking` for the same reason as `open_external_diff_tool`.
+#[tauri::command]
+pub async fn open_external_merge_tool(repo_path: String, path: String) -> PushGitResult<()> {
+    tokio::task::spawn_blocking(move || {
+        let repo = repo::open(Path::new(&repo_path))?;
+        let cmd = external_tools::resolve_merge_command(&repo, &config::load_app_config())
+            .ok_or_else(|| {
+                PushGitError::Invalid(
+                    "no external merge tool configured — set one in Settings, or set \
+                     mergetool.<tool>.cmd in git config"
+                        .to_string(),
+                )
+            })?;
+        external_tools::open_merge(&repo, &cmd, &path)
+    })
+    .await
+    .map_err(|e| PushGitError::Invalid(format!("external merge tool task panicked: {e}")))??;
+    Ok(())
+}
+
+/// The command that would actually run for "open in external diff tool" against this repo
+/// right now — `AppConfig`'s override if set, else this repo's `diff.tool`/
+/// `difftool.<tool>.cmd`, else `None`. Purely informational, for a Settings-panel hint shown
+/// under a blank override field.
+#[tauri::command]
+pub fn resolved_external_diff_command(repo_path: String) -> PushGitResult<Option<String>> {
+    let repo = repo::open(Path::new(&repo_path))?;
+    Ok(external_tools::resolve_diff_command(
+        &repo,
+        &config::load_app_config(),
+    ))
+}
+
+/// Same as `resolved_external_diff_command`, for the merge-tool command.
+#[tauri::command]
+pub fn resolved_external_merge_command(repo_path: String) -> PushGitResult<Option<String>> {
+    let repo = repo::open(Path::new(&repo_path))?;
+    Ok(external_tools::resolve_merge_command(
+        &repo,
+        &config::load_app_config(),
+    ))
+}
+
+/// Persists an override for the external diff tool command (or clears it, `None`), returning
+/// the resulting config. Same load-existing-config-first reasoning as
+/// `set_max_commits_rendered`.
+#[tauri::command]
+pub fn set_external_diff_command(value: Option<String>) -> config::AppConfig {
+    let mut config = config::load_app_config();
+    config.external_tools.diff_command = value;
+    config::save_app_config(&config);
+    config
+}
+
+/// Same as `set_external_diff_command`, for the merge-tool override.
+#[tauri::command]
+pub fn set_external_merge_command(value: Option<String>) -> config::AppConfig {
+    let mut config = config::load_app_config();
+    config.external_tools.merge_command = value;
+    config::save_app_config(&config);
+    config
+}
+
+/// Lists the main working directory plus every linked worktree. `async` + `spawn_blocking`
+/// since, unlike `list_branches`/`list_tags`, this opens a second `Repository` per worktree to
+/// read its branch/dirty state — a variable, repo-size-and-worktree-count-dependent cost,
+/// matching `ARCHITECTURE.md` §5's "usually fast" commands still going through the async path.
+#[tauri::command]
+pub async fn list_worktrees(repo_path: String) -> PushGitResult<Vec<WorktreeInfo>> {
+    tokio::task::spawn_blocking(move || {
+        worktree::list_worktrees(&repo::open(Path::new(&repo_path))?)
+    })
+    .await
+    .map_err(|e| PushGitError::Invalid(format!("list_worktrees task panicked: {e}")))?
+}
+
+/// Adds a new linked worktree checked out to `branch_name` (an existing local or remote
+/// branch, or a brand new one created from `start_point`) at `path`. `async` + `spawn_blocking`:
+/// a real checkout of the branch's tree onto disk is genuine, repo-size-proportional I/O, the
+/// same class of work `commit`/`cherry_pick_range` already get this treatment for.
+#[tauri::command]
+pub async fn add_worktree(
+    repo_path: String,
+    branch_name: String,
+    start_point: Option<String>,
+    path: String,
+) -> PushGitResult<()> {
+    tokio::task::spawn_blocking(move || {
+        worktree::add_worktree(
+            &repo::open(Path::new(&repo_path))?,
+            &branch_name,
+            start_point.as_deref(),
+            Path::new(&path),
+        )
+    })
+    .await
+    .map_err(|e| PushGitError::Invalid(format!("add_worktree task panicked: {e}")))?
+}
+
+/// Removes a linked worktree by its admin name (`WorktreeInfo::name`) — deletes its on-disk
+/// directory, leaving the branch it had checked out intact. `async` + `spawn_blocking` for the
+/// same reason as `add_worktree`: recursive directory deletion is real, size-proportional I/O.
+#[tauri::command]
+pub async fn remove_worktree(repo_path: String, name: String) -> PushGitResult<()> {
+    tokio::task::spawn_blocking(move || {
+        worktree::remove_worktree(&repo::open(Path::new(&repo_path))?, &name)
+    })
+    .await
+    .map_err(|e| PushGitError::Invalid(format!("remove_worktree task panicked: {e}")))?
 }

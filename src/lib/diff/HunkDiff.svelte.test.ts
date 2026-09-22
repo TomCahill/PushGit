@@ -34,6 +34,49 @@ describe("HunkDiff", () => {
     expect(queryByText("hello", { exact: false })).toBeNull();
   });
 
+  it("renders an image preview for a binary image file when resolveImagePreview is given", async () => {
+    const file = makeFileDiff({ isBinary: true, hunks: [], newPath: "logo.png" });
+    const resolveImagePreview = vi.fn().mockResolvedValue({
+      old: null,
+      new: { kind: "content", base64: "AQID", byteLen: 3 },
+    });
+
+    const { findByAltText, queryByText } = render(HunkDiff, {
+      props: { file, resolveImagePreview },
+    });
+
+    expect(await findByAltText("After")).toBeTruthy();
+    expect(resolveImagePreview).toHaveBeenCalledWith(file);
+    expect(queryByText("Binary file — no diff to show.")).toBeNull();
+  });
+
+  it("keeps the plain placeholder for a binary non-image file even with resolveImagePreview given", async () => {
+    const file = makeFileDiff({ isBinary: true, hunks: [], newPath: "archive.zip" });
+    const resolveImagePreview = vi.fn();
+
+    const { findByText } = render(HunkDiff, { props: { file, resolveImagePreview } });
+
+    expect(await findByText("Binary file — no diff to show.")).toBeTruthy();
+    expect(resolveImagePreview).not.toHaveBeenCalled();
+  });
+
+  it("keeps the plain placeholder for a binary image file when resolveImagePreview is omitted", async () => {
+    const file = makeFileDiff({ isBinary: true, hunks: [], newPath: "logo.png" });
+
+    const { findByText } = render(HunkDiff, { props: { file } });
+
+    expect(await findByText("Binary file — no diff to show.")).toBeTruthy();
+  });
+
+  it("falls back to the plain placeholder when the preview fetch rejects", async () => {
+    const file = makeFileDiff({ isBinary: true, hunks: [], newPath: "logo.png" });
+    const resolveImagePreview = vi.fn().mockRejectedValue(new Error("boom"));
+
+    const { findByText } = render(HunkDiff, { props: { file, resolveImagePreview } });
+
+    expect(await findByText("Binary file — no diff to show.")).toBeTruthy();
+  });
+
   it("renders no hunk action button when onHunkAction is omitted", async () => {
     const file = makeFileDiff();
 
@@ -121,7 +164,32 @@ describe("HunkDiff", () => {
     expect(container.querySelectorAll('input[type="checkbox"]')).toHaveLength(0);
   });
 
-  it("only shows checkboxes on addition/deletion lines, never context, when onLineAction is given", async () => {
+  it("shows no checkbox on a context line, and a pure-addition run stays independently selectable", async () => {
+    const hunk = makeHunk({
+      lines: [
+        { origin: "context", content: "unchanged\n", oldLineno: 1, newLineno: 1 },
+        { origin: "addition", content: "new a\n", oldLineno: null, newLineno: 2 },
+        { origin: "addition", content: "new b\n", oldLineno: null, newLineno: 3 },
+      ],
+    });
+    const file = makeFileDiff({ hunks: [hunk] });
+    const onLineAction = vi.fn(() => Promise.resolve());
+
+    const { container, findByText } = render(HunkDiff, {
+      props: { file, lineActionLabel: "Stage", onLineAction },
+    });
+
+    await findByText("unchanged", { exact: false });
+    const checkboxes = container.querySelectorAll(
+      'input[type="checkbox"]',
+    ) as NodeListOf<HTMLInputElement>;
+    expect(checkboxes).toHaveLength(2);
+
+    await fireEvent.click(checkboxes[0]);
+    expect(onLineAction).toHaveBeenCalledWith(hunk, [1]);
+  });
+
+  it("collapses a deletion+addition edited line onto a single checkbox that acts on both", async () => {
     const hunk = makeHunk({
       lines: [
         { origin: "context", content: "unchanged\n", oldLineno: 1, newLineno: 1 },
@@ -130,16 +198,24 @@ describe("HunkDiff", () => {
       ],
     });
     const file = makeFileDiff({ hunks: [hunk] });
+    const onLineAction = vi.fn(() => Promise.resolve());
 
     const { container, findByText } = render(HunkDiff, {
-      props: { file, lineActionLabel: "Stage", onLineAction: vi.fn() },
+      props: { file, lineActionLabel: "Stage", onLineAction },
     });
 
     await findByText("unchanged", { exact: false });
-    expect(container.querySelectorAll('input[type="checkbox"]')).toHaveLength(2);
+    const checkboxes = container.querySelectorAll(
+      'input[type="checkbox"]',
+    ) as NodeListOf<HTMLInputElement>;
+    // One checkbox for the whole edit, not one per deletion/addition line.
+    expect(checkboxes).toHaveLength(1);
+
+    await fireEvent.click(checkboxes[0]);
+    expect(onLineAction).toHaveBeenCalledWith(hunk, [1, 2]);
   });
 
-  it("shows a per-hunk action button only once a line is checked, with the running count", async () => {
+  it("checking a line immediately acts on just that line, disabling it while the action is in flight", async () => {
     const hunk = makeHunk({
       lines: [
         { origin: "addition", content: "line a\n", oldLineno: null, newLineno: 1 },
@@ -147,54 +223,57 @@ describe("HunkDiff", () => {
       ],
     });
     const file = makeFileDiff({ hunks: [hunk] });
-    const onLineAction = vi.fn();
+    let resolveAction: () => void = () => {};
+    const onLineAction = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveAction = resolve;
+        }),
+    );
 
-    const { container, findByText, queryByText } = render(HunkDiff, {
+    const { container, findByText } = render(HunkDiff, {
       props: { file, lineActionLabel: "Stage", onLineAction },
     });
 
     await findByText("line a", { exact: false });
-    expect(queryByText("Stage 1 line")).toBeNull();
+    const checkboxes = container.querySelectorAll(
+      'input[type="checkbox"]',
+    ) as NodeListOf<HTMLInputElement>;
 
-    const checkboxes = container.querySelectorAll('input[type="checkbox"]');
     await fireEvent.click(checkboxes[0]);
-    expect(await findByText("Stage 1 line")).toBeTruthy();
+    // Acts immediately on just the checked line, no separate confirmation step.
+    expect(onLineAction).toHaveBeenCalledTimes(1);
+    expect(onLineAction).toHaveBeenCalledWith(hunk, [0]);
+    expect(checkboxes[0].checked).toBe(true);
+    expect(checkboxes[0].disabled).toBe(true);
+    // The other line is untouched.
+    expect(checkboxes[1].checked).toBe(false);
+    expect(checkboxes[1].disabled).toBe(false);
 
-    await fireEvent.click(checkboxes[1]);
-    expect(await findByText("Stage 2 lines")).toBeTruthy();
-
-    await fireEvent.click(await findByText("Stage 2 lines"));
-    expect(onLineAction).toHaveBeenCalledWith(hunk, [0, 1]);
-
-    // Clicking the action clears that hunk's selection.
-    expect(queryByText("Stage 2 lines", { exact: false })).toBeNull();
+    resolveAction();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(checkboxes[0].checked).toBe(false);
+    expect(checkboxes[0].disabled).toBe(false);
   });
 
-  it("resets line selection when the file diff is replaced", async () => {
+  it("ignores a second click on a line while its action is still in flight", async () => {
     const hunk = makeHunk({
       lines: [{ origin: "addition", content: "line a\n", oldLineno: null, newLineno: 1 }],
     });
     const file = makeFileDiff({ hunks: [hunk] });
-    const onLineAction = vi.fn();
+    const onLineAction = vi.fn(() => new Promise<void>(() => {}));
 
-    const { container, findByText, rerender, queryByText } = render(HunkDiff, {
+    const { container, findByText } = render(HunkDiff, {
       props: { file, lineActionLabel: "Stage", onLineAction },
     });
 
-    await fireEvent.click(container.querySelector('input[type="checkbox"]')!);
-    expect(await findByText("Stage 1 line")).toBeTruthy();
+    await findByText("line a", { exact: false });
+    const checkbox = container.querySelector('input[type="checkbox"]')!;
 
-    const nextHunk = makeHunk({
-      lines: [{ origin: "addition", content: "line b\n", oldLineno: null, newLineno: 1 }],
-    });
-    await rerender({
-      file: makeFileDiff({ hunks: [nextHunk] }),
-      lineActionLabel: "Stage",
-      onLineAction,
-    });
-
-    await findByText("line b", { exact: false });
-    expect(queryByText("Stage 1 line")).toBeNull();
+    await fireEvent.click(checkbox);
+    await fireEvent.click(checkbox);
+    expect(onLineAction).toHaveBeenCalledOnce();
   });
 
   it("highlights recognized-language content and falls back to plain text otherwise", async () => {

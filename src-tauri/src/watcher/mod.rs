@@ -10,13 +10,14 @@
 //!
 //! One further wrinkle found by hand: the underlying watcher has been observed to
 //! re-report the same `.git/HEAD`/`.git/index`/`.git/refs/**` paths as "changed" repeatedly
-//! with provably unchanged mtimes — a self-sustaining loop, since every refresh those
-//! trigger reads those same paths right back. [`git_state_signature`] guards specifically
-//! against that: a `.git`-internal path is only treated as a real change if the repo's
-//! actual resolved state (HEAD target, every ref's target, `MERGE_HEAD` presence, the
-//! index's mtime/size) differs from the last time we checked. Ordinary working-tree edits
-//! bypass this — they're not the thing that was misfiring — so they still refresh
-//! immediately.
+//! with provably unchanged mtimes — and, worse, to cycle through several distinct
+//! full-tree-shaped batches of ordinary working-tree paths, none of which repeats often
+//! enough to catch with a simple "same as last batch" check — a self-sustaining loop, since
+//! every refresh those trigger reads those same paths right back. Neither
+//! [`git_state_signature`] nor [`working_tree_signature`] trusts the watcher's own path
+//! list at all: each re-derives the actual state from git (resolved refs/index stat for
+//! `.git`-internal paths, `diff_unstaged`'s path/status/insertion/deletion for working-tree
+//! ones) and only refreshes when *that* differs from last time.
 
 use std::path::Path;
 use std::time::Duration;
@@ -46,14 +47,17 @@ pub fn is_relevant_change(repo: &Repository, repo_relative_path: &Path) -> bool 
         || git_relative == "index"
         || git_relative == "MERGE_HEAD"
         || git_relative.starts_with("refs/")
+        || git_relative.starts_with("worktrees/")
 }
 
 /// A cheap snapshot of exactly the git-internal state `is_relevant_change` cares about:
-/// HEAD's resolved target, every ref's target, whether a merge is paused, and the index
-/// file's mtime/size (its content isn't worth reading here — size+mtime already changes on
-/// any real stage/unstage). `None` if the repo can't be opened right now (mid-operation);
-/// treated as "unknown, assume changed" by the caller rather than silently swallowing a
-/// real change.
+/// HEAD's resolved target, every ref's target, whether a merge is paused, the index file's
+/// mtime/size (its content isn't worth reading here — size+mtime already changes on any real
+/// stage/unstage), and the set of linked worktree names — added/removed, not their lock
+/// state, which changes rarely and isn't worth an extra `find_worktree`/`is_locked` call per
+/// worktree per debounce tick, the same size+mtime-not-content tradeoff already made for the
+/// index just above. `None` if the repo can't be opened right now (mid-operation); treated as
+/// "unknown, assume changed" by the caller rather than silently swallowing a real change.
 fn git_state_signature(repo_path: &Path) -> Option<String> {
     let repo = Repository::open(repo_path).ok()?;
 
@@ -76,9 +80,19 @@ fn git_state_signature(repo_path: &Path) -> Option<String> {
         .ok()
         .map(|m| (m.len(), m.modified().ok()));
 
+    let mut worktrees: Vec<String> = repo
+        .worktrees()
+        .ok()?
+        .iter()
+        .flatten()
+        .map(str::to_string)
+        .collect();
+    worktrees.sort();
+
     Some(format!(
-        "{head_target:?}|{}|{merge_head_present}|{index_stat:?}",
-        refs.join(",")
+        "{head_target:?}|{}|{merge_head_present}|{index_stat:?}|{}",
+        refs.join(","),
+        worktrees.join(",")
     ))
 }
 
@@ -86,9 +100,43 @@ fn is_git_internal_path(repo_relative_path: &Path) -> bool {
     repo_relative_path.strip_prefix(".git").is_ok()
 }
 
+/// Same false-positive-loop concern [`git_state_signature`] guards against for `.git`-internal
+/// paths, but observed for ordinary working-tree paths too — and worse there: the underlying
+/// watcher was seen cycling through *several* distinct large batches (each looking like a
+/// full non-ignored-tree rescan) rather than repeating one fixed set, so a guard that only
+/// compares a batch to the single immediately-preceding one doesn't catch it (batch A, B, A,
+/// B, ... always looks "different from last"). The robust fix mirrors `git_state_signature`'s
+/// approach directly: don't trust the watcher's own path list at all, just ask git what's
+/// actually unstaged (path/status/insertion/deletion per file — full hunk content isn't
+/// worth reading here, same reasoning `git_state_signature` gives for not hashing the
+/// index's content) and only refresh if *that* changed. `None` if the repo can't be opened
+/// right now; treated as "unknown, assume changed" by the caller, same as
+/// `git_state_signature`.
+fn working_tree_signature(repo_path: &Path) -> Option<String> {
+    let repo = Repository::open(repo_path).ok()?;
+    let diffs = crate::diff::diff_unstaged(&repo).ok()?;
+    let mut entries: Vec<String> = diffs
+        .iter()
+        .map(|d| {
+            format!(
+                "{}>{}|{:?}|{}|{}|{}",
+                d.old_path.as_deref().unwrap_or(""),
+                d.new_path.as_deref().unwrap_or(""),
+                d.status,
+                d.is_binary,
+                d.insertions,
+                d.deletions,
+            )
+        })
+        .collect();
+    entries.sort();
+    Some(entries.join("\n"))
+}
+
 /// Starts watching `repo_path` recursively, calling `on_relevant_change` (debounced) once
-/// per batch that contains a relevant working-tree change, or a relevant `.git`-internal
-/// path whose [`git_state_signature`] actually differs from last time.
+/// per batch containing a relevant working-tree path whose [`working_tree_signature`]
+/// actually differs from last time, or a relevant `.git`-internal path whose
+/// [`git_state_signature`] actually differs from last time.
 /// The returned `Debouncer` must be kept alive for as long as watching should continue —
 /// dropping it stops the watch.
 pub fn start_watching(
@@ -97,6 +145,7 @@ pub fn start_watching(
 ) -> PushGitResult<Debouncer<RecommendedWatcher, RecommendedCache>> {
     let repo_path_owned = repo_path.to_path_buf();
     let mut last_git_state = git_state_signature(&repo_path_owned);
+    let mut last_working_tree_state = working_tree_signature(&repo_path_owned);
 
     let mut debouncer = new_debouncer(
         Duration::from_millis(300),
@@ -108,12 +157,12 @@ pub fn start_watching(
             // indefinitely on a thread the caller doesn't control.
             let repo = Repository::open(&repo_path_owned).ok();
 
-            let mut working_tree_change = false;
+            let mut working_tree_change_reported = false;
             let mut git_internal_change = false;
 
             for path in events.iter().flat_map(|event| &event.paths) {
                 let Ok(relative) = path.strip_prefix(&repo_path_owned) else {
-                    working_tree_change = true;
+                    working_tree_change_reported = true;
                     continue;
                 };
                 // The repo root directory's own entry, with no more specific child path —
@@ -135,9 +184,16 @@ pub fn start_watching(
                 if is_git_internal_path(relative) {
                     git_internal_change = true;
                 } else {
-                    working_tree_change = true;
+                    working_tree_change_reported = true;
                 }
             }
+
+            let working_tree_change = working_tree_change_reported && {
+                let current = working_tree_signature(&repo_path_owned);
+                let changed = current.is_none() || current != last_working_tree_state;
+                last_working_tree_state = current;
+                changed
+            };
 
             let git_state_really_changed = git_internal_change && {
                 let current = git_state_signature(&repo_path_owned);
@@ -186,6 +242,10 @@ mod tests {
         assert!(is_relevant_change(&repo, Path::new(".git/index")));
         assert!(is_relevant_change(&repo, Path::new(".git/MERGE_HEAD")));
         assert!(is_relevant_change(&repo, Path::new(".git/refs/heads/main")));
+        assert!(is_relevant_change(
+            &repo,
+            Path::new(".git/worktrees/feature-wt/HEAD")
+        ));
     }
 
     #[test]
@@ -193,6 +253,47 @@ mod tests {
         let (_dir, repo) = repo_init();
         assert!(is_relevant_change(&repo, Path::new("src/main.rs")));
         assert!(is_relevant_change(&repo, Path::new("README.md")));
+    }
+
+    /// Regression test for a self-sustaining refresh loop: the underlying watcher was
+    /// observed cycling through several distinct full-tree-shaped batches of working-tree
+    /// paths every debounce window indefinitely, with nothing on disk actually changing —
+    /// each spurious report used to unconditionally trigger a refresh, storming the app
+    /// with reloads fast enough to wipe any in-progress UI state (e.g. checked-but-not-yet-
+    /// staged diff lines) before the user could act on it. Comparing the watcher's raw path
+    /// list to only the *immediately preceding* batch doesn't catch an A/B/A/B cycle — hence
+    /// deriving the signature from git's own idea of what's unstaged instead, exactly like
+    /// `git_state_signature` already does for `.git`-internal paths.
+    #[test]
+    fn working_tree_signature_is_stable_when_nothing_changes() {
+        let (dir, _repo) = repo_init();
+        assert_eq!(
+            working_tree_signature(dir.path()),
+            working_tree_signature(dir.path())
+        );
+    }
+
+    #[test]
+    fn working_tree_signature_changes_when_a_file_is_modified() {
+        let (dir, _repo) = repo_init();
+        let before = working_tree_signature(dir.path());
+
+        fs::write(dir.path().join("new.txt"), "hello\n").unwrap();
+
+        assert_ne!(before, working_tree_signature(dir.path()));
+    }
+
+    #[test]
+    fn working_tree_signature_is_stable_across_repeated_computation_of_the_same_change() {
+        let (dir, _repo) = repo_init();
+        fs::write(dir.path().join("new.txt"), "hello\n").unwrap();
+
+        // Simulates the watcher re-deriving the signature on every spurious re-report of an
+        // unchanged working tree — it must settle rather than keep "changing" forever.
+        assert_eq!(
+            working_tree_signature(dir.path()),
+            working_tree_signature(dir.path())
+        );
     }
 
     #[test]
@@ -260,6 +361,28 @@ mod tests {
             .unwrap();
 
         assert_ne!(before, git_state_signature(dir.path()));
+    }
+
+    /// Adding or removing a worktree that reuses an *existing* branch touches neither
+    /// `refs/**` nor the index — without folding the worktree name list into the signature
+    /// itself, this class of change would be silently invisible to the watcher despite
+    /// `is_relevant_change` now flagging `worktrees/**` paths as relevant.
+    #[test]
+    fn git_state_signature_changes_when_a_worktree_is_added_or_removed() {
+        let (dir, repo) = repo_init();
+        crate::branch::create_branch(&repo, "feature", None).unwrap();
+        let before = git_state_signature(dir.path());
+
+        let wt_parent = tempfile::TempDir::new().unwrap();
+        let wt_path = wt_parent.path().join("feature-wt");
+        crate::worktree::add_worktree(&repo, "feature", None, &wt_path).unwrap();
+        let after_add = git_state_signature(dir.path());
+        assert_ne!(before, after_add);
+
+        crate::worktree::remove_worktree(&repo, "feature-wt").unwrap();
+        let after_remove = git_state_signature(dir.path());
+        assert_ne!(after_add, after_remove);
+        assert_eq!(before, after_remove);
     }
 
     #[test]

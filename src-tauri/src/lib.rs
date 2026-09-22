@@ -12,6 +12,7 @@ mod commands;
 mod config;
 mod diff;
 pub mod error;
+mod external_tools;
 mod graph;
 mod hooks;
 mod interactive_rebase;
@@ -27,6 +28,7 @@ mod undo;
 mod update_check;
 mod watcher;
 mod workflow;
+mod worktree;
 
 /// Registers the WebdriverIO E2E-testing plugins when built with
 /// `--features e2e` (see `npm run test:e2e:build`) — a no-op passthrough otherwise, so a
@@ -180,6 +182,7 @@ pub fn run() {
         commands::repository_state,
         commands::resolve_conflict,
         commands::conflict_sides,
+        commands::conflict_binary_preview,
         commands::write_resolved_conflict,
         commands::resolve_conflict_as_deleted,
         commands::discard_file_changes,
@@ -243,6 +246,16 @@ pub fn run() {
         commands::get_local_ai_status,
         commands::download_local_ai,
         commands::cancel_local_ai_download,
+        commands::binary_file_preview,
+        commands::open_external_diff_tool,
+        commands::open_external_merge_tool,
+        commands::resolved_external_diff_command,
+        commands::resolved_external_merge_command,
+        commands::set_external_diff_command,
+        commands::set_external_merge_command,
+        commands::list_worktrees,
+        commands::add_worktree,
+        commands::remove_worktree,
     ])
     .build(tauri::generate_context!())
     .expect("error while running tauri application")

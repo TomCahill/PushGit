@@ -58,6 +58,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import { openCommandPalette } from "$lib/palette/commandPalette.svelte";
   import type { PaletteCommand } from "$lib/palette/commandPalette.svelte";
   import {
+    binaryFilePreview,
     createBranch,
     createStash,
     diffBetweenCommits,
@@ -67,6 +68,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     getStartupRepoPath,
     onMenuAction,
     onRepoChanged,
+    openExternalDiffTool,
     openRepository,
     pickRepositoryFolder,
     pullRemote,
@@ -75,14 +77,18 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     stopRepoWatcher,
     undoLastOperation,
   } from "$lib/git/api";
+  import { notifyError } from "$lib/shell/toast.svelte";
   import InteractiveRebaseEditor from "$lib/rebase/InteractiveRebaseEditor.svelte";
   import CherryPickRangePicker from "$lib/cherrypick/CherryPickRangePicker.svelte";
   import CompareRefsPicker from "$lib/compare/CompareRefsPicker.svelte";
   import BlameView from "$lib/blame/BlameView.svelte";
   import BlameFileView from "$lib/blame/BlameFileView.svelte";
+  import { hasOldSide, hasNewSide } from "$lib/diff/binaryPreviewSides";
   import type {
+    BinaryPreview,
     BlameLine,
     CommitRow,
+    DiffSide,
     FileDiff,
     FileDiffSelection,
     GraphFilter,
@@ -133,6 +139,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   let compareFiles = $state<FileDiff[] | null>(null);
   let compareError = $state<string | null>(null);
   let compareFilePath = $state<string | null>(null);
+  // The exact refs `CompareRefsPicker` last compared, reported alongside `compareFiles` —
+  // needed to reconstruct the `DiffSide`s for "open in external diff tool" from the compare
+  // view, since this component doesn't otherwise track what's inside that picker.
+  let compareFromRef = $state<string | null>(null);
+  let compareToRef = $state<string | null>(null);
 
   function fileKey(file: FileDiff): string {
     return file.newPath ?? file.oldPath ?? "";
@@ -154,9 +165,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     viewMode === "working"
       ? workingCenterDiff
       : viewMode === "commit" && selectedCommitFile
-        ? { file: selectedCommitFile }
+        ? { file: selectedCommitFile, resolveImagePreview: resolveImagePreviewForSelectedCommit }
         : viewMode === "compare" && compareSelectedFile
-          ? { file: compareSelectedFile }
+          ? { file: compareSelectedFile, resolveImagePreview: resolveImagePreviewForCompare }
           : viewMode === "blame"
             ? blameCenterDiff
             : null,
@@ -175,12 +186,105 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     compareFiles = null;
     compareError = null;
     compareFilePath = null;
+    compareFromRef = null;
+    compareToRef = null;
   });
 
-  function handleCompareResult(files: FileDiff[] | null, error: string | null) {
+  function handleCompareResult(
+    files: FileDiff[] | null,
+    error: string | null,
+    fromRef: string,
+    toRef: string,
+  ) {
     compareFiles = files;
     compareError = error;
     compareFilePath = null;
+    compareFromRef = fromRef;
+    compareToRef = toRef;
+  }
+
+  /** Fire-and-forget — nothing to read back for a plain (read-only) diff, so this doesn't need
+   *  a busy/spinner state of its own; a launch failure (e.g. no tool configured) surfaces as a
+   *  toast instead. */
+  function openExternalDiff(oldSide: DiffSide, newSide: DiffSide, file: FileDiff) {
+    const oldPath = file.oldPath ?? file.newPath ?? "";
+    const newPath = file.newPath ?? file.oldPath ?? "";
+    openExternalDiffTool(repoPath, oldSide, newSide, oldPath, newPath).catch((err) => {
+      notifyError(String(err));
+    });
+  }
+
+  /** Builds the `DiffSide`s for the currently-selected commit's own diff, matching whichever
+   *  `diffMode` produced `selectedFiles` (see `loadDiff`) — "parent" uses the commit's actual
+   *  first parent (or `Empty` for a root commit) rather than `<oid>~1`, since that relative-ref
+   *  form has no parent to resolve at all for a root commit. Shared by "open in external diff
+   *  tool" and the inline image-diff preview — both need exactly the same pair. */
+  function diffSidesForSelectedCommit(): { oldSide: DiffSide; newSide: DiffSide } | null {
+    if (!selectedCommit) return null;
+    const oldSide: DiffSide =
+      diffMode === "parent"
+        ? selectedCommit.parents.length > 0
+          ? { kind: "commit", rev: selectedCommit.parents[0] }
+          : { kind: "empty" }
+        : { kind: "commit", rev: selectedCommit.oid };
+    const newSide: DiffSide =
+      diffMode === "head"
+        ? { kind: "commit", rev: "HEAD" }
+        : diffMode === "workdir"
+          ? { kind: "workdir" }
+          : { kind: "commit", rev: selectedCommit.oid };
+    return { oldSide, newSide };
+  }
+
+  function openExternalDiffForSelectedCommit(file: FileDiff) {
+    const sides = diffSidesForSelectedCommit();
+    if (!sides) return;
+    openExternalDiff(sides.oldSide, sides.newSide, file);
+  }
+
+  function resolveImagePreviewForSelectedCommit(file: FileDiff) {
+    const sides = diffSidesForSelectedCommit();
+    return resolveImagePreview(sides, file);
+  }
+
+  function diffSidesForCompare(): { oldSide: DiffSide; newSide: DiffSide } | null {
+    if (!compareFromRef || !compareToRef) return null;
+    return {
+      oldSide: { kind: "commit", rev: compareFromRef },
+      newSide: { kind: "commit", rev: compareToRef },
+    };
+  }
+
+  function openExternalDiffForCompare(file: FileDiff) {
+    const sides = diffSidesForCompare();
+    if (!sides) return;
+    openExternalDiff(sides.oldSide, sides.newSide, file);
+  }
+
+  function resolveImagePreviewForCompare(file: FileDiff) {
+    return resolveImagePreview(diffSidesForCompare(), file);
+  }
+
+  /** Fetches both sides' `BinaryPreview`s for `HunkDiff`'s inline image-diff preview, given
+   *  the `DiffSide` pair a caller (selected-commit or compare view) already resolved — `null`
+   *  sides is treated the same as "nothing selected yet" (e.g. `diffSidesForCompare` before a
+   *  compare has run), matching how neither caller can produce a `FileDiff` without one either.
+   *  A side whose path doesn't exist on that side (per `file.status`) is skipped rather than
+   *  fetched, since there's nothing there to preview. */
+  async function resolveImagePreview(
+    sides: { oldSide: DiffSide; newSide: DiffSide } | null,
+    file: FileDiff,
+  ): Promise<{ old: BinaryPreview | null; new: BinaryPreview | null }> {
+    if (!sides) return { old: null, new: null };
+    const [old, newer] = await Promise.all([
+      file.oldPath && hasOldSide(file.status)
+        ? binaryFilePreview(repoPath, sides.oldSide, file.oldPath)
+        : null,
+      file.newPath && hasNewSide(file.status)
+        ? binaryFilePreview(repoPath, sides.newSide, file.newPath)
+        : null,
+    ]);
+    return { old, new: newer };
   }
 
   function formatDateTime(unixSeconds: number): string {
@@ -609,6 +713,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
           onApplied={showWorkingDirectory}
           onSearchChange={(query) => (searchQuery = query)}
           onInteractiveRebase={handleInteractiveRebase}
+          onOpenWorktree={openRepo}
         />
       {/if}
     </div>
@@ -639,6 +744,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
             onHunkAction={centerDiff.onHunkAction}
             lineActionLabel={centerDiff.lineActionLabel}
             onLineAction={centerDiff.onLineAction}
+            resolveImagePreview={centerDiff.resolveImagePreview}
           />
         </div>
       </section>
@@ -724,7 +830,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         {#if compareError}
           <p class="error" role="alert">{compareError}</p>
         {:else if compareFiles}
-          <CommitDiffView files={compareFiles} bind:selectedPath={compareFilePath} />
+          <CommitDiffView
+            files={compareFiles}
+            bind:selectedPath={compareFilePath}
+            onOpenExternalDiff={openExternalDiffForCompare}
+          />
         {/if}
       </div>
     {:else if viewMode === "blame"}
@@ -761,7 +871,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         <p>Loading…</p>
       {:else}
         {#key selectedCommit.oid}
-          <CommitDiffView files={selectedFiles} bind:selectedPath={selectedCommitFilePath} />
+          <CommitDiffView
+            files={selectedFiles}
+            bind:selectedPath={selectedCommitFilePath}
+            onOpenExternalDiff={openExternalDiffForSelectedCommit}
+          />
         {/key}
       {/if}
     {/if}

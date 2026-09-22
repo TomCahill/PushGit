@@ -117,7 +117,11 @@ export interface FileDiffSelection {
   hunkActionLabel?: string;
   onHunkAction?: (hunk: Hunk) => void;
   lineActionLabel?: string;
-  onLineAction?: (hunk: Hunk, lineIndices: number[]) => void;
+  onLineAction?: (hunk: Hunk, lineIndices: number[]) => Promise<void>;
+  /** Forwarded to `HunkDiff`'s prop of the same name — see that component's doc comment. */
+  resolveImagePreview?: (
+    file: FileDiff,
+  ) => Promise<{ old: BinaryPreview | null; new: BinaryPreview | null }>;
 }
 
 // Mirror of `src-tauri/src/diff/model.rs`'s `ConflictSides`.
@@ -309,8 +313,38 @@ export interface AppConfig {
   showHookOutputAlways: boolean;
   checkForUpdatesEnabled: boolean;
   dismissedUpdateVersion: string | null;
+  externalTools: ExternalToolsSettings;
 }
 
 export interface RepoConfig {
   defaultSkipHooks: boolean;
+}
+
+// Mirror of `src-tauri/src/config/mod.rs::ExternalToolsSettings`.
+export interface ExternalToolsSettings {
+  diffCommand: string | null;
+  mergeCommand: string | null;
+}
+
+// Mirror of `src-tauri/src/external_tools/mod.rs::DiffSide`.
+export type DiffSide =
+  | { kind: "empty" }
+  | { kind: "workdir" }
+  | { kind: "index" }
+  | { kind: "commit"; rev: string };
+
+// Mirror of `src-tauri/src/diff/preview.rs::BinaryPreview`.
+export type BinaryPreview =
+  | { kind: "content"; base64: string; byteLen: number }
+  | { kind: "tooLarge"; byteLen: number };
+
+// Mirror of `src-tauri/src/worktree/mod.rs::WorktreeInfo`.
+export interface WorktreeInfo {
+  name: string;
+  path: string;
+  branch: string | null;
+  isMain: boolean;
+  isMissing: boolean;
+  isDirty: boolean;
+  isLocked: boolean;
 }

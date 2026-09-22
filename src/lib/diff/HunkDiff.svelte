@@ -12,11 +12,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   // (Svelte-escaped) text. Shared between StagingPanel (which passes a stage/unstage action
   // per hunk, plus a sub-hunk line-selection action) and the read-only selected-commit view
   // (`CommitDiffView`), which passes none of it.
-  import type { FileDiff, Hunk, Line } from "$lib/git/types";
+  import type { BinaryPreview, FileDiff, Hunk, Line } from "$lib/git/types";
   import { diffViewState } from "./diffViewMode.svelte";
   import { highlightSource, splitHighlightedHtml } from "./highlight";
+  import ImageDiff from "./ImageDiff.svelte";
   import { detectLanguage } from "./languages";
+  import { isImagePath, imageMimeType } from "./isImagePath";
   import { pairHunkLines } from "./pairHunkLines";
+  import { lineCheckboxGroups } from "./lineCheckboxGroups";
 
   let {
     file,
@@ -24,57 +27,111 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     onHunkAction,
     lineActionLabel,
     onLineAction,
+    resolveImagePreview,
   }: {
     file: FileDiff;
     hunkActionLabel?: string;
     onHunkAction?: (hunk: Hunk) => void;
-    /** Verb prefix for the per-hunk "act on selected lines" button, e.g. "Stage"/"Unstage" —
-     *  rendered as "{lineActionLabel} N line(s)", appearing only once at least one
-     *  addition/deletion line in that hunk is checked. Line-level selection (checkboxes next
-     *  to +/- lines) is only offered when this and `onLineAction` are both given, and only in
-     *  inline view — the side-by-side split's left/right cell layout doesn't map cleanly onto
-     *  a single per-line checkbox column, and hunk-level staging already covers that mode. */
+    /** Verb prefix used in each line checkbox's `aria-label`, e.g. "Stage"/"Unstage".
+     *  Checking an addition/deletion line's box immediately acts on just that line — no
+     *  separate confirmation step — only offered when this and `onLineAction` are both
+     *  given, and only in inline view — the side-by-side split's left/right cell layout
+     *  doesn't map cleanly onto a single per-line checkbox column, and hunk-level staging
+     *  already covers that mode. */
     lineActionLabel?: string;
-    onLineAction?: (hunk: Hunk, lineIndices: number[]) => void;
+    onLineAction?: (hunk: Hunk, lineIndices: number[]) => Promise<void>;
+    /** Parent-owned, same "caller knows which sides apply here" contract as
+     *  `CommitDiffView`'s `onOpenExternalDiff` — only the caller knows whether this diff's
+     *  old/new sides are workdir/index/a commit-ish. Only consulted for a binary file whose
+     *  path looks like a supported image format; every other binary file keeps the plain
+     *  placeholder regardless of whether this prop is given. */
+    resolveImagePreview?: (
+      file: FileDiff,
+    ) => Promise<{ old: BinaryPreview | null; new: BinaryPreview | null }>;
   } = $props();
 
-  // Keyed by hunk object identity, which is stable for the lifetime of one `file` prop value
-  // (its `hunks` array is never mutated in place) — reset via the `$effect` below whenever a
-  // fresh diff replaces `file` wholesale, so a stale selection never survives a reload.
-  let selectedByHunk = $state(new Map<Hunk, Set<number>>());
+  const isImageFile = $derived(file.isBinary && isImagePath(file.newPath ?? file.oldPath));
+
+  let imagePreview = $state<{ old: BinaryPreview | null; new: BinaryPreview | null } | null>(
+    null,
+  );
+  let imagePreviewFailed = $state(false);
+
+  // Generation-guarded so switching to a different binary file quickly can't have an
+  // earlier fetch's result land after a later one's, matching `+page.svelte`'s `loadDiff`.
+  let imagePreviewGeneration = 0;
+
+  $effect(() => {
+    const currentFile = file;
+    imagePreview = null;
+    imagePreviewFailed = false;
+    if (!isImageFile || !resolveImagePreview) return;
+
+    const myGeneration = ++imagePreviewGeneration;
+    resolveImagePreview(currentFile).then(
+      (result) => {
+        if (myGeneration === imagePreviewGeneration) imagePreview = result;
+      },
+      () => {
+        if (myGeneration === imagePreviewGeneration) imagePreviewFailed = true;
+      },
+    );
+  });
+
+  // Lines currently mid-flight (checked, action in progress) per hunk — checkbox shows
+  // checked-and-disabled for these so a second click can't fire a duplicate action while
+  // the first is still applying. Keyed by hunk object identity, which is stable for the
+  // lifetime of one `file` prop value; reset via the `$effect` below whenever a fresh diff
+  // replaces `file` wholesale (the in-flight line's row won't exist in the new hunks
+  // anyway, once staged/unstaged).
+  let pendingByHunk = $state(new Map<Hunk, Set<number>>());
 
   $effect(() => {
     void file;
-    selectedByHunk = new Map();
+    pendingByHunk = new Map();
   });
 
-  function isLineSelected(hunk: Hunk, index: number): boolean {
-    return selectedByHunk.get(hunk)?.has(index) ?? false;
+  function isGroupPending(hunk: Hunk, indices: number[]): boolean {
+    const pending = pendingByHunk.get(hunk);
+    return pending ? indices.some((index) => pending.has(index)) : false;
   }
 
-  function toggleLine(hunk: Hunk, index: number) {
-    const next = new Map(selectedByHunk);
+  function setGroupPending(hunk: Hunk, indices: number[], pending: boolean) {
+    const next = new Map(pendingByHunk);
     const set = new Set(next.get(hunk) ?? []);
-    if (set.has(index)) {
-      set.delete(index);
-    } else {
-      set.add(index);
+    for (const index of indices) {
+      if (pending) {
+        set.add(index);
+      } else {
+        set.delete(index);
+      }
     }
     next.set(hunk, set);
-    selectedByHunk = next;
+    pendingByHunk = next;
   }
 
-  function selectedLineCount(hunk: Hunk): number {
-    return selectedByHunk.get(hunk)?.size ?? 0;
+  async function handleLineCheckbox(hunk: Hunk, indices: number[]) {
+    if (isGroupPending(hunk, indices)) return;
+    setGroupPending(hunk, indices, true);
+    try {
+      await onLineAction?.(hunk, indices);
+    } finally {
+      setGroupPending(hunk, indices, false);
+    }
   }
 
-  function handleLineAction(hunk: Hunk) {
-    const indices = [...(selectedByHunk.get(hunk) ?? [])];
-    if (indices.length === 0) return;
-    onLineAction?.(hunk, indices);
-    const next = new Map(selectedByHunk);
-    next.delete(hunk);
-    selectedByHunk = next;
+  // Per-hunk checkbox grouping — see `lineCheckboxGroups` for why an edited-line
+  // replacement (delete+add pair) collapses onto a single checkbox instead of one per line.
+  const checkboxGroupsByHunk = $derived.by(() => {
+    const map = new Map<Hunk, (number[] | null)[]>();
+    for (const hunk of file.hunks) {
+      map.set(hunk, lineCheckboxGroups(hunk.lines));
+    }
+    return map;
+  });
+
+  function checkboxGroupFor(hunk: Hunk, index: number): number[] | null {
+    return checkboxGroupsByHunk.get(hunk)?.[index] ?? null;
   }
 
   // Per-hunk, per-line highlighted HTML (index-aligned with that hunk's `lines`); absent for
@@ -106,7 +163,17 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 </script>
 
 {#if file.isBinary}
-  <p class="placeholder">Binary file — no diff to show.</p>
+  {#if isImageFile && imagePreview}
+    <ImageDiff
+      oldPreview={imagePreview.old}
+      newPreview={imagePreview.new}
+      mimeType={imageMimeType(file.newPath ?? file.oldPath ?? "")}
+    />
+  {:else if isImageFile && resolveImagePreview && !imagePreviewFailed}
+    <p class="placeholder">Loading preview…</p>
+  {:else}
+    <p class="placeholder">Binary file — no diff to show.</p>
+  {/if}
 {:else}
   <div class="view-toggle">
     <button type="button" onclick={toggleViewMode}>
@@ -118,13 +185,6 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       <div class="hunk-header">
         <span class="hunk-label">{hunk.header}</span>
         <div class="hunk-actions">
-          {#if onLineAction && selectedLineCount(hunk) > 0}
-            {@const count = selectedLineCount(hunk)}
-            <button type="button" onclick={() => handleLineAction(hunk)}>
-              {lineActionLabel}
-              {count} line{count === 1 ? "" : "s"}
-            </button>
-          {/if}
           {#if onHunkAction}
             <button type="button" onclick={() => onHunkAction?.(hunk)}>
               {hunkActionLabel}
@@ -137,6 +197,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         {#if diffViewState.mode === "inline"}
           {#each hunk.lines as line, index}
             {@const html = lineHtml(hunk, index)}
+            {@const checkboxGroup = checkboxGroupFor(hunk, index)}
             <div
               class="line"
               class:addition={line.origin === "addition"}
@@ -144,12 +205,15 @@ SPDX-License-Identifier: AGPL-3.0-or-later
             >
               {#if onLineAction}
                 <span class="line-checkbox">
-                  {#if line.origin !== "context"}
+                  {#if checkboxGroup}
                     <input
                       type="checkbox"
-                      checked={isLineSelected(hunk, index)}
-                      onchange={() => toggleLine(hunk, index)}
-                      aria-label={`Select this ${line.origin} line`}
+                      checked={isGroupPending(hunk, checkboxGroup)}
+                      disabled={isGroupPending(hunk, checkboxGroup)}
+                      onchange={() => handleLineCheckbox(hunk, checkboxGroup)}
+                      aria-label={checkboxGroup.length > 1
+                        ? `${lineActionLabel ?? "Toggle"} this edit`
+                        : `${lineActionLabel ?? "Toggle"} this ${line.origin} line`}
                     />
                   {/if}
                 </span>

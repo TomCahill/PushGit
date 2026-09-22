@@ -13,11 +13,13 @@ import type {
   AiSettings,
   AiTransport,
   AppConfig,
+  BinaryPreview,
   BlameLine,
   BranchInfo,
   CherryPickOutcome,
   CommitGraphPage,
   ConflictSides,
+  DiffSide,
   DownloadProgress,
   EngineVariant,
   FileDiff,
@@ -43,6 +45,7 @@ import type {
   UndoRedoStatus,
   WorkflowBranchKind,
   WorkflowConfig,
+  WorktreeInfo,
 } from "./types";
 
 export function openRepository(path: string): Promise<string> {
@@ -66,6 +69,19 @@ export function pickRepositoryFolder(): Promise<string | null> {
     }
   }
   return openFolderPicker({ directory: true, multiple: false, title: "Open Repository" });
+}
+
+/** Same native-folder-picker/E2E-injection contract as `pickRepositoryFolder`, titled for
+ *  choosing where a new worktree's directory should live. */
+export function pickWorktreeParentFolder(): Promise<string | null> {
+  if (import.meta.env.VITE_E2E) {
+    const e2eOverride = (window as unknown as { __e2eDialogPath__?: string | null })
+      .__e2eDialogPath__;
+    if (e2eOverride !== undefined) {
+      return Promise.resolve(e2eOverride);
+    }
+  }
+  return openFolderPicker({ directory: true, multiple: false, title: "New Worktree Location" });
 }
 
 export function graphOpen(repoPath: string, filter: GraphFilter): Promise<string> {
@@ -297,6 +313,16 @@ export function repositoryState(repoPath: string): Promise<RepoState> {
 
 export function conflictSides(repoPath: string, path: string): Promise<ConflictSides> {
   return invoke("conflict_sides", { repoPath, path });
+}
+
+/** Raw ours/theirs preview bytes for a binary conflict at `path`, for the conflict editor's
+ *  before/after image preview — the counterpart to `conflictSides` for content that
+ *  shouldn't be lossily UTF-8 decoded. */
+export function conflictBinaryPreview(
+  repoPath: string,
+  path: string,
+): Promise<[BinaryPreview | null, BinaryPreview | null]> {
+  return invoke("conflict_binary_preview", { repoPath, path });
 }
 
 export function writeResolvedConflict(
@@ -670,4 +696,78 @@ export function downloadLocalAi(
 /** Cancels whatever local-AI download is currently in progress, if any. */
 export function cancelLocalAiDownload(): Promise<void> {
   return invoke("cancel_local_ai_download");
+}
+
+/** Raw preview bytes for one side of a diff (working directory, index, or a commit-ish),
+ *  for `HunkDiff`'s inline image-diff preview. */
+export function binaryFilePreview(
+  repoPath: string,
+  side: DiffSide,
+  path: string,
+): Promise<BinaryPreview> {
+  return invoke("binary_file_preview", { repoPath, side, path });
+}
+
+/** Opens the external diff tool configured for `repoPath`, pointed at temp copies of
+ *  `oldSide`/`newSide`. Rejects with a clear message if no diff tool is configured (neither
+ *  Settings' override nor the repo's own `diff.tool`/`difftool.<tool>.cmd`). */
+export function openExternalDiffTool(
+  repoPath: string,
+  oldSide: DiffSide,
+  newSide: DiffSide,
+  oldPath: string,
+  newPath: string,
+): Promise<void> {
+  return invoke("open_external_diff_tool", { repoPath, oldSide, newSide, oldPath, newPath });
+}
+
+/** Opens the external merge tool configured for `repoPath` on one conflicted `path`; on
+ *  success the path is already resolved and staged, the same as `writeResolvedConflict`. */
+export function openExternalMergeTool(repoPath: string, path: string): Promise<void> {
+  return invoke("open_external_merge_tool", { repoPath, path });
+}
+
+/** The command that would actually run for "open in external diff tool" against `repoPath`
+ *  right now — `null` if nothing is configured. Purely informational, for a Settings hint. */
+export function resolvedExternalDiffCommand(repoPath: string): Promise<string | null> {
+  return invoke("resolved_external_diff_command", { repoPath });
+}
+
+/** Same as `resolvedExternalDiffCommand`, for the merge-tool command. */
+export function resolvedExternalMergeCommand(repoPath: string): Promise<string | null> {
+  return invoke("resolved_external_merge_command", { repoPath });
+}
+
+/** Persists an override for the external diff tool command (`null` clears it), returning the
+ *  resulting config. */
+export function setExternalDiffCommand(value: string | null): Promise<AppConfig> {
+  return invoke("set_external_diff_command", { value });
+}
+
+/** Same as `setExternalDiffCommand`, for the merge-tool override. */
+export function setExternalMergeCommand(value: string | null): Promise<AppConfig> {
+  return invoke("set_external_merge_command", { value });
+}
+
+/** The main working directory plus every linked worktree, main first. */
+export function listWorktrees(repoPath: string): Promise<WorktreeInfo[]> {
+  return invoke("list_worktrees", { repoPath });
+}
+
+/** Adds a new linked worktree at `path`, checked out to `branchName` — an existing local or
+ *  remote branch, or (if neither exists) a brand new branch created from `startPoint`
+ *  (`undefined` = HEAD). */
+export function addWorktree(
+  repoPath: string,
+  branchName: string,
+  startPoint: string | undefined,
+  path: string,
+): Promise<void> {
+  return invoke("add_worktree", { repoPath, branchName, startPoint, path });
+}
+
+/** Removes a linked worktree by its admin `name` (`WorktreeInfo.name`) — deletes its on-disk
+ *  directory, leaving the branch it had checked out intact. */
+export function removeWorktree(repoPath: string, name: string): Promise<void> {
+  return invoke("remove_worktree", { repoPath, name });
 }

@@ -17,7 +17,15 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   let {
     files,
     selectedPath = $bindable(null),
-  }: { files: FileDiff[]; selectedPath?: string | null } = $props();
+    onOpenExternalDiff,
+  }: {
+    files: FileDiff[];
+    selectedPath?: string | null;
+    /** Parent-owned since only the caller knows which `DiffSide`s apply here — this view stays
+     *  a pure, context-free renderer, the same "optional callback, parent supplies the data"
+     *  shape `StagingPanel`'s `onBlame` prop already uses. Omit to hide the action entirely. */
+    onOpenExternalDiff?: (file: FileDiff) => void;
+  } = $props();
 
   function fileKey(file: FileDiff): string {
     return file.newPath ?? file.oldPath ?? "";
@@ -60,6 +68,18 @@ SPDX-License-Identifier: AGPL-3.0-or-later
           <DiffStat insertions={file.insertions} deletions={file.deletions} />
         </button>
         <CopyButton text={fileKey(file)} label={`Copy path ${fileKey(file)}`} />
+        {#if onOpenExternalDiff}
+          <button
+            type="button"
+            class="external-diff-button"
+            onclick={(event) => {
+              event.stopPropagation();
+              onOpenExternalDiff?.(file);
+            }}
+          >
+            External diff
+          </button>
+        {/if}
       </li>
     {/each}
   </ul>
@@ -127,5 +147,22 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .external-diff-button {
+    flex-shrink: 0;
+    padding: 0.1rem 0.4rem;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    background: none;
+    border: 1px solid var(--surface-2);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    opacity: 0.75;
+  }
+
+  .external-diff-button:hover {
+    opacity: 1;
+    color: var(--text-primary);
   }
 </style>

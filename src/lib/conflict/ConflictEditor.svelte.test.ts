@@ -172,6 +172,61 @@ describe("ConflictEditor", () => {
     expect(calls).toEqual([{ repoPath: "/repo", path: "image.png", content: "feature version\n" }]);
   });
 
+  it("shows an image preview above the whole-file actions for a binary image conflict", async () => {
+    mockIPC((cmd) => {
+      switch (cmd) {
+        case "conflict_sides":
+          return makeConflictSides({ isBinary: true, hunks: [] });
+        case "conflict_binary_preview":
+          return [
+            { kind: "content", base64: "AQID", byteLen: 3 },
+            { kind: "content", base64: "BAUG", byteLen: 3 },
+          ];
+        default:
+          throw new Error(`unexpected command ${cmd}`);
+      }
+    });
+
+    const { findByAltText, findByText } = render(ConflictEditor, {
+      props: { repoPath: "/repo", path: "image.png", onResolved: vi.fn(), onCancel: vi.fn() },
+    });
+
+    expect(await findByAltText("Ours")).toBeTruthy();
+    expect(await findByAltText("Theirs")).toBeTruthy();
+    // Keep ours/Keep theirs still work alongside the preview.
+    expect(await findByText("Keep ours")).toBeTruthy();
+  });
+
+  it("still offers keep-ours/keep-theirs when the image preview fetch fails", async () => {
+    mockIPC((cmd) => {
+      if (cmd === "conflict_sides") return makeConflictSides({ isBinary: true, hunks: [] });
+      throw new Error(`unexpected command ${cmd}`);
+    });
+
+    const { findByText, queryByAltText } = render(ConflictEditor, {
+      props: { repoPath: "/repo", path: "image.png", onResolved: vi.fn(), onCancel: vi.fn() },
+    });
+
+    expect(await findByText("Keep ours")).toBeTruthy();
+    expect(queryByAltText("Ours")).toBeNull();
+  });
+
+  it("does not fetch an image preview for a non-image binary conflict", async () => {
+    const calls: string[] = [];
+    mockIPC((cmd) => {
+      calls.push(cmd);
+      if (cmd === "conflict_sides") return makeConflictSides({ isBinary: true, hunks: [] });
+      throw new Error(`unexpected command ${cmd}`);
+    });
+
+    const { findByText } = render(ConflictEditor, {
+      props: { repoPath: "/repo", path: "archive.zip", onResolved: vi.fn(), onCancel: vi.fn() },
+    });
+
+    await findByText("Keep ours");
+    expect(calls).not.toContain("conflict_binary_preview");
+  });
+
   it("offers keep/delete for a delete/modify conflict and can delete the path", async () => {
     const calls: unknown[] = [];
     const onResolved = vi.fn();
@@ -196,5 +251,45 @@ describe("ConflictEditor", () => {
 
     await waitFor(() => expect(onResolved).toHaveBeenCalled());
     expect(calls).toEqual([{ repoPath: "/repo", path: "shared.txt" }]);
+  });
+
+  it("opens the external merge tool and resolves on success", async () => {
+    const calls: unknown[] = [];
+    const onResolved = vi.fn();
+    mockIPC((cmd, args) => {
+      switch (cmd) {
+        case "conflict_sides":
+          return makeConflictSides();
+        case "open_external_merge_tool":
+          calls.push(args);
+          return null;
+        default:
+          throw new Error(`unexpected command ${cmd}`);
+      }
+    });
+
+    const { findByText, getByText } = render(ConflictEditor, {
+      props: { repoPath: "/repo", path: "shared.txt", onResolved, onCancel: vi.fn() },
+    });
+    await findByText("Open in external merge tool");
+
+    await fireEvent.click(getByText("Open in external merge tool"));
+
+    await waitFor(() => expect(onResolved).toHaveBeenCalled());
+    expect(calls).toEqual([{ repoPath: "/repo", path: "shared.txt" }]);
+  });
+
+  it("hides the external merge tool button for a binary conflict", async () => {
+    mockIPC((cmd) => {
+      if (cmd === "conflict_sides") return makeConflictSides({ isBinary: true, hunks: [] });
+      throw new Error(`unexpected command ${cmd}`);
+    });
+
+    const { findByText, queryByText } = render(ConflictEditor, {
+      props: { repoPath: "/repo", path: "image.png", onResolved: vi.fn(), onCancel: vi.fn() },
+    });
+    await findByText("Keep ours");
+
+    expect(queryByText("Open in external merge tool")).toBeNull();
   });
 });

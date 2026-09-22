@@ -24,6 +24,7 @@ describe("SettingsPanel", () => {
     settingsState.showHookOutputAlways = true;
     settingsState.checkForUpdatesEnabled = true;
     settingsState.dismissedUpdateVersion = null;
+    settingsState.externalTools = { diffCommand: null, mergeCommand: null };
     settingsState.hasAiApiKey = false;
     settingsState.localAiStatus = { modelPresent: false, enginePresent: false, gpuDevice: null };
     settingsState.localAiDownloadProgress = null;
@@ -264,6 +265,65 @@ describe("SettingsPanel", () => {
 
       await waitFor(() => expect(checkbox.checked).toBe(true));
       expect(toastState.toasts.map((t) => t.message)).toContain("disk full");
+    });
+  });
+
+  describe("External Tools section", () => {
+    it("is shown even when no repo is open", () => {
+      mockIPC(() => {
+        throw new Error("should not be called when no repo is open");
+      });
+
+      const { getByText } = render(SettingsPanel);
+
+      expect(getByText("External Tools")).toBeTruthy();
+    });
+
+    it("saves the diff and merge tool command overrides together", async () => {
+      const calls: unknown[] = [];
+      mockIPC((cmd, args) => {
+        switch (cmd) {
+          case "set_external_diff_command":
+            calls.push(args);
+            return { maxCommitsRendered: DEFAULT_MAX_COMMITS_RENDERED, reduceMotion: false };
+          case "set_external_merge_command":
+            calls.push(args);
+            return { maxCommitsRendered: DEFAULT_MAX_COMMITS_RENDERED, reduceMotion: false };
+          default:
+            throw new Error(`unexpected command ${cmd}`);
+        }
+      });
+
+      const { getByLabelText } = render(SettingsPanel);
+      const diffInput = getByLabelText("Diff tool command") as HTMLInputElement;
+      const form = within(diffInput.closest("form")!);
+
+      await fireEvent.input(diffInput, { target: { value: "meld $LOCAL $REMOTE" } });
+      await fireEvent.click(form.getByText("Save"));
+
+      expect(await waitFor(() => form.getByText("Saved."))).toBeTruthy();
+      expect(calls).toEqual([
+        { value: "meld $LOCAL $REMOTE" },
+        { value: null },
+      ]);
+    });
+
+    it("shows the command that would actually run once a repo is open", async () => {
+      mockIPC((cmd, args) => {
+        switch (cmd) {
+          case "resolved_external_diff_command":
+            expect(args).toEqual({ repoPath: "/repo" });
+            return "bcompare $LOCAL $REMOTE";
+          case "resolved_external_merge_command":
+            return null;
+          default:
+            throw new Error(`unexpected command ${cmd}`);
+        }
+      });
+
+      const { findByText } = render(SettingsPanel, { props: { repoPath: "/repo" } });
+
+      expect(await findByText("bcompare $LOCAL $REMOTE")).toBeTruthy();
     });
   });
 

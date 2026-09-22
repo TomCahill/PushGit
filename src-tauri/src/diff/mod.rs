@@ -5,8 +5,10 @@
 //! hunk parsing feeding the diff viewer.
 
 mod model;
+mod preview;
 
 pub use model::{ConflictSides, FileDiff, FileStatus, Hunk, Line, LineOrigin};
+pub use preview::{preview_from_bytes, BinaryPreview};
 
 use git2::{Blob, Delta, Diff, DiffFindOptions, DiffLineType, DiffOptions, Patch, Repository};
 
@@ -107,15 +109,22 @@ fn build_file_diffs(diff: &Diff) -> PushGitResult<Vec<FileDiff>> {
 
     for i in 0..diff.deltas().len() {
         let delta = diff.get_delta(i).expect("index within deltas().len()");
-        let is_binary = delta.flags().is_binary();
         let status = map_status(delta.status());
         let old_path = delta.old_file().path().map(|p| p.display().to_string());
         let new_path = delta.new_file().path().map(|p| p.display().to_string());
 
-        let hunks = if is_binary {
-            Vec::new()
-        } else {
-            build_hunks(diff, i)?
+        // `delta.flags().is_binary()` is unreliable here: libgit2 only actually inspects a
+        // file's content (and sets that flag) while generating its patch — for a delta with
+        // nothing to compare against on one side (a pure add or delete), nothing forces that
+        // inspection to happen earlier, so reading the flag off the `Diff`'s own delta list
+        // before building the patch silently reads a stale `false` and skips ever generating
+        // hunks for it (matching `diff_blob_content`'s existing pattern of reading the flag
+        // off the `Patch`'s delta instead, which is what actually walks the content).
+        let patch = Patch::from_diff(diff, i)?;
+        let (is_binary, hunks) = match &patch {
+            Some(patch) if patch.delta().flags().is_binary() => (true, Vec::new()),
+            Some(patch) => (false, hunks_from_patch(patch)?),
+            None => (delta.flags().is_binary(), Vec::new()),
         };
         let (insertions, deletions) = count_stats(&hunks);
 
@@ -148,13 +157,6 @@ fn count_stats(hunks: &[Hunk]) -> (u32, u32) {
         }
     }
     (insertions, deletions)
-}
-
-fn build_hunks(diff: &Diff, delta_index: usize) -> PushGitResult<Vec<Hunk>> {
-    let Some(patch) = Patch::from_diff(diff, delta_index)? else {
-        return Ok(Vec::new());
-    };
-    hunks_from_patch(&patch)
 }
 
 /// Diffs two blobs directly, independent of any tree/index/workdir state — used for
@@ -240,6 +242,36 @@ mod tests {
     use super::*;
     use crate::test_support::repo_init;
     use std::fs;
+
+    #[test]
+    fn diff_commit_detects_binary_for_a_newly_added_file() {
+        // Regression test: `delta.flags().is_binary()` reads stale (always `false`) for a
+        // delta with nothing on the other side to compare against — libgit2 only actually
+        // inspects content (and sets that flag) while building the delta's patch. A pure add
+        // (or delete) used to silently skip that inspection and get treated as an empty text
+        // file (`hunks: []`, `is_binary: false`) instead of a binary one.
+        let (dir, repo) = repo_init();
+        fs::write(
+            dir.path().join("logo.png"),
+            [0u8, 1, 137, 80, 78, 71, 2, 3, 0, 4],
+        )
+        .unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("logo.png")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let sig = repo.signature().unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        let commit_oid = repo
+            .commit(Some("HEAD"), &sig, &sig, "add logo", &tree, &[&head])
+            .unwrap();
+
+        let diffs = diff_commit(&repo, &commit_oid.to_string()).unwrap();
+
+        assert_eq!(diffs.len(), 1);
+        assert!(diffs[0].is_binary);
+        assert!(diffs[0].hunks.is_empty());
+    }
 
     #[test]
     fn unstaged_diff_reports_a_modified_file() {
