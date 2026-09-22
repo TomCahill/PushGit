@@ -45,6 +45,7 @@ import type {
   UndoRedoStatus,
   WorkflowBranchKind,
   WorkflowConfig,
+  WorktreeInfo,
 } from "./types";
 
 export function openRepository(path: string): Promise<string> {
@@ -68,6 +69,19 @@ export function pickRepositoryFolder(): Promise<string | null> {
     }
   }
   return openFolderPicker({ directory: true, multiple: false, title: "Open Repository" });
+}
+
+/** Same native-folder-picker/E2E-injection contract as `pickRepositoryFolder`, titled for
+ *  choosing where a new worktree's directory should live. */
+export function pickWorktreeParentFolder(): Promise<string | null> {
+  if (import.meta.env.VITE_E2E) {
+    const e2eOverride = (window as unknown as { __e2eDialogPath__?: string | null })
+      .__e2eDialogPath__;
+    if (e2eOverride !== undefined) {
+      return Promise.resolve(e2eOverride);
+    }
+  }
+  return openFolderPicker({ directory: true, multiple: false, title: "New Worktree Location" });
 }
 
 export function graphOpen(repoPath: string, filter: GraphFilter): Promise<string> {
@@ -733,4 +747,27 @@ export function setExternalDiffCommand(value: string | null): Promise<AppConfig>
 /** Same as `setExternalDiffCommand`, for the merge-tool override. */
 export function setExternalMergeCommand(value: string | null): Promise<AppConfig> {
   return invoke("set_external_merge_command", { value });
+}
+
+/** The main working directory plus every linked worktree, main first. */
+export function listWorktrees(repoPath: string): Promise<WorktreeInfo[]> {
+  return invoke("list_worktrees", { repoPath });
+}
+
+/** Adds a new linked worktree at `path`, checked out to `branchName` — an existing local or
+ *  remote branch, or (if neither exists) a brand new branch created from `startPoint`
+ *  (`undefined` = HEAD). */
+export function addWorktree(
+  repoPath: string,
+  branchName: string,
+  startPoint: string | undefined,
+  path: string,
+): Promise<void> {
+  return invoke("add_worktree", { repoPath, branchName, startPoint, path });
+}
+
+/** Removes a linked worktree by its admin `name` (`WorktreeInfo.name`) — deletes its on-disk
+ *  directory, leaving the branch it had checked out intact. */
+export function removeWorktree(repoPath: string, name: string): Promise<void> {
+  return invoke("remove_worktree", { repoPath, name });
 }

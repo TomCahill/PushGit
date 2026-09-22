@@ -8,7 +8,7 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 import BranchSidebar from "./BranchSidebar.svelte";
 import ConfirmDialog from "$lib/shell/ConfirmDialog.svelte";
 import ContextMenu from "$lib/shell/ContextMenu.svelte";
-import { makeBranchInfo } from "$lib/git/testFixtures";
+import { makeBranchInfo, makeWorktreeInfo } from "$lib/git/testFixtures";
 import { toastState } from "$lib/shell/toast.svelte";
 
 describe("BranchSidebar", () => {
@@ -516,5 +516,66 @@ describe("BranchSidebar", () => {
 
     const alert = await findByRole("alert");
     expect(alert.textContent).toContain("not a repository");
+  });
+
+  it("omits the worktree section when onOpenWorktree isn't provided", async () => {
+    mockIPC((cmd) => {
+      switch (cmd) {
+        case "list_branches":
+          return [makeBranchInfo({ name: "main", isHead: true })];
+        case "repository_state":
+          return "clean";
+        case "list_conflicts":
+          return [];
+        default:
+          throw new Error(`unexpected command ${cmd}`);
+      }
+    });
+
+    const { findByText, queryByText } = render(BranchSidebar, {
+      props: { repoPath: "/repo", refreshKey: 0 },
+    });
+
+    await findByText("main");
+    expect(queryByText("Worktrees")).toBeNull();
+  });
+
+  it("shows the worktree section and opens one via onOpenWorktree, when provided", async () => {
+    mockIPC((cmd) => {
+      switch (cmd) {
+        case "list_branches":
+          return [makeBranchInfo({ name: "main", isHead: true })];
+        case "repository_state":
+          return "clean";
+        case "list_conflicts":
+          return [];
+        case "list_worktrees":
+          return [
+            makeWorktreeInfo({ name: "(main)", path: "/repo", branch: "main", isMain: true }),
+            makeWorktreeInfo({
+              name: "feature-wt",
+              path: "/repo-worktrees/feature",
+              branch: "feature",
+              isMain: false,
+            }),
+          ];
+        case "list_remote_branches":
+          return [];
+        default:
+          throw new Error(`unexpected command ${cmd}`);
+      }
+    });
+
+    const onOpenWorktree = vi.fn();
+    const { findByText, findAllByRole } = render(BranchSidebar, {
+      props: { repoPath: "/repo", refreshKey: 0, onOpenWorktree },
+    });
+
+    expect(await findByText("Worktrees")).toBeTruthy();
+    await findByText("feature");
+    const openButtons = await findAllByRole("button", { name: "Open" });
+    await fireEvent.click(openButtons[1]);
+
+    expect(onOpenWorktree).toHaveBeenCalledWith("/repo-worktrees/feature");
   });
 });

@@ -132,12 +132,16 @@ pub fn checkout_commit(repo: &Repository, oid: &str) -> PushGitResult<()> {
     Ok(())
 }
 
-/// Checks out `remote_branch_name` (e.g. `"origin/feature"`, the shorthand `Branch::name()`
-/// returns for a remote-tracking branch), creating a local branch of the same name tracking it
-/// first if one doesn't already exist yet — mirrors plain git's DWIM checkout. Reuses an
+/// Creates a local tracking branch for `remote_branch_name` (e.g. `"origin/feature"`) if one
+/// doesn't already exist yet, returning its local name — the DWIM half of
+/// `checkout_remote_branch`, pulled out so `worktree::add_worktree` can reuse the exact same
+/// logic for its own "branch name given is actually a remote-tracking branch" case. Reuses an
 /// existing local branch of the same name as-is rather than re-pointing it, matching git's own
 /// refusal to silently repoint a branch that's already there.
-pub fn checkout_remote_branch(repo: &Repository, remote_branch_name: &str) -> PushGitResult<()> {
+pub(crate) fn ensure_local_tracking_branch(
+    repo: &Repository,
+    remote_branch_name: &str,
+) -> PushGitResult<String> {
     let local_name = remote_branch_name
         .split_once('/')
         .map(|(_, rest)| rest)
@@ -154,7 +158,14 @@ pub fn checkout_remote_branch(repo: &Repository, remote_branch_name: &str) -> Pu
         new_branch.set_upstream(Some(remote_branch_name))?;
     }
 
-    checkout_branch(repo, local_name)
+    Ok(local_name.to_string())
+}
+
+/// Checks out `remote_branch_name` (e.g. `"origin/feature"`, the shorthand `Branch::name()`
+/// returns for a remote-tracking branch) — mirrors plain git's DWIM checkout.
+pub fn checkout_remote_branch(repo: &Repository, remote_branch_name: &str) -> PushGitResult<()> {
+    let local_name = ensure_local_tracking_branch(repo, remote_branch_name)?;
+    checkout_branch(repo, &local_name)
 }
 
 pub fn rename_branch(repo: &Repository, old_name: &str, new_name: &str) -> PushGitResult<()> {

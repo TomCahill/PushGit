@@ -337,3 +337,14 @@ export type DiffSide =
 export type BinaryPreview =
   | { kind: "content"; base64: string; byteLen: number }
   | { kind: "tooLarge"; byteLen: number };
+
+// Mirror of `src-tauri/src/worktree/mod.rs::WorktreeInfo`.
+export interface WorktreeInfo {
+  name: string;
+  path: string;
+  branch: string | null;
+  isMain: boolean;
+  isMissing: boolean;
+  isDirty: boolean;
+  isLocked: boolean;
+}

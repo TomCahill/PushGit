@@ -12,6 +12,7 @@ import type {
   Hunk,
   RebaseCommitSummary,
   StashEntry,
+  WorktreeInfo,
 } from "./types";
 
 export function makeCommitRow(overrides: Partial<CommitRow> = {}): CommitRow {
@@ -91,6 +92,19 @@ export function makeStashEntry(overrides: Partial<StashEntry> = {}): StashEntry 
     index: 0,
     message: "On main: WIP",
     oid: "0".repeat(40),
+    ...overrides,
+  };
+}
+
+export function makeWorktreeInfo(overrides: Partial<WorktreeInfo> = {}): WorktreeInfo {
+  return {
+    name: "(main)",
+    path: "/repo",
+    branch: "main",
+    isMain: true,
+    isMissing: false,
+    isDirty: false,
+    isLocked: false,
     ...overrides,
   };
 }

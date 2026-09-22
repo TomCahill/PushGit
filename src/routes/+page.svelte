@@ -713,6 +713,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
           onApplied={showWorkingDirectory}
           onSearchChange={(query) => (searchQuery = query)}
           onInteractiveRebase={handleInteractiveRebase}
+          onOpenWorktree={openRepo}
         />
       {/if}
     </div>

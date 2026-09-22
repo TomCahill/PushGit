@@ -47,14 +47,17 @@ pub fn is_relevant_change(repo: &Repository, repo_relative_path: &Path) -> bool 
         || git_relative == "index"
         || git_relative == "MERGE_HEAD"
         || git_relative.starts_with("refs/")
+        || git_relative.starts_with("worktrees/")
 }
 
 /// A cheap snapshot of exactly the git-internal state `is_relevant_change` cares about:
-/// HEAD's resolved target, every ref's target, whether a merge is paused, and the index
-/// file's mtime/size (its content isn't worth reading here — size+mtime already changes on
-/// any real stage/unstage). `None` if the repo can't be opened right now (mid-operation);
-/// treated as "unknown, assume changed" by the caller rather than silently swallowing a
-/// real change.
+/// HEAD's resolved target, every ref's target, whether a merge is paused, the index file's
+/// mtime/size (its content isn't worth reading here — size+mtime already changes on any real
+/// stage/unstage), and the set of linked worktree names — added/removed, not their lock
+/// state, which changes rarely and isn't worth an extra `find_worktree`/`is_locked` call per
+/// worktree per debounce tick, the same size+mtime-not-content tradeoff already made for the
+/// index just above. `None` if the repo can't be opened right now (mid-operation); treated as
+/// "unknown, assume changed" by the caller rather than silently swallowing a real change.
 fn git_state_signature(repo_path: &Path) -> Option<String> {
     let repo = Repository::open(repo_path).ok()?;
 
@@ -77,9 +80,19 @@ fn git_state_signature(repo_path: &Path) -> Option<String> {
         .ok()
         .map(|m| (m.len(), m.modified().ok()));
 
+    let mut worktrees: Vec<String> = repo
+        .worktrees()
+        .ok()?
+        .iter()
+        .flatten()
+        .map(str::to_string)
+        .collect();
+    worktrees.sort();
+
     Some(format!(
-        "{head_target:?}|{}|{merge_head_present}|{index_stat:?}",
-        refs.join(",")
+        "{head_target:?}|{}|{merge_head_present}|{index_stat:?}|{}",
+        refs.join(","),
+        worktrees.join(",")
     ))
 }
 
@@ -229,6 +242,10 @@ mod tests {
         assert!(is_relevant_change(&repo, Path::new(".git/index")));
         assert!(is_relevant_change(&repo, Path::new(".git/MERGE_HEAD")));
         assert!(is_relevant_change(&repo, Path::new(".git/refs/heads/main")));
+        assert!(is_relevant_change(
+            &repo,
+            Path::new(".git/worktrees/feature-wt/HEAD")
+        ));
     }
 
     #[test]
@@ -344,6 +361,28 @@ mod tests {
             .unwrap();
 
         assert_ne!(before, git_state_signature(dir.path()));
+    }
+
+    /// Adding or removing a worktree that reuses an *existing* branch touches neither
+    /// `refs/**` nor the index — without folding the worktree name list into the signature
+    /// itself, this class of change would be silently invisible to the watcher despite
+    /// `is_relevant_change` now flagging `worktrees/**` paths as relevant.
+    #[test]
+    fn git_state_signature_changes_when_a_worktree_is_added_or_removed() {
+        let (dir, repo) = repo_init();
+        crate::branch::create_branch(&repo, "feature", None).unwrap();
+        let before = git_state_signature(dir.path());
+
+        let wt_parent = tempfile::TempDir::new().unwrap();
+        let wt_path = wt_parent.path().join("feature-wt");
+        crate::worktree::add_worktree(&repo, "feature", None, &wt_path).unwrap();
+        let after_add = git_state_signature(dir.path());
+        assert_ne!(before, after_add);
+
+        crate::worktree::remove_worktree(&repo, "feature-wt").unwrap();
+        let after_remove = git_state_signature(dir.path());
+        assert_ne!(after_add, after_remove);
+        assert_eq!(before, after_remove);
     }
 
     #[test]

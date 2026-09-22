@@ -40,6 +40,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import Icon from "$lib/shell/Icon.svelte";
   import { createReloadable } from "$lib/shell/reloadable.svelte";
   import { notifyError, notifySuccess } from "$lib/shell/toast.svelte";
+  import WorktreePanel from "$lib/worktree/WorktreePanel.svelte";
   import type { BranchInfo, RebaseCommitSummary, RepoState } from "$lib/git/types";
 
   let {
@@ -49,6 +50,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     onConflicts,
     onCurrentBranchChange,
     onInteractiveRebase,
+    onOpenWorktree,
   }: {
     repoPath: string;
     refreshKey: number;
@@ -60,6 +62,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     /** Called with the commits between `onto` and HEAD once fetched — the parent switches to
      *  the interactive rebase editor view with them. */
     onInteractiveRebase?: (onto: string, commits: RebaseCommitSummary[]) => void;
+    /** Worktrees are branch-adjacent enough to live in this same popover rather than a
+     *  separate top-level menu — omitted (as in every existing caller/test that doesn't pass
+     *  it) means the worktree section simply doesn't render, matching this component's other
+     *  optional-capability props. Switches the app into the worktree at this path, exactly
+     *  like every other "open a different repo" action already does. */
+    onOpenWorktree?: (path: string) => void;
   } = $props();
 
   let branches = $state<BranchInfo[]>([]);
@@ -369,6 +377,13 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       <button type="submit" disabled={busy || !newBranchName.trim()}>Create</button>
     </div>
   </form>
+
+  {#if onOpenWorktree}
+    <div class="worktree-section">
+      <h3>Worktrees</h3>
+      <WorktreePanel {repoPath} {refreshKey} {onChanged} onOpen={onOpenWorktree} />
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -547,5 +562,23 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
   .create-branch-row button:not(:disabled):hover {
     background: var(--surface-2);
+  }
+
+  .worktree-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 0.25rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .worktree-section h3 {
+    margin: 0;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
   }
 </style>

@@ -10,6 +10,7 @@ examine_globs = [
     "src/stage/*.rs",
     "src/branch/*.rs",
     "src/stash/*.rs",
+    "src/worktree/*.rs",
 ]
 
 # Test-only fixture helper, never compiled into the shipped binary — nothing in it needs

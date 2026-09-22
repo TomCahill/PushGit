@@ -28,6 +28,7 @@ mod undo;
 mod update_check;
 mod watcher;
 mod workflow;
+mod worktree;
 
 /// Registers the WebdriverIO E2E-testing plugins when built with
 /// `--features e2e` (see `npm run test:e2e:build`) — a no-op passthrough otherwise, so a
@@ -252,6 +253,9 @@ pub fn run() {
         commands::resolved_external_merge_command,
         commands::set_external_diff_command,
         commands::set_external_merge_command,
+        commands::list_worktrees,
+        commands::add_worktree,
+        commands::remove_worktree,
     ])
     .build(tauri::generate_context!())
     .expect("error while running tauri application")

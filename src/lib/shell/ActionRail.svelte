@@ -30,6 +30,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     onApplied,
     onSearchChange,
     onInteractiveRebase,
+    onOpenWorktree,
   }: {
     repoPath: string;
     refreshKey: number;
@@ -40,6 +41,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
      *  actually triggers a graph refetch ("live as you type"). */
     onSearchChange: (query: string) => void;
     onInteractiveRebase?: (onto: string, commits: RebaseCommitSummary[]) => void;
+    onOpenWorktree: (path: string) => void;
   } = $props();
 
   let currentBranch = $state<string | null>(null);
@@ -70,6 +72,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         {onConflicts}
         onCurrentBranchChange={(name) => (currentBranch = name)}
         {onInteractiveRebase}
+        {onOpenWorktree}
       />
     {/snippet}
   </Popover>

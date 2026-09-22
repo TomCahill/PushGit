@@ -33,6 +33,7 @@ use crate::undo::{OperationSummary, UndoRedoStatus};
 use crate::update_check;
 use crate::watcher;
 use crate::workflow::{self, FinishOutcome, WorkflowBranchKind, WorkflowConfig};
+use crate::worktree::{self, WorktreeInfo};
 
 /// Runs `op` against a freshly opened `repo_path`, recording an undo/redo entry labeled
 /// `label` beforehand — the shared wrapper behind every "destructive/hard-to-reverse"
@@ -1452,4 +1453,52 @@ pub fn set_external_merge_command(value: Option<String>) -> config::AppConfig {
     config.external_tools.merge_command = value;
     config::save_app_config(&config);
     config
+}
+
+/// Lists the main working directory plus every linked worktree. `async` + `spawn_blocking`
+/// since, unlike `list_branches`/`list_tags`, this opens a second `Repository` per worktree to
+/// read its branch/dirty state — a variable, repo-size-and-worktree-count-dependent cost,
+/// matching `ARCHITECTURE.md` §5's "usually fast" commands still going through the async path.
+#[tauri::command]
+pub async fn list_worktrees(repo_path: String) -> PushGitResult<Vec<WorktreeInfo>> {
+    tokio::task::spawn_blocking(move || {
+        worktree::list_worktrees(&repo::open(Path::new(&repo_path))?)
+    })
+    .await
+    .map_err(|e| PushGitError::Invalid(format!("list_worktrees task panicked: {e}")))?
+}
+
+/// Adds a new linked worktree checked out to `branch_name` (an existing local or remote
+/// branch, or a brand new one created from `start_point`) at `path`. `async` + `spawn_blocking`:
+/// a real checkout of the branch's tree onto disk is genuine, repo-size-proportional I/O, the
+/// same class of work `commit`/`cherry_pick_range` already get this treatment for.
+#[tauri::command]
+pub async fn add_worktree(
+    repo_path: String,
+    branch_name: String,
+    start_point: Option<String>,
+    path: String,
+) -> PushGitResult<()> {
+    tokio::task::spawn_blocking(move || {
+        worktree::add_worktree(
+            &repo::open(Path::new(&repo_path))?,
+            &branch_name,
+            start_point.as_deref(),
+            Path::new(&path),
+        )
+    })
+    .await
+    .map_err(|e| PushGitError::Invalid(format!("add_worktree task panicked: {e}")))?
+}
+
+/// Removes a linked worktree by its admin name (`WorktreeInfo::name`) — deletes its on-disk
+/// directory, leaving the branch it had checked out intact. `async` + `spawn_blocking` for the
+/// same reason as `add_worktree`: recursive directory deletion is real, size-proportional I/O.
+#[tauri::command]
+pub async fn remove_worktree(repo_path: String, name: String) -> PushGitResult<()> {
+    tokio::task::spawn_blocking(move || {
+        worktree::remove_worktree(&repo::open(Path::new(&repo_path))?, &name)
+    })
+    .await
+    .map_err(|e| PushGitError::Invalid(format!("remove_worktree task panicked: {e}")))?
 }
