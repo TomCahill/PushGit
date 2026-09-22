@@ -40,6 +40,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     setMaxCommitsRendered,
     setReduceMotion,
     setShowHookOutputAlways,
+    setTheme,
     settingsState,
   } from "./settings.svelte";
   import { notifyError } from "$lib/shell/toast.svelte";
@@ -48,6 +49,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import Select from "$lib/shell/Select.svelte";
   import Switch from "$lib/shell/Switch.svelte";
   import TextField from "$lib/shell/TextField.svelte";
+  import { THEMES } from "$lib/shell/themes";
   import type {
     AiTransport,
     EngineVariant,
@@ -259,6 +261,22 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     } catch (err) {
       settingsState.reduceMotion = !value; // revert the optimistic checkbox toggle
       notifyError(String(err));
+    }
+  }
+
+  // Draft, not bound straight to `settingsState`, same "local draft, save on change, resync
+  // from the (possibly unchanged) authoritative value afterward" shape as
+  // `autoFetchIntervalDraft` — a multi-option select can't revert by simply inverting, unlike
+  // the boolean toggles above.
+  let themeDraft = $state(settingsState.theme);
+
+  async function handleThemeChange() {
+    try {
+      await setTheme(themeDraft);
+    } catch (err) {
+      notifyError(String(err));
+    } finally {
+      themeDraft = settingsState.theme;
     }
   }
 
@@ -545,6 +563,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         </div>
         <Switch bind:checked={settingsState.reduceMotion} onchange={handleReduceMotionChange} />
       </label>
+
+      <Select id="theme" label="Theme" bind:value={themeDraft} onchange={handleThemeChange}>
+        {#each THEMES as theme (theme.id)}
+          <option value={theme.id}>{theme.label}</option>
+        {/each}
+      </Select>
 
       <label class="switch-row">
         <div class="switch-row-text">

@@ -1178,6 +1178,19 @@ pub fn set_reduce_motion(value: bool) -> config::AppConfig {
     config
 }
 
+/// Persists the active built-in theme preset, returning the resulting config. Normalizes an
+/// unrecognized `value` back to the default theme rather than erroring — see
+/// `config::normalize_theme` and `.private/feature/theme-presets/PLAN.md`.
+#[tauri::command]
+pub fn set_theme(value: String) -> config::AppConfig {
+    let config = config::AppConfig {
+        theme: config::normalize_theme(value),
+        ..config::load_app_config()
+    };
+    config::save_app_config(&config);
+    config
+}
+
 /// Persists whether the frontend's periodic auto-fetch timer is enabled, returning the
 /// resulting config. Loads the existing config first, same reasoning as
 /// `set_max_commits_rendered`.

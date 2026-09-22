@@ -641,6 +641,11 @@ export function setReduceMotion(value: boolean): Promise<AppConfig> {
   return invoke("set_reduce_motion", { value });
 }
 
+/** Persists the active built-in theme preset, returning the resulting config. */
+export function setTheme(value: string): Promise<AppConfig> {
+  return invoke("set_theme", { value });
+}
+
 /** Persists whether the periodic auto-fetch timer is enabled, returning the resulting config. */
 export function setAutoFetchEnabled(value: boolean): Promise<AppConfig> {
   return invoke("set_auto_fetch_enabled", { value });

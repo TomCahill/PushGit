@@ -31,6 +31,7 @@ import {
   setMaxCommitsRendered as setMaxCommitsRenderedCommand,
   setReduceMotion as setReduceMotionCommand,
   setShowHookOutputAlways as setShowHookOutputAlwaysCommand,
+  setTheme as setThemeCommand,
 } from "$lib/git/api";
 import type {
   AiSettings,
@@ -77,6 +78,9 @@ function savedEngineVariant(): EngineVariant {
 interface SettingsState {
   maxCommitsRendered: number;
   reduceMotion: boolean;
+  /** The active built-in theme preset id — see `shell/themes.ts`'s `THEMES` for the fixed
+   *  set. Kept as a plain `string`, not `ThemeId`, mirroring `AppConfig.theme` on the wire. */
+  theme: string;
   ai: AiSettings;
   /** On by default — it only talks to the remote the repo already has configured, the same
    *  one a manual Fetch click would use. */
@@ -108,6 +112,7 @@ interface SettingsState {
 export const settingsState: SettingsState = $state({
   maxCommitsRendered: DEFAULT_MAX_COMMITS_RENDERED,
   reduceMotion: false,
+  theme: "default",
   ai: { ...DEFAULT_AI_SETTINGS },
   autoFetchEnabled: true,
   autoFetchIntervalMinutes: DEFAULT_AUTO_FETCH_INTERVAL_MINUTES,
@@ -129,6 +134,7 @@ export async function loadAppConfig(): Promise<void> {
     const config = await getAppConfig();
     settingsState.maxCommitsRendered = config.maxCommitsRendered;
     settingsState.reduceMotion = config.reduceMotion;
+    settingsState.theme = config.theme;
     settingsState.ai = config.ai;
     settingsState.autoFetchEnabled = config.autoFetchEnabled;
     settingsState.autoFetchIntervalMinutes = config.autoFetchIntervalMinutes;
@@ -201,6 +207,13 @@ export async function setMaxCommitsRendered(value: number): Promise<void> {
 export async function setReduceMotion(value: boolean): Promise<void> {
   const config = await setReduceMotionCommand(value);
   settingsState.reduceMotion = config.reduceMotion;
+}
+
+/** Persists the active built-in theme preset; `settingsState` is updated from the backend's
+ *  (normalized) response. */
+export async function setTheme(value: string): Promise<void> {
+  const config = await setThemeCommand(value);
+  settingsState.theme = config.theme;
 }
 
 /** Persists whether the periodic auto-fetch timer is enabled; `settingsState` is updated from

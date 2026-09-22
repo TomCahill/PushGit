@@ -18,6 +18,7 @@ describe("SettingsPanel", () => {
   afterEach(() => {
     settingsState.maxCommitsRendered = DEFAULT_MAX_COMMITS_RENDERED;
     settingsState.reduceMotion = false;
+    settingsState.theme = "default";
     settingsState.ai = { transport: null, instructions: "", cloudWarningAcknowledged: false };
     settingsState.autoFetchEnabled = false;
     settingsState.autoFetchIntervalMinutes = DEFAULT_AUTO_FETCH_INTERVAL_MINUTES;
@@ -119,6 +120,38 @@ describe("SettingsPanel", () => {
     await fireEvent.click(checkbox);
 
     await waitFor(() => expect(checkbox.checked).toBe(false));
+    expect(toastState.toasts.map((t) => t.message)).toContain("disk full");
+  });
+
+  it("persists a new theme selection", async () => {
+    mockIPC((cmd, args) => {
+      if (cmd === "set_theme") {
+        expect(args).toEqual({ value: "solarized" });
+        return { maxCommitsRendered: DEFAULT_MAX_COMMITS_RENDERED, reduceMotion: false, theme: "solarized" };
+      }
+      throw new Error(`unexpected command ${cmd}`);
+    });
+
+    const { getByLabelText } = render(SettingsPanel);
+    const select = getByLabelText("Theme") as HTMLSelectElement;
+
+    await fireEvent.change(select, { target: { value: "solarized" } });
+
+    await waitFor(() => expect(settingsState.theme).toBe("solarized"));
+  });
+
+  it("reverts the theme selection and shows an error toast when the save fails", async () => {
+    mockIPC((cmd) => {
+      if (cmd === "set_theme") throw "disk full";
+      throw new Error(`unexpected command ${cmd}`);
+    });
+
+    const { getByLabelText } = render(SettingsPanel);
+    const select = getByLabelText("Theme") as HTMLSelectElement;
+
+    await fireEvent.change(select, { target: { value: "github" } });
+
+    await waitFor(() => expect(select.value).toBe("default"));
     expect(toastState.toasts.map((t) => t.message)).toContain("disk full");
   });
 

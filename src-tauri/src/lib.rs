@@ -229,6 +229,7 @@ pub fn run() {
         commands::get_app_config,
         commands::set_max_commits_rendered,
         commands::set_reduce_motion,
+        commands::set_theme,
         commands::set_auto_fetch_enabled,
         commands::set_auto_fetch_interval_minutes,
         commands::set_show_hook_output_always,

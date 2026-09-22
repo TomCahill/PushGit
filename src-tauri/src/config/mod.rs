@@ -38,6 +38,16 @@ fn default_check_for_updates_enabled() -> bool {
     true
 }
 
+/// Fixed set of built-in theme presets — see
+/// `.private/feature/theme-presets/PLAN.md`. Deliberately not a user-extensible list: this
+/// app rules out custom/user-authored theme files as a locked decision (`ROADMAP.md`
+/// "Permanently out of scope"), so this is the whole set, not a default.
+pub const KNOWN_THEME_IDS: &[&str] = &["default", "solarized", "github"];
+
+fn default_theme() -> String {
+    "default".to_string()
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
@@ -74,6 +84,13 @@ pub struct AppConfig {
     /// `external_tools::resolve_diff_command`/`resolve_merge_command`.
     #[serde(default)]
     pub external_tools: ExternalToolsSettings,
+    /// The active built-in color-palette preset — one of `KNOWN_THEME_IDS`. Kept as a plain
+    /// `String` rather than an enum so a value from a newer/older app version round-trips
+    /// harmlessly instead of failing to deserialize the whole config; `normalize_theme` is
+    /// where an unrecognized value actually gets corrected. See
+    /// `.private/feature/theme-presets/PLAN.md`.
+    #[serde(default = "default_theme")]
+    pub theme: String,
 }
 
 impl Default for AppConfig {
@@ -88,6 +105,7 @@ impl Default for AppConfig {
             check_for_updates_enabled: true,
             dismissed_update_version: None,
             external_tools: ExternalToolsSettings::default(),
+            theme: default_theme(),
         }
     }
 }
@@ -122,6 +140,17 @@ pub fn clamp_auto_fetch_interval_minutes(value: u32) -> u32 {
         MIN_AUTO_FETCH_INTERVAL_MINUTES,
         MAX_AUTO_FETCH_INTERVAL_MINUTES,
     )
+}
+
+/// Falls back to the default theme for anything not in `KNOWN_THEME_IDS` — a preset retired
+/// in some future version, or a hand-edited config file, degrades to the default look rather
+/// than erroring.
+pub fn normalize_theme(value: String) -> String {
+    if KNOWN_THEME_IDS.contains(&value.as_str()) {
+        value
+    } else {
+        default_theme()
+    }
 }
 
 pub fn load_app_config() -> AppConfig {
@@ -264,6 +293,7 @@ mod tests {
                 diff_command: Some("meld $LOCAL $REMOTE".to_string()),
                 merge_command: Some("meld $BASE $LOCAL $REMOTE -o $MERGED".to_string()),
             },
+            theme: "solarized".to_string(),
         };
 
         save_app_config_to(dir.path(), &config);
@@ -273,7 +303,7 @@ mod tests {
     }
 
     #[test]
-    fn app_config_deserializes_reduce_motion_and_ai_missing_from_an_older_file_as_defaults() {
+    fn app_config_deserializes_fields_missing_from_an_older_file_as_defaults() {
         let dir = TempDir::new().unwrap();
         std::fs::write(
             app_config_path(dir.path()),
@@ -295,6 +325,7 @@ mod tests {
                 check_for_updates_enabled: true,
                 dismissed_update_version: None,
                 external_tools: ExternalToolsSettings::default(),
+                theme: "default".to_string(),
             }
         );
     }
@@ -362,5 +393,18 @@ mod tests {
     fn clamp_max_commits_rendered_enforces_the_floor() {
         assert_eq!(clamp_max_commits_rendered(10), MIN_MAX_COMMITS_RENDERED);
         assert_eq!(clamp_max_commits_rendered(1000), 1000);
+    }
+
+    #[test]
+    fn normalize_theme_passes_known_ids_through_unchanged() {
+        assert_eq!(normalize_theme("solarized".to_string()), "solarized");
+        assert_eq!(normalize_theme("github".to_string()), "github");
+        assert_eq!(normalize_theme("default".to_string()), "default");
+    }
+
+    #[test]
+    fn normalize_theme_falls_back_to_default_for_an_unknown_value() {
+        assert_eq!(normalize_theme("nord".to_string()), "default");
+        assert_eq!(normalize_theme(String::new()), "default");
     }
 }

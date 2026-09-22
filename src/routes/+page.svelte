@@ -340,6 +340,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     document.documentElement.toggleAttribute("data-reduce-motion", settingsState.reduceMotion);
   });
 
+  // Mirrors the active built-in theme preset onto the document root so the `:root[data-theme=
+  // "..."]` override blocks below can take effect — see `.private/feature/theme-presets/PLAN.md`.
+  // `"default"` (and any unrecognized id) matches no override block, so the base `:root` tokens
+  // win with no explicit "default" block needed.
+  $effect(() => {
+    document.documentElement.dataset.theme = settingsState.theme;
+  });
+
   // `app.html`'s `#app-splash` covers the white-flash gap between window creation and this
   // component mounting (`ssr = false`) — it's
   // plain DOM driven by an inline script in `app.html` (which also owns the quote-cycling
@@ -967,6 +975,53 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     --motion-fast: 120ms;
     --motion-base: 200ms;
     --motion-easing: cubic-bezier(0.2, 0, 0, 1);
+  }
+
+  /* Built-in theme presets — see `.private/feature/theme-presets/PLAN.md`. Each preset only
+     redefines the "chrome" tokens (surfaces/border/text/accent/M3 container roles) above, never
+     --success/--danger/--warning (kept as the fixed Okabe-Ito colorblind-safe hues shared with
+     the graph lane palette and diff view, see the comment on those tokens above) and never
+     spacing/radii/shadows/motion/font. --btn-* role aliases need no redefinition since they're
+     already derived from --accent/--secondary-container via var(...). Both variants still
+     resolve through the single global `color-scheme: dark light` above — a theme picks a
+     palette, the OS still picks light vs. dark within it, same as the default theme. */
+  :global(:root[data-theme="solarized"]) {
+    --surface-0: light-dark(#fdf6e3, #002b36);
+    --surface-1: light-dark(#eee8d5, #073642);
+    --surface-2: light-dark(#e3dcc6, #0a4552);
+    --border: light-dark(#93a1a1, #586e75);
+    --border-strong: light-dark(#657b83, #839496);
+    --text-primary: light-dark(#586e75, #93a1a1);
+    --text-secondary: light-dark(#657b83, #839496);
+    --text-muted: light-dark(#93a1a1, #586e75);
+    /* Solarized's accent hues are deliberately designed to read against both base03 (dark) and
+       base3 (light) backgrounds — the palette's own signature property — so --accent uses the
+       same hex (Solarized blue) in both light-dark() slots rather than swapping. */
+    --accent: light-dark(#268bd2, #268bd2);
+    --accent-bg: light-dark(rgba(38, 139, 210, 0.1), rgba(38, 139, 210, 0.18));
+    --on-accent: light-dark(#fdf6e3, #002b36);
+    --primary-container: light-dark(#e4eff7, #0b3d55);
+    --on-primary-container: light-dark(#0b3d55, #cfe8f7);
+    --secondary-container: light-dark(#eee8d5, #073642);
+    --on-secondary-container: light-dark(#586e75, #93a1a1);
+  }
+
+  :global(:root[data-theme="github"]) {
+    --surface-0: light-dark(#ffffff, #0d1117);
+    --surface-1: light-dark(#f6f8fa, #161b22);
+    --surface-2: light-dark(#eaeef2, #21262d);
+    --border: light-dark(#d0d7de, #30363d);
+    --border-strong: light-dark(#8c959f, #6e7681);
+    --text-primary: light-dark(#1f2328, #e6edf3);
+    --text-secondary: light-dark(#59636e, #9198a1);
+    --text-muted: light-dark(#6e7781, #6e7681);
+    --accent: light-dark(#0969da, #4493f8);
+    --accent-bg: light-dark(rgba(9, 105, 218, 0.1), rgba(68, 147, 248, 0.16));
+    --on-accent: light-dark(#ffffff, #ffffff);
+    --primary-container: light-dark(#ddf4ff, #0c2d6b);
+    --on-primary-container: light-dark(#0969da, #79c0ff);
+    --secondary-container: light-dark(#f6f8fa, #21262d);
+    --on-secondary-container: light-dark(#1f2328, #e6edf3);
   }
 
   :global(:root[data-reduce-motion]) {

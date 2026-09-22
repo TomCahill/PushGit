@@ -318,6 +318,7 @@ export interface AppConfig {
   checkForUpdatesEnabled: boolean;
   dismissedUpdateVersion: string | null;
   externalTools: ExternalToolsSettings;
+  theme: string;
 }
 
 export interface RepoConfig {
