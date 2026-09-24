@@ -46,7 +46,10 @@ pub fn is_relevant_change(repo: &Repository, repo_relative_path: &Path) -> bool 
     let Ok(git_relative) = repo_relative_path.strip_prefix(".git") else {
         return !repo.is_path_ignored(repo_relative_path).unwrap_or(false);
     };
+    is_relevant_git_path(git_relative)
+}
 
+fn is_relevant_git_path(git_relative: &Path) -> bool {
     let git_relative = git_relative.to_string_lossy().replace('\\', "/");
     git_relative == "HEAD"
         || git_relative == "index"
@@ -119,8 +122,69 @@ fn git_state_signature(repo_path: &Path) -> Option<String> {
     ))
 }
 
-fn is_git_internal_path(repo_relative_path: &Path) -> bool {
-    repo_relative_path.strip_prefix(".git").is_ok()
+/// Linked worktrees and submodules opened directly keep their git state outside the workdir.
+struct RepoPaths {
+    workdir: PathBuf,
+    git_dir: PathBuf,
+    common_dir: PathBuf,
+}
+
+#[derive(Debug, PartialEq)]
+enum Location<'a> {
+    Git(&'a Path),
+    WorkingTree(&'a Path),
+    Elsewhere,
+}
+
+impl RepoPaths {
+    fn new(repo: &Repository, workdir: &Path) -> Self {
+        // Keeps the caller's spelling of a plain repo's paths; libgit2 canonicalises `repo.path()`.
+        if workdir.join(".git").is_dir() {
+            return Self::plain(workdir);
+        }
+        Self {
+            workdir: workdir.to_path_buf(),
+            git_dir: repo.path().to_path_buf(),
+            common_dir: crate::repo::common_dir(repo),
+        }
+    }
+
+    fn plain(workdir: &Path) -> Self {
+        let dot_git = workdir.join(".git");
+        Self {
+            workdir: workdir.to_path_buf(),
+            git_dir: dot_git.clone(),
+            common_dir: dot_git,
+        }
+    }
+
+    fn git_dirs(&self) -> impl Iterator<Item = &Path> {
+        let separate_common_dir =
+            (self.common_dir != self.git_dir).then_some(self.common_dir.as_path());
+        std::iter::once(self.git_dir.as_path()).chain(separate_common_dir)
+    }
+
+    // Most specific first: a git dir can sit inside the common dir or the workdir.
+    fn locate<'a>(&self, path: &'a Path) -> Location<'a> {
+        if let Some(relative) = self.git_dirs().find_map(|dir| path.strip_prefix(dir).ok()) {
+            return Location::Git(relative);
+        }
+        match path.strip_prefix(&self.workdir) {
+            Ok(relative) => Location::WorkingTree(relative),
+            Err(_) => Location::Elsewhere,
+        }
+    }
+
+    // The common dir before the git dir, which a linked worktree keeps inside it.
+    fn recursive_roots(&self) -> Vec<&Path> {
+        let mut roots = vec![self.workdir.as_path()];
+        for dir in [&self.common_dir, &self.git_dir] {
+            if !roots.iter().any(|root| dir.starts_with(root)) {
+                roots.push(dir);
+            }
+        }
+        roots
+    }
 }
 
 /// Same false-positive-loop concern [`git_state_signature`] guards against for `.git`-internal
@@ -191,6 +255,8 @@ pub fn start_watching(
     on_relevant_change: impl FnMut() + Send + 'static,
 ) -> PushGitResult<RepoWatcher> {
     let workdir = repo_path.to_path_buf();
+    let repo = Repository::open(&workdir)?;
+    let paths = RepoPaths::new(&repo, &workdir);
     let last_git_state = git_state_signature(&workdir);
     let last_working_tree_state = working_tree_signature(&workdir);
 
@@ -201,19 +267,20 @@ pub fn start_watching(
 
     // inotify spends one watch per directory from a per-user budget; other backends recurse free.
     let (watch_set, watch_limit_reached) = if RecommendedWatcher::kind() == WatcherKind::Inotify {
-        let repo = Repository::open(&workdir)?;
         let mut watch_set = WatchSet::new(&workdir);
         let complete = watch_set.sync(&mut watcher, &repo);
         (Some(watch_set), !complete)
     } else {
-        watcher
-            .watch(&workdir, RecursiveMode::Recursive)
-            .map_err(|e| PushGitError::Invalid(e.to_string()))?;
+        for root in paths.recursive_roots() {
+            watcher
+                .watch(root, RecursiveMode::Recursive)
+                .map_err(|e| PushGitError::Invalid(e.to_string()))?;
+        }
         (None, false)
     };
 
     let session = Session {
-        workdir,
+        paths,
         watcher,
         watch_set,
         last_git_state,
@@ -269,7 +336,7 @@ fn next_batch(messages: &Receiver<Message>) -> Option<Vec<Event>> {
 }
 
 struct Session<F> {
-    workdir: PathBuf,
+    paths: RepoPaths,
     watcher: RecommendedWatcher,
     watch_set: Option<WatchSet>,
     last_git_state: Option<String>,
@@ -288,13 +355,13 @@ impl<F: FnMut()> Session<F> {
         // Re-opened per batch rather than held across the debounce window: cheap
         // (mmap, no object-db scan) and avoids keeping a `Repository` handle alive
         // indefinitely on a thread the caller doesn't control.
-        let repo = Repository::open(&self.workdir).ok();
+        let repo = Repository::open(&self.paths.workdir).ok();
 
         let rescan = events.iter().any(Event::need_rescan);
         let ignore_rules_changed = events
             .iter()
             .flat_map(|event| &event.paths)
-            .any(|path| is_ignore_rules_file(&self.workdir, path));
+            .any(|path| is_ignore_rules_file(&self.paths, path));
 
         if let (Some(repo), Some(watch_set)) = (&repo, &mut self.watch_set) {
             watch_set.apply(
@@ -309,42 +376,41 @@ impl<F: FnMut()> Session<F> {
         let mut git_internal_change = rescan;
 
         for path in events.iter().flat_map(|event| &event.paths) {
-            let Ok(relative) = path.strip_prefix(&self.workdir) else {
-                working_tree_change_reported = true;
-                continue;
-            };
-            // The repo root directory's own entry, with no more specific child path —
-            // observed in practice to be reported repeatedly on its own even when
-            // nothing inside actually changed (its mtime bumps from `.git`-internal
-            // housekeeping alone). Uninformative by itself; real changes always show up
-            // as a more specific path elsewhere in the batch, so this contributes to
-            // neither signal rather than forcing an unconditional refresh.
-            if relative.as_os_str().is_empty() {
-                continue;
-            }
-            let relevant = match &repo {
-                Some(repo) => is_relevant_change(repo, relative),
-                None => true,
-            };
-            if !relevant {
-                continue;
-            }
-            if is_git_internal_path(relative) {
-                git_internal_change = true;
-            } else {
-                working_tree_change_reported = true;
+            match self.paths.locate(path) {
+                Location::Git(relative) => {
+                    if repo.is_none() || is_relevant_git_path(relative) {
+                        git_internal_change = true;
+                    }
+                }
+                // The repo root directory's own entry, with no more specific child path —
+                // observed in practice to be reported repeatedly on its own even when
+                // nothing inside actually changed (its mtime bumps from `.git`-internal
+                // housekeeping alone). Uninformative by itself; real changes always show up
+                // as a more specific path elsewhere in the batch, so this contributes to
+                // neither signal rather than forcing an unconditional refresh.
+                Location::WorkingTree(relative) if relative.as_os_str().is_empty() => {}
+                Location::WorkingTree(relative) => {
+                    let relevant = match &repo {
+                        Some(repo) => is_relevant_change(repo, relative),
+                        None => true,
+                    };
+                    if relevant {
+                        working_tree_change_reported = true;
+                    }
+                }
+                Location::Elsewhere => working_tree_change_reported = true,
             }
         }
 
         let working_tree_change = working_tree_change_reported && {
-            let current = working_tree_signature(&self.workdir);
+            let current = working_tree_signature(&self.paths.workdir);
             let changed = current.is_none() || current != self.last_working_tree_state;
             self.last_working_tree_state = current;
             changed
         };
 
         let git_state_really_changed = git_internal_change && {
-            let current = git_state_signature(&self.workdir);
+            let current = git_state_signature(&self.paths.workdir);
             let changed = current.is_none() || current != self.last_git_state;
             self.last_git_state = current;
             changed
@@ -356,14 +422,11 @@ impl<F: FnMut()> Session<F> {
     }
 }
 
-fn is_ignore_rules_file(workdir: &Path, path: &Path) -> bool {
-    let Ok(relative) = path.strip_prefix(workdir) else {
-        return false;
-    };
-    if is_git_internal_path(relative) {
-        relative == Path::new(".git/info/exclude")
-    } else {
-        relative.file_name() == Some(OsStr::new(".gitignore"))
+fn is_ignore_rules_file(paths: &RepoPaths, path: &Path) -> bool {
+    match paths.locate(path) {
+        Location::Git(relative) => relative == Path::new("info/exclude"),
+        Location::WorkingTree(relative) => relative.file_name() == Some(OsStr::new(".gitignore")),
+        Location::Elsewhere => false,
     }
 }
 
@@ -417,9 +480,14 @@ fn wanted_dirs(
     roots: impl IntoIterator<Item = (PathBuf, Area)>,
 ) -> Vec<(PathBuf, Area)> {
     let mut wanted = Vec::new();
+    // A linked worktree's git dir is also under the common dir's worktrees/; the first root wins.
+    let mut seen = HashSet::new();
     for root in roots.into_iter().filter(|(dir, _)| dir.is_dir()) {
         let mut queue = VecDeque::from([root]);
         while let Some((dir, area)) = queue.pop_front() {
+            if !seen.insert(dir.clone()) {
+                continue;
+            }
             queue.extend(child_dirs(repo, workdir, &dir, area));
             wanted.push((dir, area));
         }
@@ -466,11 +534,12 @@ impl WatchSet {
 
     /// Returns false if the OS watch limit cut registration short.
     fn sync(&mut self, watcher: &mut dyn Watcher, repo: &Repository) -> bool {
-        // The git dir goes first so HEAD/index/refs changes are still seen if the limit is hit.
-        let roots = [
-            (self.workdir.join(".git"), Area::GitDir),
-            (self.workdir.clone(), Area::WorkingTree),
-        ];
+        let paths = RepoPaths::new(repo, &self.workdir);
+        // The git dirs go first so HEAD/index/refs changes are still seen if the limit is hit.
+        let roots = paths
+            .git_dirs()
+            .map(|dir| (dir.to_path_buf(), Area::GitDir))
+            .chain([(self.workdir.clone(), Area::WorkingTree)]);
         let wanted = wanted_dirs(repo, &self.workdir, roots);
         let wanted_paths: HashSet<&Path> = wanted.iter().map(|(dir, _)| dir.as_path()).collect();
         let unwanted: Vec<PathBuf> = self
@@ -916,6 +985,48 @@ mod tests {
         condition()
     }
 
+    fn linked_worktree() -> (tempfile::TempDir, tempfile::TempDir, Repository) {
+        let (main_dir, repo) = repo_init();
+        crate::branch::create_branch(&repo, "feature", None).unwrap();
+        let wt_parent = tempfile::TempDir::new().unwrap();
+        let wt_path = wt_parent.path().join("feature-wt");
+        crate::worktree::add_worktree(&repo, "feature", None, &wt_path).unwrap();
+        let wt_repo = Repository::open(&wt_path).unwrap();
+        (main_dir, wt_parent, wt_repo)
+    }
+
+    fn watch_for_a_refresh(workdir: &Path) -> (RepoWatcher, Arc<Mutex<bool>>) {
+        let seen = Arc::new(Mutex::new(false));
+        let seen_writer = Arc::clone(&seen);
+        let watcher = start_watching(workdir, move || {
+            *seen_writer.lock().unwrap() = true;
+        })
+        .unwrap();
+        (watcher, seen)
+    }
+
+    fn commit_nothing_on_head(repo: &Repository) {
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        let sig = repo.signature().unwrap();
+        repo.commit(
+            Some("HEAD"),
+            &sig,
+            &sig,
+            "empty",
+            &head.tree().unwrap(),
+            &[&head],
+        )
+        .unwrap();
+    }
+
+    fn linked_worktree_paths() -> RepoPaths {
+        RepoPaths {
+            workdir: PathBuf::from("/wt"),
+            git_dir: PathBuf::from("/main/.git/worktrees/wt"),
+            common_dir: PathBuf::from("/main/.git"),
+        }
+    }
+
     // Regression: a recursive watch spent an inotify watch on every node_modules/ directory.
     #[test]
     fn only_unignored_directories_and_relevant_git_internals_are_watched() {
@@ -1048,7 +1159,7 @@ mod tests {
 
     #[test]
     fn ignore_rule_files_are_recognised_wherever_they_live() {
-        let root = Path::new("/repo");
+        let root = &RepoPaths::plain(Path::new("/repo"));
         assert!(is_ignore_rules_file(root, Path::new("/repo/.gitignore")));
         assert!(is_ignore_rules_file(
             root,
@@ -1135,6 +1246,150 @@ mod tests {
         assert!(
             wait_for(|| *refreshes.lock().unwrap() >= 2),
             "an edit inside the new directory is only visible through its own watch"
+        );
+    }
+
+    #[test]
+    fn a_linked_worktree_watches_its_git_dir_and_the_common_dirs_refs() {
+        let (_main_dir, _wt_parent, wt_repo) = linked_worktree();
+        let git_dir = wt_repo.path();
+        let common_dir = crate::repo::common_dir(&wt_repo);
+        // The git CLI creates this with the worktree; libgit2 doesn't.
+        fs::create_dir_all(git_dir.join("logs")).unwrap();
+
+        let (_watch_set, watcher) = synced(wt_repo.workdir().unwrap());
+        let position = |dir: &Path| watcher.watched.iter().position(|watched| watched == dir);
+        let workdir = position(wt_repo.workdir().unwrap()).expect("the workdir is watched");
+
+        assert!(position(git_dir).is_some_and(|index| index < workdir));
+        assert!(position(&common_dir.join("refs/heads")).is_some_and(|index| index < workdir));
+        assert_eq!(
+            watcher
+                .watched
+                .iter()
+                .filter(|watched| *watched == git_dir)
+                .count(),
+            1
+        );
+        for skipped in [common_dir.join("objects"), git_dir.join("logs")] {
+            assert!(
+                !watcher
+                    .watched
+                    .iter()
+                    .any(|watched| watched.starts_with(&skipped)),
+                "nothing under {skipped:?} should be watched: {:?}",
+                watcher.watched
+            );
+        }
+    }
+
+    #[test]
+    fn a_linked_worktrees_git_state_is_located_in_either_git_dir() {
+        let paths = linked_worktree_paths();
+        assert_eq!(
+            paths.locate(Path::new("/main/.git/worktrees/wt/index")),
+            Location::Git(Path::new("index"))
+        );
+        assert_eq!(
+            paths.locate(Path::new("/main/.git/refs/heads/feature")),
+            Location::Git(Path::new("refs/heads/feature"))
+        );
+        assert_eq!(
+            paths.locate(Path::new("/wt/src/main.rs")),
+            Location::WorkingTree(Path::new("src/main.rs"))
+        );
+        assert_eq!(
+            paths.locate(Path::new("/main/src/main.rs")),
+            Location::Elsewhere
+        );
+    }
+
+    #[test]
+    fn a_linked_worktree_takes_ignore_rules_from_its_own_tree_and_the_common_dir() {
+        let paths = linked_worktree_paths();
+        assert!(is_ignore_rules_file(
+            &paths,
+            Path::new("/main/.git/info/exclude")
+        ));
+        assert!(is_ignore_rules_file(&paths, Path::new("/wt/.gitignore")));
+        assert!(!is_ignore_rules_file(&paths, Path::new("/main/.gitignore")));
+    }
+
+    #[test]
+    fn recursive_backends_also_watch_git_dirs_outside_the_workdir() {
+        assert_eq!(
+            RepoPaths::plain(Path::new("/repo")).recursive_roots(),
+            [Path::new("/repo")]
+        );
+        assert_eq!(
+            linked_worktree_paths().recursive_roots(),
+            [Path::new("/wt"), Path::new("/main/.git")]
+        );
+        let submodule = RepoPaths {
+            workdir: PathBuf::from("/super/sub"),
+            git_dir: PathBuf::from("/super/.git/modules/sub"),
+            common_dir: PathBuf::from("/super/.git/modules/sub"),
+        };
+        assert_eq!(
+            submodule.recursive_roots(),
+            [
+                Path::new("/super/sub"),
+                Path::new("/super/.git/modules/sub")
+            ]
+        );
+    }
+
+    #[test]
+    fn a_commit_in_a_linked_worktree_triggers_a_refresh() {
+        let (_main_dir, _wt_parent, wt_repo) = linked_worktree();
+        let (_watcher, seen) = watch_for_a_refresh(wt_repo.workdir().unwrap());
+
+        // Only moves the branch ref, which lives in the main repo's .git, not the worktree.
+        commit_nothing_on_head(&wt_repo);
+
+        assert!(
+            wait_for(|| *seen.lock().unwrap()),
+            "a commit in a linked worktree should trigger a refresh"
+        );
+    }
+
+    #[test]
+    fn staging_in_a_linked_worktree_triggers_a_refresh() {
+        let (_main_dir, _wt_parent, wt_repo) = linked_worktree();
+        let workdir = wt_repo.workdir().unwrap();
+        fs::write(workdir.join("new.txt"), "hello\n").unwrap();
+        let (_watcher, seen) = watch_for_a_refresh(workdir);
+
+        // Only rewrites the worktree's index, under the main repo's .git/worktrees/.
+        let mut index = wt_repo.index().unwrap();
+        index.add_path(Path::new("new.txt")).unwrap();
+        index.write().unwrap();
+
+        assert!(
+            wait_for(|| *seen.lock().unwrap()),
+            "staging in a linked worktree should trigger a refresh"
+        );
+    }
+
+    #[test]
+    fn a_commit_in_a_submodule_opened_directly_triggers_a_refresh() {
+        let (_child_dir, child_repo) = repo_init();
+        let (dir, repo) = repo_init();
+        let url = child_repo.workdir().unwrap().to_str().unwrap();
+        repo.submodule(url, Path::new("sublib"), true)
+            .unwrap()
+            .clone(None)
+            .unwrap();
+        let sub_repo = Repository::open(dir.path().join("sublib")).unwrap();
+        crate::test_support::set_test_identity(&sub_repo);
+        assert!(dir.path().join("sublib/.git").is_file());
+        let (_watcher, seen) = watch_for_a_refresh(sub_repo.workdir().unwrap());
+
+        commit_nothing_on_head(&sub_repo);
+
+        assert!(
+            wait_for(|| *seen.lock().unwrap()),
+            "a commit in a submodule opened as its own repo should trigger a refresh"
         );
     }
 }

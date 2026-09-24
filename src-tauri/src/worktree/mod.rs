@@ -7,7 +7,6 @@
 //! own `git_worktree_add` rejects a non-branch reference outright, so there's no binding for
 //! `git worktree add --detach` to call.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use git2::{BranchType, Repository, WorktreeAddOptions, WorktreeLockStatus, WorktreePruneOptions};
@@ -88,16 +87,7 @@ fn main_worktree_path(repo: &Repository) -> PushGitResult<PathBuf> {
             .ok_or_else(|| invalid("repository has no working directory"));
     }
 
-    let raw = fs::read_to_string(repo.path().join("commondir"))?;
-    let commondir = PathBuf::from(raw.trim());
-    let commondir = if commondir.is_absolute() {
-        commondir
-    } else {
-        repo.path().join(commondir)
-    };
-    let commondir = commondir.canonicalize().unwrap_or(commondir);
-
-    commondir
+    crate::repo::common_dir(repo)
         .parent()
         .map(Path::to_path_buf)
         .ok_or_else(|| invalid("could not determine the main working directory"))
