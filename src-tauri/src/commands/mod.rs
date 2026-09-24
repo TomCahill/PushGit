@@ -31,6 +31,7 @@ use crate::signing;
 use crate::stage;
 use crate::stash::{self, StashEntry};
 use crate::state::AppState;
+use crate::submodule::{self, SubmoduleInfo};
 use crate::undo::{OperationSummary, UndoRedoStatus};
 use crate::update_check;
 use crate::watcher;
@@ -1591,4 +1592,65 @@ pub async fn remove_worktree(repo_path: String, name: String) -> PushGitResult<(
     })
     .await
     .map_err(|e| PushGitError::Invalid(format!("remove_worktree task panicked: {e}")))?
+}
+
+#[tauri::command]
+pub async fn list_submodules(repo_path: String) -> PushGitResult<Vec<SubmoduleInfo>> {
+    tokio::task::spawn_blocking(move || {
+        submodule::list_submodules(&repo::open(Path::new(&repo_path))?)
+    })
+    .await
+    .map_err(|e| PushGitError::Invalid(format!("list_submodules task panicked: {e}")))?
+}
+
+#[tauri::command]
+pub async fn init_submodule(repo_path: String, name: String) -> PushGitResult<()> {
+    tokio::task::spawn_blocking(move || {
+        submodule::init_submodule(&repo::open(Path::new(&repo_path))?, &name)
+    })
+    .await
+    .map_err(|e| PushGitError::Invalid(format!("init_submodule task panicked: {e}")))?
+}
+
+#[tauri::command]
+pub async fn sync_submodule(repo_path: String, name: String) -> PushGitResult<()> {
+    tokio::task::spawn_blocking(move || {
+        submodule::sync_submodule(&repo::open(Path::new(&repo_path))?, &name)
+    })
+    .await
+    .map_err(|e| PushGitError::Invalid(format!("sync_submodule task panicked: {e}")))?
+}
+
+#[tauri::command]
+pub async fn update_submodule(
+    repo_path: String,
+    name: Option<String>,
+    recursive: bool,
+    progress: Channel<RemoteProgress>,
+    state: State<'_, AppState>,
+) -> PushGitResult<()> {
+    let cancel = state
+        .submodule_cancellation
+        .register(Path::new(&repo_path))
+        .await;
+    submodule::update_submodule(
+        Path::new(&repo_path),
+        name.as_deref(),
+        recursive,
+        &progress,
+        &cancel,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn cancel_submodule_update(
+    repo_path: String,
+    state: State<'_, AppState>,
+) -> PushGitResult<()> {
+    state
+        .submodule_cancellation
+        .cancel(Path::new(&repo_path))
+        .await;
+    Ok(())
 }

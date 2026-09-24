@@ -7,7 +7,7 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 import ActionRail from "./ActionRail.svelte";
 
 // repoPath: "" makes every child panel (BranchSidebar — which also mounts WorktreePanel,
-// since onOpenWorktree is provided — TagsPanel/StashPanel/RemotePanel) skip its own
+// since onOpenWorktree is provided — TagsPanel/StashPanel/SubmodulesPanel/RemotePanel) skip its own
 // data-fetching, matching the "does nothing when no repo is open" convention every sibling
 // panel test already relies on — lets this test exercise just the search box without mocking
 // every command those panels would otherwise call.
@@ -27,6 +27,7 @@ describe("ActionRail search box", () => {
         onApplied: vi.fn(),
         onSearchChange,
         onOpenWorktree: vi.fn(),
+        onOpenSubmodule: vi.fn(),
       },
     });
 

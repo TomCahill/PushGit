@@ -106,7 +106,7 @@ pub(crate) async fn run_git_capturing_output(
 /// whatever the hook prints. So this is really "live raw stderr for the operation", a superset
 /// that happens to include the hook's lines, not an isolated hook transcript. `None` for
 /// `fetch`, which runs no hook worth showing this way.
-async fn run_git_streaming(
+pub(crate) async fn run_git_streaming(
     args: &[&str],
     cwd: Option<&Path>,
     progress: &Channel<RemoteProgress>,

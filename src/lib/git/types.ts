@@ -110,6 +110,7 @@ export interface FileDiff {
   hunks: Hunk[];
   insertions: number;
   deletions: number;
+  isSubmodule: boolean;
 }
 
 /** What a file-list panel (`StagingPanel`, `CommitDiffView`) reports up to the shell
@@ -374,4 +375,18 @@ export interface WorktreeInfo {
   isMissing: boolean;
   isDirty: boolean;
   isLocked: boolean;
+}
+
+// Mirror of `src-tauri/src/submodule/mod.rs::SubmoduleInfo`.
+export interface SubmoduleInfo {
+  name: string;
+  path: string;
+  url: string | null;
+  branch: string | null;
+  isInitialized: boolean;
+  isMissing: boolean;
+  isDirty: boolean;
+  needsUpdate: boolean;
+  headId: string | null;
+  workdirId: string | null;
 }

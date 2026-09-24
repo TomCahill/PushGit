@@ -48,6 +48,7 @@ pub fn is_relevant_change(repo: &Repository, repo_relative_path: &Path) -> bool 
         || git_relative == "MERGE_HEAD"
         || git_relative.starts_with("refs/")
         || git_relative.starts_with("worktrees/")
+        || git_relative.starts_with("modules/")
 }
 
 /// A cheap snapshot of exactly the git-internal state `is_relevant_change` cares about:
@@ -89,10 +90,27 @@ fn git_state_signature(repo_path: &Path) -> Option<String> {
         .collect();
     worktrees.sort();
 
+    // A submodule moving to a new commit touches none of the superproject's refs or its index.
+    let mut submodules: Vec<String> = repo
+        .submodules()
+        .ok()?
+        .iter()
+        .filter_map(|s| {
+            let name = s.name()?;
+            let workdir_id = s
+                .workdir_id()
+                .map(|oid| oid.to_string())
+                .unwrap_or_default();
+            Some(format!("{name}@{workdir_id}"))
+        })
+        .collect();
+    submodules.sort();
+
     Some(format!(
-        "{head_target:?}|{}|{merge_head_present}|{index_stat:?}|{}",
+        "{head_target:?}|{}|{merge_head_present}|{index_stat:?}|{}|{}",
         refs.join(","),
-        worktrees.join(",")
+        worktrees.join(","),
+        submodules.join(",")
     ))
 }
 
@@ -246,6 +264,10 @@ mod tests {
             &repo,
             Path::new(".git/worktrees/feature-wt/HEAD")
         ));
+        assert!(is_relevant_change(
+            &repo,
+            Path::new(".git/modules/vendor/lib/HEAD")
+        ));
     }
 
     #[test]
@@ -383,6 +405,47 @@ mod tests {
         let after_remove = git_state_signature(dir.path());
         assert_ne!(after_add, after_remove);
         assert_eq!(before, after_remove);
+    }
+
+    #[test]
+    fn git_state_signature_changes_when_a_submodule_is_updated() {
+        let (_child_dir, child_repo) = repo_init();
+        let (dir, repo) = repo_init();
+        let url = child_repo.workdir().unwrap().to_str().unwrap();
+        let mut sm = repo.submodule(url, Path::new("sublib"), true).unwrap();
+        sm.clone(None).unwrap();
+        sm.add_to_index(true).unwrap();
+        sm.add_finalize().unwrap();
+        let mut index = repo.index().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let sig = repo.signature().unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "add submodule", &tree, &[&head])
+            .unwrap();
+
+        let before = git_state_signature(dir.path());
+
+        let sub_repo = Repository::open(dir.path().join("sublib")).unwrap();
+        crate::test_support::set_test_identity(&sub_repo);
+        fs::write(dir.path().join("sublib/more.txt"), "more\n").unwrap();
+        let mut sub_index = sub_repo.index().unwrap();
+        sub_index.add_path(Path::new("more.txt")).unwrap();
+        sub_index.write().unwrap();
+        let sub_tree = sub_repo.find_tree(sub_index.write_tree().unwrap()).unwrap();
+        let sub_sig = sub_repo.signature().unwrap();
+        let sub_head = sub_repo.head().unwrap().peel_to_commit().unwrap();
+        sub_repo
+            .commit(
+                Some("HEAD"),
+                &sub_sig,
+                &sub_sig,
+                "advance",
+                &sub_tree,
+                &[&sub_head],
+            )
+            .unwrap();
+
+        assert_ne!(before, git_state_signature(dir.path()));
     }
 
     #[test]

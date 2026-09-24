@@ -45,6 +45,7 @@ import type {
   SignFormat,
   SigningConfigView,
   StashEntry,
+  SubmoduleInfo,
   UndoRedoStatus,
   VerificationStatus,
   WorkflowBranchKind,
@@ -838,4 +839,35 @@ export function addWorktree(
  *  directory, leaving the branch it had checked out intact. */
 export function removeWorktree(repoPath: string, name: string): Promise<void> {
   return invoke("remove_worktree", { repoPath, name });
+}
+
+export function listSubmodules(repoPath: string): Promise<SubmoduleInfo[]> {
+  return invoke("list_submodules", { repoPath });
+}
+
+export function initSubmodule(repoPath: string, name: string): Promise<void> {
+  return invoke("init_submodule", { repoPath, name });
+}
+
+export function syncSubmodule(repoPath: string, name: string): Promise<void> {
+  return invoke("sync_submodule", { repoPath, name });
+}
+
+// An undefined name updates every submodule.
+export function updateSubmodule(
+  repoPath: string,
+  name: string | undefined,
+  recursive: boolean,
+  onProgress?: (progress: RemoteProgress) => void,
+): Promise<void> {
+  return invoke("update_submodule", {
+    repoPath,
+    name,
+    recursive,
+    progress: progressChannel(onProgress),
+  });
+}
+
+export function cancelSubmoduleUpdate(repoPath: string): Promise<void> {
+  return invoke("cancel_submodule_update", { repoPath });
 }

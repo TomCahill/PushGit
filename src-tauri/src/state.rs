@@ -25,6 +25,8 @@ pub struct AppState {
     /// sharing it would let a concurrent fetch/pull/push and AI generation on the same repo
     /// orphan each other's cancel token.
     pub ai_cancellation: CancellationRegistry,
+    // Separate from remote_cancellation for the same reason as ai_cancellation (e.g. auto-fetch).
+    pub submodule_cancellation: CancellationRegistry,
     /// Undo/redo history for destructive operations, keyed by repo path.
     pub undo_log: UndoLog,
     /// Cancellation for an in-progress local-AI model/engine download — a singleton, not a

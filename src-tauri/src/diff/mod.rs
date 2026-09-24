@@ -10,7 +10,10 @@ mod preview;
 pub use model::{ConflictSides, FileDiff, FileStatus, Hunk, Line, LineOrigin};
 pub use preview::{preview_from_bytes, BinaryPreview};
 
-use git2::{Blob, Delta, Diff, DiffFindOptions, DiffLineType, DiffOptions, Patch, Repository};
+use git2::{
+    Blob, Delta, Diff, DiffDelta, DiffFindOptions, DiffLineType, DiffOptions, FileMode, Patch,
+    Repository, SubmoduleIgnore, SubmoduleStatus,
+};
 
 use crate::error::PushGitResult;
 
@@ -31,7 +34,40 @@ pub fn diff_unstaged(repo: &Repository) -> PushGitResult<Vec<FileDiff>> {
     // `for_untracked` here is what makes an on-disk move-without-`git add` show up as one
     // Renamed delta instead of a Deleted+Untracked pair, matching plain `git status`.
     detect_renames_and_copies(&mut diff, true)?;
-    build_file_diffs(&diff)
+    let mut diffs = build_file_diffs(&diff)?;
+    // Only the workdir side of a diff can meaningfully be "-dirty".
+    mark_dirty_submodules(repo, &mut diffs);
+    Ok(diffs)
+}
+
+// Best-effort: a submodule named differently from its path doesn't resolve and stays unmarked.
+fn mark_dirty_submodules(repo: &Repository, diffs: &mut [FileDiff]) {
+    for file in diffs.iter_mut() {
+        if !file.is_submodule {
+            continue;
+        }
+        let Some(path) = file.new_path.as_deref().or(file.old_path.as_deref()) else {
+            continue;
+        };
+        let Ok(status) = repo.submodule_status(path, SubmoduleIgnore::Unspecified) else {
+            continue;
+        };
+        let dirty = status.contains(SubmoduleStatus::WD_INDEX_MODIFIED)
+            || status.is_wd_wd_modified()
+            || status.is_wd_untracked();
+        if !dirty {
+            continue;
+        }
+        if let Some(hunk) = file.hunks.first_mut() {
+            if let Some(line) = hunk
+                .lines
+                .iter_mut()
+                .find(|l| l.origin == LineOrigin::Addition)
+            {
+                line.content.push_str("-dirty");
+            }
+        }
+    }
 }
 
 /// Staged changes (index vs. HEAD).
@@ -113,6 +149,14 @@ fn build_file_diffs(diff: &Diff) -> PushGitResult<Vec<FileDiff>> {
         let old_path = delta.old_file().path().map(|p| p.display().to_string());
         let new_path = delta.new_file().path().map(|p| p.display().to_string());
 
+        // A gitlink has no blob content to patch, so mirror git's own "Subproject commit" text.
+        if delta.old_file().mode() == FileMode::Commit
+            || delta.new_file().mode() == FileMode::Commit
+        {
+            results.push(submodule_file_diff(&delta, status, old_path, new_path));
+            continue;
+        }
+
         // `delta.flags().is_binary()` is unreliable here: libgit2 only actually inspects a
         // file's content (and sets that flag) while generating its patch — for a delta with
         // nothing to compare against on one side (a pure add or delete), nothing forces that
@@ -136,10 +180,62 @@ fn build_file_diffs(diff: &Diff) -> PushGitResult<Vec<FileDiff>> {
             hunks,
             insertions,
             deletions,
+            is_submodule: false,
         });
     }
 
     Ok(results)
+}
+
+// A missing side (pure add/delete) is an all-zero oid, so its line is omitted, not rendered.
+fn submodule_file_diff(
+    delta: &DiffDelta<'_>,
+    status: FileStatus,
+    old_path: Option<String>,
+    new_path: Option<String>,
+) -> FileDiff {
+    let old_oid = delta.old_file().id();
+    let new_oid = delta.new_file().id();
+
+    let mut lines = Vec::new();
+    if !old_oid.is_zero() {
+        lines.push(Line {
+            origin: LineOrigin::Deletion,
+            content: format!("Subproject commit {old_oid}"),
+            old_lineno: Some(1),
+            new_lineno: None,
+        });
+    }
+    if !new_oid.is_zero() {
+        lines.push(Line {
+            origin: LineOrigin::Addition,
+            content: format!("Subproject commit {new_oid}"),
+            old_lineno: None,
+            new_lineno: Some(1),
+        });
+    }
+
+    let hunk = Hunk {
+        header: "@@ -1 +1 @@".to_string(),
+        old_start: 1,
+        old_lines: u32::from(!old_oid.is_zero()),
+        new_start: 1,
+        new_lines: u32::from(!new_oid.is_zero()),
+        lines,
+    };
+    let hunks = vec![hunk];
+    let (insertions, deletions) = count_stats(&hunks);
+
+    FileDiff {
+        old_path,
+        new_path,
+        status,
+        is_binary: false,
+        hunks,
+        insertions,
+        deletions,
+        is_submodule: true,
+    }
 }
 
 /// Counts addition/deletion lines across every hunk. Derived from the hunks already built
@@ -801,5 +897,155 @@ mod tests {
         assert!(diffs
             .iter()
             .any(|d| d.status == FileStatus::Added && d.new_path.as_deref() == Some("b.txt")));
+    }
+
+    #[test]
+    fn diff_commit_detects_a_newly_added_submodule() {
+        let (_dir, repo) = repo_init();
+        let oid = git2::Oid::from_str("cccccccccccccccccccccccccccccccccccccccc").unwrap();
+        let sig = repo.signature().unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+
+        let mut builder = repo.treebuilder(None).unwrap();
+        builder
+            .insert("sublib", oid, i32::from(FileMode::Commit))
+            .unwrap();
+        let tree = repo.find_tree(builder.write().unwrap()).unwrap();
+        let commit_oid = repo
+            .commit(Some("HEAD"), &sig, &sig, "add submodule", &tree, &[&head])
+            .unwrap();
+
+        let diffs = diff_commit(&repo, &commit_oid.to_string()).unwrap();
+
+        assert_eq!(diffs.len(), 1);
+        assert!(diffs[0].is_submodule);
+        assert_eq!(diffs[0].status, FileStatus::Added);
+        assert_eq!(diffs[0].hunks[0].lines.len(), 1);
+        assert_eq!(diffs[0].hunks[0].lines[0].origin, LineOrigin::Addition);
+        assert_eq!(
+            diffs[0].hunks[0].lines[0].content,
+            format!("Subproject commit {oid}")
+        );
+    }
+
+    #[test]
+    fn diff_commit_detects_a_submodule_pointer_change() {
+        let (_dir, repo) = repo_init();
+        let old_oid = git2::Oid::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
+        let new_oid = git2::Oid::from_str("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap();
+        let sig = repo.signature().unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+
+        let mut builder1 = repo.treebuilder(None).unwrap();
+        builder1
+            .insert("sublib", old_oid, i32::from(FileMode::Commit))
+            .unwrap();
+        let tree1 = repo.find_tree(builder1.write().unwrap()).unwrap();
+        let commit1_oid = repo
+            .commit(Some("HEAD"), &sig, &sig, "add submodule", &tree1, &[&head])
+            .unwrap();
+        let commit1 = repo.find_commit(commit1_oid).unwrap();
+
+        let mut builder2 = repo.treebuilder(Some(&tree1)).unwrap();
+        builder2
+            .insert("sublib", new_oid, i32::from(FileMode::Commit))
+            .unwrap();
+        let tree2 = repo.find_tree(builder2.write().unwrap()).unwrap();
+        let commit2_oid = repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "bump submodule",
+                &tree2,
+                &[&commit1],
+            )
+            .unwrap();
+
+        let diffs = diff_commit(&repo, &commit2_oid.to_string()).unwrap();
+
+        assert_eq!(diffs.len(), 1);
+        assert!(diffs[0].is_submodule);
+        assert_eq!(diffs[0].status, FileStatus::Modified);
+        let deletion = diffs[0].hunks[0]
+            .lines
+            .iter()
+            .find(|l| l.origin == LineOrigin::Deletion)
+            .unwrap();
+        let addition = diffs[0].hunks[0]
+            .lines
+            .iter()
+            .find(|l| l.origin == LineOrigin::Addition)
+            .unwrap();
+        assert_eq!(deletion.content, format!("Subproject commit {old_oid}"));
+        assert_eq!(addition.content, format!("Subproject commit {new_oid}"));
+    }
+
+    fn add_and_commit_submodule(repo: &Repository, url: &str, path: &str) {
+        let mut sm = repo
+            .submodule(url, std::path::Path::new(path), true)
+            .unwrap();
+        sm.clone(None).unwrap();
+        sm.add_to_index(true).unwrap();
+        sm.add_finalize().unwrap();
+        let mut index = repo.index().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let sig = repo.signature().unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "add submodule", &tree, &[&head])
+            .unwrap();
+    }
+
+    #[test]
+    fn diff_unstaged_marks_a_dirty_submodule_with_a_dirty_suffix() {
+        let (_child_dir, child_repo) = repo_init();
+        let (dir, repo) = repo_init();
+        let url = child_repo.workdir().unwrap().to_str().unwrap();
+        add_and_commit_submodule(&repo, url, "sublib");
+
+        fs::write(dir.path().join("sublib/untracked.txt"), "x\n").unwrap();
+
+        let diffs = diff_unstaged(&repo).unwrap();
+
+        assert_eq!(diffs.len(), 1, "got: {:?}", diffs);
+        assert!(diffs[0].is_submodule);
+        let addition = diffs[0].hunks[0]
+            .lines
+            .iter()
+            .find(|l| l.origin == LineOrigin::Addition)
+            .unwrap();
+        assert!(
+            addition.content.ends_with("-dirty"),
+            "got: {:?}",
+            addition.content
+        );
+    }
+
+    #[test]
+    fn diff_staged_never_appends_a_dirty_suffix_even_when_the_workdir_is_dirty() {
+        let (_child_dir, child_repo) = repo_init();
+        let (dir, repo) = repo_init();
+        let url = child_repo.workdir().unwrap().to_str().unwrap();
+        let mut sm = repo
+            .submodule(url, std::path::Path::new("sublib"), true)
+            .unwrap();
+        sm.clone(None).unwrap();
+        sm.add_to_index(true).unwrap();
+        sm.add_finalize().unwrap();
+        fs::write(dir.path().join("sublib/untracked.txt"), "x\n").unwrap();
+
+        let diffs = diff_staged(&repo).unwrap();
+
+        let sub_diff = diffs.iter().find(|d| d.is_submodule).unwrap();
+        let addition = sub_diff.hunks[0]
+            .lines
+            .iter()
+            .find(|l| l.origin == LineOrigin::Addition)
+            .unwrap();
+        assert!(
+            !addition.content.ends_with("-dirty"),
+            "got: {:?}",
+            addition.content
+        );
     }
 }

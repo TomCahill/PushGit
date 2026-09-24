@@ -67,6 +67,8 @@ pub struct FileDiff {
     /// without the frontend re-walking every hunk itself. Always 0/0 for a binary file.
     pub insertions: u32,
     pub deletions: u32,
+    // hunks is a synthetic "Subproject commit" pair, so hunk/line staging doesn't apply.
+    pub is_submodule: bool,
 }
 
 /// The three sides of an unresolved merge conflict at one path, plus the diff between

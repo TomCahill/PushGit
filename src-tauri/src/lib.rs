@@ -23,6 +23,7 @@ mod signing;
 mod stage;
 mod stash;
 mod state;
+mod submodule;
 #[cfg(test)]
 mod test_support;
 mod undo;
@@ -263,6 +264,11 @@ pub fn run() {
         commands::list_worktrees,
         commands::add_worktree,
         commands::remove_worktree,
+        commands::list_submodules,
+        commands::init_submodule,
+        commands::sync_submodule,
+        commands::update_submodule,
+        commands::cancel_submodule_update,
     ])
     .build(tauri::generate_context!())
     .expect("error while running tauri application")
