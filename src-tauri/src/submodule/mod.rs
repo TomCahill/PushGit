@@ -74,18 +74,17 @@ pub async fn update_submodule(
     repo_path: &Path,
     name: Option<&str>,
     recursive: bool,
+    git_is_patched: bool,
     progress: &Channel<RemoteProgress>,
     cancel: &Arc<AtomicBool>,
 ) -> PushGitResult<()> {
-    // symlinks=false mitigates CVE-2024-32002; protocol.file.allow is deliberately not overridden.
-    let mut args = vec![
-        "-c",
-        "core.symlinks=false",
-        "submodule",
-        "update",
-        "--init",
-        "--progress",
-    ];
+    let mut args = Vec::new();
+    // Mitigates CVE-2024-32002 on unpatched git; submodule checkouts inherit it, breaking symlinks.
+    if !git_is_patched {
+        args.extend(["-c", "core.symlinks=false"]);
+    }
+    // protocol.file.allow is deliberately not overridden.
+    args.extend(["submodule", "update", "--init", "--progress"]);
     if recursive {
         args.push("--recursive");
     }
@@ -106,8 +105,20 @@ mod tests {
     use std::path::Path as StdPath;
     use tempfile::TempDir;
 
+    const PATCHED_GIT: bool = true;
+    const UNPATCHED_GIT: bool = false;
+
     fn commit_file(repo: &Repository, name: &str, content: &str) -> git2::Oid {
         fs::write(repo.workdir().unwrap().join(name), content).unwrap();
+        commit_path(repo, name)
+    }
+
+    fn commit_symlink(repo: &Repository, name: &str, target: &str) {
+        std::os::unix::fs::symlink(target, repo.workdir().unwrap().join(name)).unwrap();
+        commit_path(repo, name);
+    }
+
+    fn commit_path(repo: &Repository, name: &str) -> git2::Oid {
         let mut index = repo.index().unwrap();
         index.add_path(StdPath::new(name)).unwrap();
         index.write().unwrap();
@@ -156,6 +167,7 @@ mod tests {
     async fn update_allowing_file_protocol(
         repo_path: &StdPath,
         recursive: bool,
+        git_is_patched: bool,
     ) -> PushGitResult<()> {
         let _guard = crate::test_support::ENV_LOCK
             .lock()
@@ -164,7 +176,15 @@ mod tests {
         std::env::set_var("GIT_ALLOW_PROTOCOL", "file");
 
         let (progress, cancel) = no_op_progress();
-        let result = update_submodule(repo_path, None, recursive, &progress, &cancel).await;
+        let result = update_submodule(
+            repo_path,
+            None,
+            recursive,
+            git_is_patched,
+            &progress,
+            &cancel,
+        )
+        .await;
 
         match previous {
             Some(value) => std::env::set_var("GIT_ALLOW_PROTOCOL", value),
@@ -348,7 +368,7 @@ mod tests {
         assert!(list_submodules(&repo).unwrap()[0].is_missing);
         let repo_path = repo.workdir().unwrap().to_path_buf();
 
-        update_allowing_file_protocol(&repo_path, false)
+        update_allowing_file_protocol(&repo_path, false, PATCHED_GIT)
             .await
             .unwrap();
 
@@ -356,6 +376,39 @@ mod tests {
         let info = &list_submodules(&repo).unwrap()[0];
         assert!(!info.is_missing);
         assert!(!info.needs_update);
+    }
+
+    #[tokio::test]
+    async fn update_submodule_on_patched_git_keeps_symlinks_inside_the_submodule() {
+        let (_child_dir, child_repo) = repo_init();
+        commit_symlink(&child_repo, "link", "target.txt");
+        let url = child_repo.workdir().unwrap().to_str().unwrap();
+        let (_clone_dir, repo) = fresh_clone_with_uninitialized_submodule(url, "vendor/lib");
+        let repo_path = repo.workdir().unwrap().to_path_buf();
+
+        update_allowing_file_protocol(&repo_path, false, PATCHED_GIT)
+            .await
+            .unwrap();
+
+        let link = fs::symlink_metadata(repo_path.join("vendor/lib/link")).unwrap();
+        assert!(link.file_type().is_symlink());
+        assert!(!list_submodules(&repo).unwrap()[0].is_dirty);
+    }
+
+    #[tokio::test]
+    async fn update_submodule_on_unpatched_git_keeps_symlinks_disabled() {
+        let (_child_dir, child_repo) = repo_init();
+        commit_symlink(&child_repo, "link", "target.txt");
+        let url = child_repo.workdir().unwrap().to_str().unwrap();
+        let (_clone_dir, repo) = fresh_clone_with_uninitialized_submodule(url, "vendor/lib");
+        let repo_path = repo.workdir().unwrap().to_path_buf();
+
+        update_allowing_file_protocol(&repo_path, false, UNPATCHED_GIT)
+            .await
+            .unwrap();
+
+        let link = fs::symlink_metadata(repo_path.join("vendor/lib/link")).unwrap();
+        assert!(link.file_type().is_file());
     }
 
     #[tokio::test]
@@ -371,10 +424,10 @@ mod tests {
         let flat_path = flat_repo.workdir().unwrap().to_path_buf();
         let deep_path = deep_repo.workdir().unwrap().to_path_buf();
 
-        update_allowing_file_protocol(&flat_path, false)
+        update_allowing_file_protocol(&flat_path, false, PATCHED_GIT)
             .await
             .unwrap();
-        update_allowing_file_protocol(&deep_path, true)
+        update_allowing_file_protocol(&deep_path, true, PATCHED_GIT)
             .await
             .unwrap();
 
@@ -391,7 +444,7 @@ mod tests {
         add_and_commit_submodule(&repo, url, "vendor/lib");
 
         let (progress, cancel) = no_op_progress();
-        update_submodule(dir.path(), None, false, &progress, &cancel)
+        update_submodule(dir.path(), None, false, PATCHED_GIT, &progress, &cancel)
             .await
             .unwrap();
 
@@ -404,7 +457,8 @@ mod tests {
         let (progress, _) = no_op_progress();
         let cancel = Arc::new(AtomicBool::new(true));
 
-        let result = update_submodule(dir.path(), None, false, &progress, &cancel).await;
+        let result =
+            update_submodule(dir.path(), None, false, PATCHED_GIT, &progress, &cancel).await;
 
         assert!(matches!(result, Err(crate::error::PushGitError::Cancelled)));
     }

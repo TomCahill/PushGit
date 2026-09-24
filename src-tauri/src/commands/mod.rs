@@ -1637,10 +1637,15 @@ pub async fn update_submodule(
         .submodule_cancellation
         .register(Path::new(&repo_path))
         .await;
+    // An unparseable git version counts as unpatched, keeping the symlink mitigation on.
+    let git_is_patched = remote::check_git_version()
+        .await
+        .is_ok_and(|check| check.is_patched);
     submodule::update_submodule(
         Path::new(&repo_path),
         name.as_deref(),
         recursive,
+        git_is_patched,
         &progress,
         &cancel,
     )
