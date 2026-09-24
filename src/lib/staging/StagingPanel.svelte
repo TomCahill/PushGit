@@ -43,7 +43,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import ResizeHandle from "$lib/shell/ResizeHandle.svelte";
   import { notifyError } from "$lib/shell/toast.svelte";
   import { acknowledgeAiCloudWarning, settingsState } from "$lib/settings/settings.svelte";
-  import { sectionHeightsState, setStagedHeight, setUnstagedHeight } from "./sectionHeights.svelte";
+  import {
+    resizedUnstagedFraction,
+    SECTION_MIN_PX,
+    sectionSplitState,
+    setUnstagedFraction,
+  } from "./sectionSplit.svelte";
   import type { AiTransport, DiffSide, FileDiff, FileDiffSelection, Hunk } from "$lib/git/types";
 
   let {
@@ -74,6 +79,18 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   let unstagedFiles = $state<FileDiff[]>([]);
   let stagedFiles = $state<FileDiff[]>([]);
   let loadError = $state<string | null>(null);
+  let unstagedSectionHeight = $state(0);
+  let stagedSectionHeight = $state(0);
+
+  function resizeSectionSplit(deltaPx: number) {
+    setUnstagedFraction(
+      resizedUnstagedFraction(
+        sectionSplitState.unstagedFraction,
+        deltaPx,
+        unstagedSectionHeight + stagedSectionHeight,
+      ),
+    );
+  }
 
   let title = $state("");
   let description = $state("");
@@ -742,11 +759,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     <p class="error" role="alert">{loadError}</p>
   {/if}
 
-  <div class="scroll-sections">
+  <div class="file-sections" style:--section-min-height="{SECTION_MIN_PX}px">
     <section
       class="file-group"
       aria-label="Unstaged changes"
-      style:height="{sectionHeightsState.unstaged}px"
+      style:flex-grow={sectionSplitState.unstagedFraction}
+      bind:clientHeight={unstagedSectionHeight}
     >
       <h3>
         Changes ({unstagedFiles.length})
@@ -800,15 +818,13 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       </ul>
     </section>
 
-    <ResizeHandle
-      orientation="horizontal"
-      onResize={(dy) => setUnstagedHeight(sectionHeightsState.unstaged + dy)}
-    />
+    <ResizeHandle orientation="horizontal" onResize={resizeSectionSplit} />
 
     <section
       class="file-group"
       aria-label="Staged changes"
-      style:height="{sectionHeightsState.staged}px"
+      style:flex-grow={1 - sectionSplitState.unstagedFraction}
+      bind:clientHeight={stagedSectionHeight}
     >
       <h3>
         Staged Changes ({stagedFiles.length})
@@ -847,11 +863,6 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         {/each}
       </ul>
     </section>
-
-    <ResizeHandle
-      orientation="horizontal"
-      onResize={(dy) => setStagedHeight(sectionHeightsState.staged + dy)}
-    />
   </div>
 
   <form class="commit-box" onsubmit={handleCommit}>
@@ -934,18 +945,19 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     overflow: hidden;
   }
 
-  .scroll-sections {
+  .file-sections {
     display: flex;
     flex-direction: column;
     flex: 1 1 auto;
     min-height: 0;
-    overflow-y: auto;
+    overflow: hidden;
   }
 
   .file-group {
     display: flex;
     flex-direction: column;
-    flex: 0 0 auto;
+    flex: 1 1 0;
+    min-height: var(--section-min-height);
     overflow: hidden;
   }
 
@@ -1113,6 +1125,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     flex-direction: column;
     flex: 0 0 auto;
     gap: 0.4rem;
+    margin-top: 5px;
     border-top: 1px solid var(--border);
     padding-top: 0.6rem;
   }

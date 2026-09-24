@@ -6,9 +6,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 <script lang="ts">
   // Drag divider between two grid columns (orientation "vertical", the default) or two
   // stacked flex rows (orientation "horizontal") — e.g. the 3-pane shell's columns, or
-  // `StagingPanel.svelte`'s stacked Changes/Staged/Diff/commit sections. Reports the
+  // `StagingPanel.svelte`'s stacked Changes/Staged sections. Reports the
   // pointer's delta along the resize axis each move; clamping and persisting the resulting
-  // size is the caller's job (`paneWidths.svelte.ts`, `sectionHeights.svelte.ts`), not this
+  // size is the caller's job (`paneWidths.svelte.ts`, `sectionSplit.svelte.ts`), not this
   // generic handle's. Pointer capture (rather than window-level move/up listeners) keeps drag
   // events flowing to this element even when the pointer briefly leaves it mid-drag, without
   // any manual listener add/remove lifecycle.
