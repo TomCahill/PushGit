@@ -48,6 +48,7 @@ import type {
   SubmoduleInfo,
   UndoRedoStatus,
   VerificationStatus,
+  WatchStatus,
   WorkflowBranchKind,
   WorkflowConfig,
   WorktreeInfo,
@@ -607,7 +608,7 @@ export function cancelRemoteOperation(repoPath: string): Promise<void> {
   return invoke("cancel_remote_operation", { repoPath });
 }
 
-export function startRepoWatcher(repoPath: string): Promise<void> {
+export function startRepoWatcher(repoPath: string): Promise<WatchStatus> {
   return invoke("start_repo_watcher", { repoPath });
 }
 

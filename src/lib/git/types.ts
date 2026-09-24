@@ -326,6 +326,11 @@ export interface RepoConfig {
   defaultSkipHooks: boolean;
 }
 
+// Mirror of `src-tauri/src/watcher/mod.rs::WatchStatus`.
+export interface WatchStatus {
+  watchLimitReached: boolean;
+}
+
 // Mirror of `src-tauri/src/config/mod.rs::ExternalToolsSettings`.
 export interface ExternalToolsSettings {
   diffCommand: string | null;

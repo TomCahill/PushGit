@@ -1130,12 +1130,16 @@ pub async fn start_repo_watcher(
     repo_path: String,
     app: AppHandle,
     state: State<'_, AppState>,
-) -> PushGitResult<()> {
-    let debouncer = watcher::start_watching(Path::new(&repo_path), move || {
+) -> PushGitResult<watcher::WatchStatus> {
+    let mut current = state.repo_watcher.lock().await;
+    // Released first: the old repo's watches count against the same OS limit as the new one's.
+    *current = None;
+    let repo_watcher = watcher::start_watching(Path::new(&repo_path), move || {
         let _ = app.emit("repo-changed", ());
     })?;
-    *state.repo_watcher.lock().await = Some(debouncer);
-    Ok(())
+    let status = repo_watcher.status();
+    *current = Some(repo_watcher);
+    Ok(status)
 }
 
 /// Stops watching, e.g. when the frontend closes the current repo.

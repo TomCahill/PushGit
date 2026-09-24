@@ -441,12 +441,26 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       refreshKey += 1;
 
       unlisten?.();
-      await startRepoWatcher(workdir);
       unlisten = await onRepoChanged(() => {
         refreshKey += 1;
       });
+      await watchRepo(workdir);
     } catch (err) {
       openError = String(err);
+    }
+  }
+
+  // The repo is open either way; a watcher problem only costs live refresh, so it's not an openError.
+  async function watchRepo(workdir: string) {
+    try {
+      const status = await startRepoWatcher(workdir);
+      if (status?.watchLimitReached) {
+        notifyError(
+          "Some folders in this repository aren't watched for changes: the system's file-watch limit (fs.inotify.max_user_watches) is used up.",
+        );
+      }
+    } catch (err) {
+      notifyError(`Couldn't watch this repository for changes: ${String(err)}`);
     }
   }
 

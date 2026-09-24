@@ -4,20 +4,20 @@
 //! Tauri `State<T>` for shared repo handles and caches, held behind `tokio::sync::Mutex`/
 //! `RwLock` (not `std::sync::Mutex`, which is not `Send`-safe across `.await` points).
 
-use notify_debouncer_full::{notify::RecommendedWatcher, Debouncer, RecommendedCache};
 use tokio::sync::Mutex;
 
 use crate::ai::local::{LocalAiCancellation, LocalEngineHandle};
 use crate::graph::GraphSessions;
 use crate::remote::CancellationRegistry;
 use crate::undo::UndoLog;
+use crate::watcher::RepoWatcher;
 
 #[derive(Default)]
 pub struct AppState {
     pub graph_sessions: GraphSessions,
     /// The single repo-directory watcher for the currently open repo, if any. Starting a
     /// new watch (or closing the repo) replaces/clears this, which stops the previous one.
-    pub repo_watcher: Mutex<Option<Debouncer<RecommendedWatcher, RecommendedCache>>>,
+    pub repo_watcher: Mutex<Option<RepoWatcher>>,
     /// Cancellation tokens for in-flight fetch/pull/push, keyed by repo path.
     pub remote_cancellation: CancellationRegistry,
     /// Cancellation tokens for in-flight AI commit-message generation, keyed by repo path — a
