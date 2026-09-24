@@ -12,6 +12,7 @@ import type {
   Hunk,
   RebaseCommitSummary,
   StashEntry,
+  SubmoduleInfo,
   WorktreeInfo,
 } from "./types";
 
@@ -28,6 +29,7 @@ export function makeCommitRow(overrides: Partial<CommitRow> = {}): CommitRow {
     committerTime: 1700000000,
     parents: [],
     isMerge: false,
+    hasSignature: false,
     isLocal: true,
     lane: 0,
     colorId: 0,
@@ -61,6 +63,7 @@ export function makeFileDiff(overrides: Partial<FileDiff> = {}): FileDiff {
     // Matches makeHunk()'s default single addition line.
     insertions: 1,
     deletions: 0,
+    isSubmodule: false,
     ...overrides,
   };
 }
@@ -105,6 +108,22 @@ export function makeWorktreeInfo(overrides: Partial<WorktreeInfo> = {}): Worktre
     isMissing: false,
     isDirty: false,
     isLocked: false,
+    ...overrides,
+  };
+}
+
+export function makeSubmoduleInfo(overrides: Partial<SubmoduleInfo> = {}): SubmoduleInfo {
+  return {
+    name: "vendor/lib",
+    path: "vendor/lib",
+    url: "https://example.com/lib.git",
+    branch: null,
+    isInitialized: true,
+    isMissing: false,
+    isDirty: false,
+    needsUpdate: false,
+    headId: "0".repeat(40),
+    workdirId: "0".repeat(40),
     ...overrides,
   };
 }

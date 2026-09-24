@@ -19,9 +19,11 @@ mod interactive_rebase;
 mod maintenance;
 mod remote;
 pub mod repo;
+mod signing;
 mod stage;
 mod stash;
 mod state;
+mod submodule;
 #[cfg(test)]
 mod test_support;
 mod undo;
@@ -158,6 +160,11 @@ pub fn run() {
         commands::commit,
         commands::head_commit_message,
         commands::commit_message_template,
+        commands::commit_signing_enabled_by_default,
+        commands::signing_config,
+        commands::set_signing_config,
+        commands::verify_commits,
+        commands::list_gpg_secret_keys,
         commands::list_branches,
         commands::list_remote_branches,
         commands::create_branch,
@@ -223,6 +230,7 @@ pub fn run() {
         commands::get_app_config,
         commands::set_max_commits_rendered,
         commands::set_reduce_motion,
+        commands::set_theme,
         commands::set_auto_fetch_enabled,
         commands::set_auto_fetch_interval_minutes,
         commands::set_show_hook_output_always,
@@ -256,6 +264,11 @@ pub fn run() {
         commands::list_worktrees,
         commands::add_worktree,
         commands::remove_worktree,
+        commands::list_submodules,
+        commands::init_submodule,
+        commands::sync_submodule,
+        commands::update_submodule,
+        commands::cancel_submodule_update,
     ])
     .build(tauri::generate_context!())
     .expect("error while running tauri application")

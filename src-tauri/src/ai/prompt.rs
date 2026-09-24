@@ -206,6 +206,7 @@ mod tests {
             hunks,
             insertions: 0,
             deletions: 0,
+            is_submodule: false,
         }
     }
 
@@ -300,6 +301,7 @@ mod tests {
             hunks: Vec::new(),
             insertions: 0,
             deletions: 0,
+            is_submodule: false,
         }];
 
         let text = render_unified_diff(&files);
@@ -320,6 +322,7 @@ mod tests {
             )],
             insertions: 40,
             deletions: 4,
+            is_submodule: false,
         }];
 
         let text = render_unified_diff(&files);
@@ -339,6 +342,7 @@ mod tests {
             hunks: vec![hunk("@@ -1,1 +1,1 @@", vec![(LineOrigin::Addition, "x\n")])],
             insertions: 1,
             deletions: 0,
+            is_submodule: false,
         }];
 
         let text = render_unified_diff(&files);
@@ -384,6 +388,7 @@ mod tests {
                 hunks: huge_lockfile_hunks,
                 insertions: 2500,
                 deletions: 10,
+                is_submodule: false,
             },
             file(
                 "src/real_change.rs",

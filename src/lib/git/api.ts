@@ -26,6 +26,7 @@ import type {
   FileHistoryEntry,
   FinishOutcome,
   GitVersionCheck,
+  GpgSecretKey,
   GraphFilter,
   HookOutputLine,
   Hunk,
@@ -41,8 +42,13 @@ import type {
   RepoHealth,
   RepoState,
   ResetMode,
+  SignFormat,
+  SigningConfigView,
   StashEntry,
+  SubmoduleInfo,
   UndoRedoStatus,
+  VerificationStatus,
+  WatchStatus,
   WorkflowBranchKind,
   WorkflowConfig,
   WorktreeInfo,
@@ -170,13 +176,16 @@ export function unstageLines(
 }
 
 /** `skipHooks` bypasses `pre-commit`/`commit-msg` — real `git commit --no-verify`'s
- *  equivalent. `post-commit` always runs regardless. `onHookOutput`, if given, is called with
- *  each hook output line as it's produced (see `HookOutputModal`). */
+ *  equivalent. `post-commit` always runs regardless. `sign` is an explicit per-commit
+ *  override for the "Sign commit" checkbox — see `commitSigningEnabledByDefault` for what
+ *  prefills it. `onHookOutput`, if given, is called with each hook output line as it's
+ *  produced (see `HookOutputModal`). */
 export function commitChanges(
   repoPath: string,
   message: string,
   amend: boolean,
   skipHooks: boolean,
+  sign: boolean,
   onHookOutput?: (line: HookOutputLine) => void,
 ): Promise<string> {
   return invoke("commit", {
@@ -184,6 +193,7 @@ export function commitChanges(
     message,
     amend,
     skipHooks,
+    sign,
     hookOutput: hookOutputChannel(onHookOutput),
   });
 }
@@ -208,6 +218,61 @@ export function getCommitTemplatePath(repoPath: string): Promise<string | null> 
  *  `.git/config` — not app-owned storage. */
 export function setCommitTemplatePath(repoPath: string, path: string | null): Promise<void> {
   return invoke("set_commit_template_path", { repoPath, path });
+}
+
+/** Whether a fresh commit should default to signed (`commit.gpgsign`), to prefill the
+ *  commit box's "Sign commit" checkbox — the user can still flip it per commit. */
+export function commitSigningEnabledByDefault(repoPath: string): Promise<boolean> {
+  return invoke("commit_signing_enabled_by_default", { repoPath });
+}
+
+/** This repo's real git commit-signing config, for the Settings panel's "Commit signing"
+ *  section. */
+export function signingConfig(repoPath: string): Promise<SigningConfigView> {
+  return invoke("signing_config", { repoPath });
+}
+
+/** Writes this repo's commit-signing config directly to `.git/config` — not app-owned
+ *  storage, so a terminal `git config user.signingkey ...` and this settings panel stay
+ *  interchangeable. */
+export function setSigningConfig(
+  repoPath: string,
+  format: SignFormat,
+  key: string | null,
+  gpgProgram: string | null,
+  sshProgram: string | null,
+  signByDefault: boolean,
+): Promise<SigningConfigView> {
+  return invoke("set_signing_config", {
+    repoPath,
+    format,
+    key,
+    gpgProgram,
+    sshProgram,
+    signByDefault,
+  });
+}
+
+/** Verifies a batch of commits' signatures — call with only the currently-visible page's
+ *  `hasSignature: true` oids (see `CommitRow`), never a whole-history scan. Returns a map
+ *  keyed by oid. */
+export function verifyCommits(
+  repoPath: string,
+  oids: string[],
+): Promise<Record<string, VerificationStatus>> {
+  return invoke("verify_commits", { repoPath, oids });
+}
+
+/** Lists the user's OpenPGP secret keys (`gpg --list-secret-keys`), for the Settings
+ *  panel's "Detect GPG keys" picker. SSH format has no equivalent — a file picker is used
+ *  there instead. */
+export function listGpgSecretKeys(): Promise<GpgSecretKey[]> {
+  return invoke("list_gpg_secret_keys");
+}
+
+/** File (not directory) picker for an SSH signing key — `null` if the user cancels. */
+export function pickSshKeyFile(): Promise<string | null> {
+  return openFolderPicker({ directory: false, multiple: false, title: "Select SSH signing key" });
 }
 
 export function listBranches(repoPath: string): Promise<BranchInfo[]> {
@@ -543,7 +608,7 @@ export function cancelRemoteOperation(repoPath: string): Promise<void> {
   return invoke("cancel_remote_operation", { repoPath });
 }
 
-export function startRepoWatcher(repoPath: string): Promise<void> {
+export function startRepoWatcher(repoPath: string): Promise<WatchStatus> {
   return invoke("start_repo_watcher", { repoPath });
 }
 
@@ -576,6 +641,11 @@ export function setMaxCommitsRendered(value: number): Promise<AppConfig> {
 /** Persists the app-wide "reduce motion" preference, returning the resulting config. */
 export function setReduceMotion(value: boolean): Promise<AppConfig> {
   return invoke("set_reduce_motion", { value });
+}
+
+/** Persists the active built-in theme preset, returning the resulting config. */
+export function setTheme(value: string): Promise<AppConfig> {
+  return invoke("set_theme", { value });
 }
 
 /** Persists whether the periodic auto-fetch timer is enabled, returning the resulting config. */
@@ -770,4 +840,35 @@ export function addWorktree(
  *  directory, leaving the branch it had checked out intact. */
 export function removeWorktree(repoPath: string, name: string): Promise<void> {
   return invoke("remove_worktree", { repoPath, name });
+}
+
+export function listSubmodules(repoPath: string): Promise<SubmoduleInfo[]> {
+  return invoke("list_submodules", { repoPath });
+}
+
+export function initSubmodule(repoPath: string, name: string): Promise<void> {
+  return invoke("init_submodule", { repoPath, name });
+}
+
+export function syncSubmodule(repoPath: string, name: string): Promise<void> {
+  return invoke("sync_submodule", { repoPath, name });
+}
+
+// An undefined name updates every submodule.
+export function updateSubmodule(
+  repoPath: string,
+  name: string | undefined,
+  recursive: boolean,
+  onProgress?: (progress: RemoteProgress) => void,
+): Promise<void> {
+  return invoke("update_submodule", {
+    repoPath,
+    name,
+    recursive,
+    progress: progressChannel(onProgress),
+  });
+}
+
+export function cancelSubmoduleUpdate(repoPath: string): Promise<void> {
+  return invoke("cancel_submodule_update", { repoPath });
 }

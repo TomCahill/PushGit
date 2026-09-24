@@ -185,7 +185,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       <div class="hunk-header">
         <span class="hunk-label">{hunk.header}</span>
         <div class="hunk-actions">
-          {#if onHunkAction}
+          {#if onHunkAction && !file.isSubmodule}
             <button type="button" onclick={() => onHunkAction?.(hunk)}>
               {hunkActionLabel}
             </button>
@@ -203,7 +203,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
               class:addition={line.origin === "addition"}
               class:deletion={line.origin === "deletion"}
             >
-              {#if onLineAction}
+              {#if onLineAction && !file.isSubmodule}
                 <span class="line-checkbox">
                   {#if checkboxGroup}
                     <input

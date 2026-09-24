@@ -15,6 +15,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import MaintenancePanel from "$lib/maintenance/MaintenancePanel.svelte";
   import RemotePanel from "$lib/remote/RemotePanel.svelte";
   import StashPanel from "$lib/stash/StashPanel.svelte";
+  import SubmodulesPanel from "$lib/submodule/SubmodulesPanel.svelte";
   import TagsPanel from "$lib/tags/TagsPanel.svelte";
   import UndoRedoControls from "$lib/undo/UndoRedoControls.svelte";
   import WorkflowPanel from "$lib/workflow/WorkflowPanel.svelte";
@@ -31,6 +32,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     onSearchChange,
     onInteractiveRebase,
     onOpenWorktree,
+    onOpenSubmodule,
   }: {
     repoPath: string;
     refreshKey: number;
@@ -42,11 +44,13 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     onSearchChange: (query: string) => void;
     onInteractiveRebase?: (onto: string, commits: RebaseCommitSummary[]) => void;
     onOpenWorktree: (path: string) => void;
+    onOpenSubmodule: (path: string) => void;
   } = $props();
 
   let currentBranch = $state<string | null>(null);
   let tagCount = $state(0);
   let stashCount = $state(0);
+  let submoduleCount = $state(0);
   let searchQuery = $state("");
   let remoteBusy = $state(false);
   let remoteProgress = $state<RemoteProgress | null>(null);
@@ -101,6 +105,23 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         {onChanged}
         {onApplied}
         onCountChange={(n) => (stashCount = n)}
+      />
+    {/snippet}
+  </Popover>
+
+  <Popover>
+    {#snippet trigger()}
+      <Icon name="folder" size={13} />
+      <span class="trigger-label">Submodules{submoduleCount > 0 ? ` (${submoduleCount})` : ""}</span>
+      <Icon name="chevron-down" size={12} />
+    {/snippet}
+    {#snippet children()}
+      <SubmodulesPanel
+        {repoPath}
+        {refreshKey}
+        {onChanged}
+        onCountChange={(n) => (submoduleCount = n)}
+        onOpen={onOpenSubmodule}
       />
     {/snippet}
   </Popover>

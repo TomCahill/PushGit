@@ -4,6 +4,7 @@
 //! Thin `#[tauri::command]` wrappers over the modules in this crate; owns `spawn_blocking`
 //! dispatch for git2 calls and the `Channel`/progress-streaming plumbing.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use git2::Repository;
@@ -26,9 +27,11 @@ use crate::interactive_rebase::{self, RebaseCommitSummary, RebaseStep};
 use crate::maintenance::{self, RepoHealth};
 use crate::remote::{self, GitVersionCheck, RemoteProgress};
 use crate::repo;
+use crate::signing;
 use crate::stage;
 use crate::stash::{self, StashEntry};
 use crate::state::AppState;
+use crate::submodule::{self, SubmoduleInfo};
 use crate::undo::{OperationSummary, UndoRedoStatus};
 use crate::update_check;
 use crate::watcher;
@@ -221,19 +224,24 @@ pub fn unstage_lines(
 
 /// Commits the current index tree; `amend` rewrites HEAD in place instead of creating a
 /// new commit. `skip_hooks` bypasses `pre-commit`/`commit-msg` (real `git commit
-/// --no-verify`'s equivalent) — see `hooks/mod.rs` and `stage::commit`. `async` + `spawn_blocking`
-/// because a `pre-commit`/`commit-msg` hook can run arbitrary, arbitrarily slow user scripts —
-/// running that synchronously (as a plain non-`async` command) would block the WebView's IPC
-/// dispatch thread, which on Linux/WebKitGTK is the GTK main loop, freezing the whole window.
-/// `hook_output` streams each hook's output lines live as they're produced (see
-/// `hooks::output::stream_command`), so the frontend can show a running transcript instead of
-/// only the final rejection message on failure.
+/// --no-verify`'s equivalent) — see `hooks/mod.rs` and `stage::commit`. `sign` is an
+/// explicit per-commit override for the "Sign commit" checkbox (see
+/// `commit_signing_enabled_by_default` for what prefills it) — always sent explicitly by
+/// the frontend, the same non-`Option` style `skip_hooks` already uses. `async` +
+/// `spawn_blocking` because a `pre-commit`/`commit-msg` hook can run arbitrary, arbitrarily
+/// slow user scripts — running that synchronously (as a plain non-`async` command) would
+/// block the WebView's IPC dispatch thread, which on Linux/WebKitGTK is the GTK main loop,
+/// freezing the whole window. `hook_output` streams each hook's output lines live as
+/// they're produced (see `hooks::output::stream_command`), so the frontend can show a
+/// running transcript instead of only the final rejection message on failure.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn commit(
     repo_path: String,
     message: String,
     amend: bool,
     skip_hooks: bool,
+    sign: bool,
     app: AppHandle,
     hook_output: Channel<HookOutputLine>,
 ) -> PushGitResult<String> {
@@ -245,7 +253,7 @@ pub async fn commit(
     let oid = tokio::task::spawn_blocking(move || {
         let state = app.state::<AppState>();
         with_undo(&state, &repo_path, label, |repo| {
-            stage::commit(repo, &message, amend, skip_hooks, &mut |line| {
+            stage::commit(repo, &message, amend, skip_hooks, sign, &mut |line| {
                 let _ = hook_output.send(line);
             })
         })
@@ -266,6 +274,76 @@ pub fn head_commit_message(repo_path: String) -> PushGitResult<Option<String>> {
 #[tauri::command]
 pub fn commit_message_template(repo_path: String) -> PushGitResult<Option<String>> {
     stage::commit_message_template(&repo::open(Path::new(&repo_path))?)
+}
+
+/// Whether a fresh commit should default to signed, so the commit box's "Sign commit"
+/// checkbox can prefill from `commit.gpgsign` — the user can still flip it per commit.
+#[tauri::command]
+pub fn commit_signing_enabled_by_default(repo_path: String) -> PushGitResult<bool> {
+    signing::should_sign(&repo::open(Path::new(&repo_path))?, None)
+}
+
+/// This repo's real git commit-signing config (`gpg.format`/`user.signingkey`/
+/// `gpg.program`/`gpg.ssh.program`/`commit.gpgsign`), for the Settings panel's "Commit
+/// signing" section.
+#[tauri::command]
+pub fn signing_config(repo_path: String) -> PushGitResult<signing::SigningConfigView> {
+    signing::config_view(&repo::open(Path::new(&repo_path))?)
+}
+
+/// Writes this repo's commit-signing config — see `signing::set_signing_config`. Real git
+/// config, not a PushGit-side store: a terminal `git config user.signingkey ...` and this
+/// settings panel stay interchangeable.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub fn set_signing_config(
+    repo_path: String,
+    format: signing::SignFormat,
+    key: Option<String>,
+    gpg_program: Option<String>,
+    ssh_program: Option<String>,
+    sign_by_default: bool,
+) -> PushGitResult<signing::SigningConfigView> {
+    let repo = repo::open(Path::new(&repo_path))?;
+    signing::set_signing_config(
+        &repo,
+        format,
+        key.as_deref(),
+        gpg_program.as_deref(),
+        ssh_program.as_deref(),
+        sign_by_default,
+    )?;
+    signing::config_view(&repo)
+}
+
+/// Verifies a batch of commits' signatures, called once per fetched graph page with only
+/// that page's `hasSignature: true` oids (`graph::model::CommitRow`) — never a
+/// whole-history scan. `async` + `spawn_blocking` since each verification shells out to
+/// real `git verify-commit`.
+#[tauri::command]
+pub async fn verify_commits(
+    repo_path: String,
+    oids: Vec<String>,
+) -> PushGitResult<HashMap<String, signing::VerificationStatus>> {
+    tokio::task::spawn_blocking(move || {
+        let repo = repo::open(Path::new(&repo_path))?;
+        let mut results = HashMap::new();
+        for oid in oids {
+            let status = signing::verify_commit(&repo, &oid)?;
+            results.insert(oid, status);
+        }
+        Ok(results)
+    })
+    .await
+    .map_err(|e| PushGitError::Invalid(format!("verify_commits task panicked: {e}")))?
+}
+
+/// Shells to `gpg --list-secret-keys --with-colons` to populate the Settings panel's
+/// "Detect GPG keys" dropdown — OpenPGP format only, there's no equivalent primitive for
+/// SSH signing keys (the UI offers a file picker for those instead).
+#[tauri::command]
+pub fn list_gpg_secret_keys() -> PushGitResult<Vec<signing::GpgSecretKey>> {
+    signing::list_gpg_secret_keys()
 }
 
 /// Local branches with ahead/behind counts against their upstream, if any.
@@ -974,7 +1052,8 @@ pub async fn cancel_remote_operation(
 
 #[tauri::command]
 pub async fn clone_repository(url: String, dest: String) -> PushGitResult<()> {
-    remote::clone(&url, Path::new(&dest)).await
+    let needs_symlink_mitigation = remote::clone_needs_symlink_mitigation().await;
+    remote::clone(&url, Path::new(&dest), needs_symlink_mitigation).await
 }
 
 #[tauri::command]
@@ -1052,12 +1131,16 @@ pub async fn start_repo_watcher(
     repo_path: String,
     app: AppHandle,
     state: State<'_, AppState>,
-) -> PushGitResult<()> {
-    let debouncer = watcher::start_watching(Path::new(&repo_path), move || {
+) -> PushGitResult<watcher::WatchStatus> {
+    let mut current = state.repo_watcher.lock().await;
+    // Released first: the old repo's watches count against the same OS limit as the new one's.
+    *current = None;
+    let repo_watcher = watcher::start_watching(Path::new(&repo_path), move || {
         let _ = app.emit("repo-changed", ());
     })?;
-    *state.repo_watcher.lock().await = Some(debouncer);
-    Ok(())
+    let status = repo_watcher.status();
+    *current = Some(repo_watcher);
+    Ok(status)
 }
 
 /// Stops watching, e.g. when the frontend closes the current repo.
@@ -1095,6 +1178,19 @@ pub fn set_max_commits_rendered(value: u32) -> config::AppConfig {
 pub fn set_reduce_motion(value: bool) -> config::AppConfig {
     let config = config::AppConfig {
         reduce_motion: value,
+        ..config::load_app_config()
+    };
+    config::save_app_config(&config);
+    config
+}
+
+/// Persists the active built-in theme preset, returning the resulting config. Normalizes an
+/// unrecognized `value` back to the default theme rather than erroring — see
+/// `config::normalize_theme` and `.private/feature/theme-presets/PLAN.md`.
+#[tauri::command]
+pub fn set_theme(value: String) -> config::AppConfig {
+    let config = config::AppConfig {
+        theme: config::normalize_theme(value),
         ..config::load_app_config()
     };
     config::save_app_config(&config);
@@ -1501,4 +1597,70 @@ pub async fn remove_worktree(repo_path: String, name: String) -> PushGitResult<(
     })
     .await
     .map_err(|e| PushGitError::Invalid(format!("remove_worktree task panicked: {e}")))?
+}
+
+#[tauri::command]
+pub async fn list_submodules(repo_path: String) -> PushGitResult<Vec<SubmoduleInfo>> {
+    tokio::task::spawn_blocking(move || {
+        submodule::list_submodules(&repo::open(Path::new(&repo_path))?)
+    })
+    .await
+    .map_err(|e| PushGitError::Invalid(format!("list_submodules task panicked: {e}")))?
+}
+
+#[tauri::command]
+pub async fn init_submodule(repo_path: String, name: String) -> PushGitResult<()> {
+    tokio::task::spawn_blocking(move || {
+        submodule::init_submodule(&repo::open(Path::new(&repo_path))?, &name)
+    })
+    .await
+    .map_err(|e| PushGitError::Invalid(format!("init_submodule task panicked: {e}")))?
+}
+
+#[tauri::command]
+pub async fn sync_submodule(repo_path: String, name: String) -> PushGitResult<()> {
+    tokio::task::spawn_blocking(move || {
+        submodule::sync_submodule(&repo::open(Path::new(&repo_path))?, &name)
+    })
+    .await
+    .map_err(|e| PushGitError::Invalid(format!("sync_submodule task panicked: {e}")))?
+}
+
+#[tauri::command]
+pub async fn update_submodule(
+    repo_path: String,
+    name: Option<String>,
+    recursive: bool,
+    progress: Channel<RemoteProgress>,
+    state: State<'_, AppState>,
+) -> PushGitResult<()> {
+    let cancel = state
+        .submodule_cancellation
+        .register(Path::new(&repo_path))
+        .await;
+    // An unparseable git version counts as unpatched, keeping the symlink mitigation on.
+    let git_is_patched = remote::check_git_version()
+        .await
+        .is_ok_and(|check| check.is_patched);
+    submodule::update_submodule(
+        Path::new(&repo_path),
+        name.as_deref(),
+        recursive,
+        git_is_patched,
+        &progress,
+        &cancel,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn cancel_submodule_update(
+    repo_path: String,
+    state: State<'_, AppState>,
+) -> PushGitResult<()> {
+    state
+        .submodule_cancellation
+        .cancel(Path::new(&repo_path))
+        .await;
+    Ok(())
 }

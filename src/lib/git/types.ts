@@ -39,6 +39,10 @@ export interface CommitRow {
   committerTime: number;
   parents: string[];
   isMerge: boolean;
+  /** Whether this commit carries a `gpgsig` header — cheap, not verification. Use this to
+   *  decide which oids are worth batching into a `verifyCommits` call. Always `false` for
+   *  `kind !== "commit"`. */
+  hasSignature: boolean;
   /** `false` for a commit only reachable via a local branch's ahead-of-local upstream — a
    *  fetched but not-yet-pulled commit. Always `true` for `kind !== "commit"`. */
   isLocal: boolean;
@@ -106,6 +110,7 @@ export interface FileDiff {
   hunks: Hunk[];
   insertions: number;
   deletions: number;
+  isSubmodule: boolean;
 }
 
 /** What a file-list panel (`StagingPanel`, `CommitDiffView`) reports up to the shell
@@ -314,10 +319,16 @@ export interface AppConfig {
   checkForUpdatesEnabled: boolean;
   dismissedUpdateVersion: string | null;
   externalTools: ExternalToolsSettings;
+  theme: string;
 }
 
 export interface RepoConfig {
   defaultSkipHooks: boolean;
+}
+
+// Mirror of `src-tauri/src/watcher/mod.rs::WatchStatus`.
+export interface WatchStatus {
+  watchLimitReached: boolean;
 }
 
 // Mirror of `src-tauri/src/config/mod.rs::ExternalToolsSettings`.
@@ -328,15 +339,37 @@ export interface ExternalToolsSettings {
 
 // Mirror of `src-tauri/src/external_tools/mod.rs::DiffSide`.
 export type DiffSide =
-  | { kind: "empty" }
-  | { kind: "workdir" }
-  | { kind: "index" }
-  | { kind: "commit"; rev: string };
+  { kind: "empty" } | { kind: "workdir" } | { kind: "index" } | { kind: "commit"; rev: string };
 
 // Mirror of `src-tauri/src/diff/preview.rs::BinaryPreview`.
 export type BinaryPreview =
-  | { kind: "content"; base64: string; byteLen: number }
-  | { kind: "tooLarge"; byteLen: number };
+  { kind: "content"; base64: string; byteLen: number } | { kind: "tooLarge"; byteLen: number };
+
+// Mirror of `src-tauri/src/signing/mod.rs`.
+export type SignFormat = "openpgp" | "ssh";
+
+export interface SigningConfigView {
+  format: SignFormat;
+  key: string | null;
+  gpgProgram: string | null;
+  sshProgram: string | null;
+  signByDefault: boolean;
+}
+
+export interface GpgSecretKey {
+  keyId: string;
+  userId: string;
+}
+
+/** `git verify-commit`'s result for one commit — `unsigned` when `CommitRow.hasSignature`
+ *  is already `false`, otherwise the actual verification outcome. */
+export type VerificationStatus =
+  | { status: "unsigned" }
+  | { status: "good"; signer: string }
+  | { status: "bad" }
+  | { status: "unknownKey" }
+  | { status: "noAllowedSigners" }
+  | { status: "error"; message: string };
 
 // Mirror of `src-tauri/src/worktree/mod.rs::WorktreeInfo`.
 export interface WorktreeInfo {
@@ -347,4 +380,18 @@ export interface WorktreeInfo {
   isMissing: boolean;
   isDirty: boolean;
   isLocked: boolean;
+}
+
+// Mirror of `src-tauri/src/submodule/mod.rs::SubmoduleInfo`.
+export interface SubmoduleInfo {
+  name: string;
+  path: string;
+  url: string | null;
+  branch: string | null;
+  isInitialized: boolean;
+  isMissing: boolean;
+  isDirty: boolean;
+  needsUpdate: boolean;
+  headId: string | null;
+  workdirId: string | null;
 }

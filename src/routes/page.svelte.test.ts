@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { describe, expect, it } from "vitest";
-import { fireEvent, render } from "@testing-library/svelte";
+import { fireEvent, render, within } from "@testing-library/svelte";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import Page from "./+page.svelte";
 import { makeCommitRow, makeFileDiff } from "$lib/git/testFixtures";
@@ -292,5 +292,65 @@ describe("app shell", () => {
 
     const alert = await findByRole("alert");
     expect(alert.textContent).toContain("not a git repository");
+  });
+
+  function mockOpenableRepo(startRepoWatcher: () => unknown) {
+    mockIPC((cmd) => {
+      switch (cmd) {
+        case "plugin:dialog|open":
+        case "open_repository":
+          return "/repo";
+        case "start_repo_watcher":
+          return startRepoWatcher();
+        case "graph_open":
+          return "session-1";
+        case "graph_page":
+          return {
+            rows: [makeCommitRow({ oid: "a", shortOid: "aaaaaaa", summary: "Initial commit" })],
+            hasMore: false,
+          };
+        case "diff_unstaged":
+        case "diff_staged":
+        case "list_branches":
+        case "list_conflicts":
+          return [];
+        case "repository_state":
+          return "clean";
+        case "plugin:event|listen":
+          return 1;
+        case "graph_close":
+        case "plugin:event|unlisten":
+        case "stop_repo_watcher":
+          return null;
+        default:
+          throw new Error(`unexpected command ${cmd}`);
+      }
+    });
+  }
+
+  it("opens the repo but warns with a toast when the OS file-watch limit is used up", async () => {
+    mockOpenableRepo(() => ({ watchLimitReached: true }));
+
+    const { getByTitle, getByRole, findByText, findAllByText } = render(Page);
+    await fireEvent.click(getByTitle("Open a repository"));
+
+    expect(await findByText("Initial commit")).toBeTruthy();
+    expect(await findAllByText(/file-watch limit/)).not.toHaveLength(0);
+    const repoRail = getByRole("complementary", { name: "Repositories" });
+    expect(within(repoRail).queryByRole("alert")).toBeNull();
+  });
+
+  it("still opens the repo when the watcher can't start", async () => {
+    mockOpenableRepo(() => {
+      throw "inotify init failed";
+    });
+
+    const { getByTitle, getByRole, findByText, findAllByText } = render(Page);
+    await fireEvent.click(getByTitle("Open a repository"));
+
+    expect(await findByText("Initial commit")).toBeTruthy();
+    expect(await findAllByText(/Couldn't watch this repository for changes/)).not.toHaveLength(0);
+    const repoRail = getByRole("complementary", { name: "Repositories" });
+    expect(within(repoRail).queryByRole("alert")).toBeNull();
   });
 });

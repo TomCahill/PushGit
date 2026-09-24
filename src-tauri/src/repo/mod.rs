@@ -4,6 +4,7 @@
 //! Repository discovery and open, multi-repo/tab session management, and `.git` state
 //! (HEAD, current branch, detached-HEAD state).
 
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use git2::Repository;
@@ -30,6 +31,16 @@ pub fn workdir_of(path: &Path) -> PushGitResult<PathBuf> {
 /// (`rebase-merge`, `CHERRY_PICK_HEAD`) `git2` has no query for directly.
 pub fn git_dir_of(path: &Path) -> PushGitResult<PathBuf> {
     Ok(open(path)?.path().to_path_buf())
+}
+
+/// libgit2's `git_repository_commondir()`, which `git2` doesn't bind.
+pub fn common_dir(repo: &Repository) -> PathBuf {
+    let git_dir = repo.path();
+    let Ok(link) = fs::read_to_string(git_dir.join("commondir")) else {
+        return git_dir.to_path_buf();
+    };
+    let common_dir = git_dir.join(link.trim());
+    common_dir.canonicalize().unwrap_or(common_dir)
 }
 
 #[cfg(test)]
@@ -59,5 +70,27 @@ mod tests {
     fn errors_on_a_non_repository_path() {
         let dir = tempfile::TempDir::new().unwrap();
         assert!(open(dir.path()).is_err());
+    }
+
+    #[test]
+    fn a_plain_repos_common_dir_is_its_git_dir() {
+        let (_dir, repo) = repo_init();
+        assert_eq!(common_dir(&repo), repo.path());
+    }
+
+    #[test]
+    fn a_linked_worktrees_common_dir_is_the_main_git_dir() {
+        let (_dir, repo) = repo_init();
+        crate::branch::create_branch(&repo, "feature", None).unwrap();
+        let wt_parent = tempfile::TempDir::new().unwrap();
+        let wt_path = wt_parent.path().join("feature-wt");
+        crate::worktree::add_worktree(&repo, "feature", None, &wt_path).unwrap();
+        let wt_repo = Repository::open(&wt_path).unwrap();
+
+        assert_eq!(common_dir(&wt_repo), repo.path());
+
+        // libgit2 writes an absolute link; the git CLI writes this relative one.
+        fs::write(wt_repo.path().join("commondir"), "../..\n").unwrap();
+        assert_eq!(common_dir(&wt_repo), repo.path());
     }
 }

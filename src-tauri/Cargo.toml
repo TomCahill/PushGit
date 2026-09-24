@@ -1,6 +1,6 @@
 [package]
 name = "pushgit"
-version = "1.5.0"
+version = "1.6.0"
 description = "A fast, lightweight git GUI with a proper visual commit graph."
 authors = ["Tom Cahill"]
 license = "AGPL-3.0-or-later"
@@ -30,7 +30,6 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt", "sync", "macros", "process", "time", "fs"] }
 git2 = "0.19"
 notify = "7"
-notify-debouncer-full = "0.4"
 directories = "5"
 thiserror = "2"
 tauri-plugin-wdio = { version = "1", optional = true }

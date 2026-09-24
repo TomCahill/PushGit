@@ -687,6 +687,97 @@ describe("StagingPanel", () => {
     await waitFor(() => expect(skipHooksCheckbox.checked).toBe(true));
   });
 
+  it("passes sign through when the checkbox is checked, and resets it after committing", async () => {
+    const commitCalls: unknown[] = [];
+    mockIPC((cmd, args) => {
+      switch (cmd) {
+        case "diff_unstaged":
+          return [];
+        case "diff_staged":
+          return [makeFileDiff({ newPath: "a.txt" })];
+        case "commit_signing_enabled_by_default":
+          return false;
+        case "commit": {
+          // `hookOutput` is a mock Channel object (non-deterministic id), so it's excluded
+          // from what gets asserted on below — same pattern as `RemotePanel`'s tests.
+          const { repoPath, message, amend, skipHooks, sign } = args as {
+            repoPath: string;
+            message: string;
+            amend: boolean;
+            skipHooks: boolean;
+            sign: boolean;
+          };
+          commitCalls.push({ repoPath, message, amend, skipHooks, sign });
+          return "deadbeef";
+        }
+        default:
+          throw new Error(`unexpected command ${cmd}`);
+      }
+    });
+
+    const { findByLabelText, getByRole } = render(StagingPanel, {
+      props: { repoPath: "/repo", refreshKey: 0 },
+    });
+
+    const titleInput = (await findByLabelText("Commit title")) as HTMLInputElement;
+    await fireEvent.input(titleInput, { target: { value: "fix the bug" } });
+    const signCheckbox = getByRole("checkbox", { name: "Sign commit" }) as HTMLInputElement;
+    await fireEvent.click(signCheckbox);
+    await fireEvent.click(getByRole("button", { name: "Commit" }));
+
+    await waitFor(() => expect(commitCalls).toHaveLength(1));
+    expect(commitCalls).toEqual([
+      { repoPath: "/repo", message: "fix the bug", amend: false, skipHooks: false, sign: true },
+    ]);
+    await waitFor(() => expect(signCheckbox.checked).toBe(false));
+  });
+
+  it("initializes the sign-commit checkbox from commit.gpgsign, and resets to it after committing", async () => {
+    const commitCalls: unknown[] = [];
+    mockIPC((cmd, args) => {
+      switch (cmd) {
+        case "diff_unstaged":
+          return [];
+        case "diff_staged":
+          return [makeFileDiff({ newPath: "a.txt" })];
+        case "commit_signing_enabled_by_default":
+          return true;
+        case "commit": {
+          const { repoPath, message, amend, skipHooks, sign } = args as {
+            repoPath: string;
+            message: string;
+            amend: boolean;
+            skipHooks: boolean;
+            sign: boolean;
+          };
+          commitCalls.push({ repoPath, message, amend, skipHooks, sign });
+          return "deadbeef";
+        }
+        default:
+          throw new Error(`unexpected command ${cmd}`);
+      }
+    });
+
+    const { findByLabelText, getByRole } = render(StagingPanel, {
+      props: { repoPath: "/repo", refreshKey: 0 },
+    });
+
+    const signCheckbox = await waitFor(
+      () => getByRole("checkbox", { name: "Sign commit" }) as HTMLInputElement,
+    );
+    await waitFor(() => expect(signCheckbox.checked).toBe(true));
+
+    const titleInput = (await findByLabelText("Commit title")) as HTMLInputElement;
+    await fireEvent.input(titleInput, { target: { value: "fix the bug" } });
+    await fireEvent.click(getByRole("button", { name: "Commit" }));
+
+    await waitFor(() => expect(commitCalls).toHaveLength(1));
+    expect(commitCalls).toEqual([
+      { repoPath: "/repo", message: "fix the bug", amend: false, skipHooks: false, sign: true },
+    ]);
+    await waitFor(() => expect(signCheckbox.checked).toBe(true));
+  });
+
   it("doesn't let a slow-loading repo default clobber a skip-hooks checkbox the user already toggled", async () => {
     let resolveRepoConfig!: (config: { defaultSkipHooks: boolean }) => void;
     mockIPC((cmd) => {
@@ -950,7 +1041,9 @@ describe("StagingPanel", () => {
         case "diff_staged":
           return [];
         default:
-          throw new Error(`unexpected command ${cmd} — cancelling should make no other backend call`);
+          throw new Error(
+            `unexpected command ${cmd} — cancelling should make no other backend call`,
+          );
       }
     });
 
@@ -1070,6 +1163,96 @@ describe("StagingPanel", () => {
 
     const alert = await findByRole("alert");
     expect(alert.textContent).toContain("not a repository");
+  });
+
+  describe("submodule rows", () => {
+    it("drops diff, blame and stash from an unstaged submodule's menu, and disables discard", async () => {
+      mockIPC((cmd) => {
+        switch (cmd) {
+          case "diff_unstaged":
+            return [makeFileDiff({ newPath: "vendor/lib", isSubmodule: true })];
+          case "diff_staged":
+            return [];
+          default:
+            throw new Error(`unexpected command ${cmd}`);
+        }
+      });
+
+      render(ConfirmDialog);
+      render(ContextMenu);
+      const { findByRole, findByText, queryByRole } = render(StagingPanel, {
+        props: { repoPath: "/repo", refreshKey: 0, onBlame: vi.fn() },
+      });
+
+      await fireEvent.contextMenu(await findByText("vendor/lib"));
+
+      expect(await findByRole("menuitem", { name: "Copy file path" })).toBeTruthy();
+      expect(queryByRole("menuitem", { name: "Open in external diff tool" })).toBeNull();
+      expect(queryByRole("menuitem", { name: "Blame" })).toBeNull();
+      expect(queryByRole("menuitem", { name: "Stash" })).toBeNull();
+      const discard = (await findByRole("menuitem", {
+        name: "Discard changes",
+      })) as HTMLButtonElement;
+      expect(discard.disabled).toBe(true);
+      expect(discard.title).toBe(
+        "Use Update in the toolbar's Submodules menu to restore the recorded commit, or Open to discard changes inside it",
+      );
+
+      await fireEvent.click(discard);
+      expect(queryByRole("alertdialog")).toBeNull();
+    });
+
+    it("drops the external diff tool from a staged submodule's menu", async () => {
+      mockIPC((cmd) => {
+        switch (cmd) {
+          case "diff_unstaged":
+            return [];
+          case "diff_staged":
+            return [makeFileDiff({ newPath: "vendor/lib", isSubmodule: true })];
+          default:
+            throw new Error(`unexpected command ${cmd}`);
+        }
+      });
+
+      render(ContextMenu);
+      const { findByRole, findByText, queryByRole } = render(StagingPanel, {
+        props: { repoPath: "/repo", refreshKey: 0 },
+      });
+
+      await fireEvent.contextMenu(await findByText("vendor/lib"));
+
+      expect(await findByRole("menuitem", { name: "Copy file path" })).toBeTruthy();
+      expect(queryByRole("menuitem", { name: "Open in external diff tool" })).toBeNull();
+    });
+
+    it("still stages and unstages a submodule row as a whole file", async () => {
+      const calls: [string, unknown][] = [];
+      mockIPC((cmd, args) => {
+        switch (cmd) {
+          case "diff_unstaged":
+          case "diff_staged":
+            return [makeFileDiff({ newPath: "vendor/lib", isSubmodule: true })];
+          case "stage_file":
+          case "unstage_file":
+            calls.push([cmd, args]);
+            return null;
+          default:
+            throw new Error(`unexpected command ${cmd}`);
+        }
+      });
+
+      const { findByTitle } = render(StagingPanel, { props: { repoPath: "/repo", refreshKey: 0 } });
+
+      await fireEvent.click(await findByTitle("Stage"));
+      await fireEvent.click(await findByTitle("Unstage"));
+
+      await waitFor(() =>
+        expect(calls).toEqual([
+          ["stage_file", { repoPath: "/repo", path: "vendor/lib" }],
+          ["unstage_file", { repoPath: "/repo", path: "vendor/lib" }],
+        ]),
+      );
+    });
   });
 
   describe("Generate with AI", () => {

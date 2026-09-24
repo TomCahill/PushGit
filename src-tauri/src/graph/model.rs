@@ -67,6 +67,13 @@ pub struct CommitRow {
     /// `parents[0]` is first-parent.
     pub parents: Vec<String>,
     pub is_merge: bool,
+    /// Whether this commit carries a `gpgsig` header — a cheap `git2`-only check (no
+    /// subprocess), set for free during this same per-commit walk. This is *not*
+    /// verification (a signature can still fail to verify) — it's only enough for the
+    /// frontend to know which rows are worth batching into a `verify_commits` call. Always
+    /// `false` for `Workdir`/`Stash` synthetic rows, neither of which is a real commit with
+    /// a signature to check.
+    pub has_signature: bool,
     /// `true` if reachable from a local ref (`HEAD` or `refs/heads/*`); `false` if only
     /// reachable via a local branch's configured upstream that's ahead of it — a fetched but
     /// not-yet-pulled commit. Always `true` for `RowKind::Workdir`/`Stash`, both of which are

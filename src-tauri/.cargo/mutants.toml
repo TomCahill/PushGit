@@ -11,6 +11,7 @@ examine_globs = [
     "src/branch/*.rs",
     "src/stash/*.rs",
     "src/worktree/*.rs",
+    "src/submodule/*.rs",
 ]
 
 # Test-only fixture helper, never compiled into the shipped binary — nothing in it needs

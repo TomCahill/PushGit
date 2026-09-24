@@ -14,7 +14,7 @@ mod version;
 
 pub use cancellation::CancellationRegistry;
 pub use progress::{parse_progress_line, RemoteProgress};
-pub use version::{check_git_version, GitVersionCheck};
+pub use version::{check_git_version, clone_needs_symlink_mitigation, GitVersionCheck};
 
 use std::path::Path;
 use std::process::Stdio;
@@ -106,7 +106,7 @@ pub(crate) async fn run_git_capturing_output(
 /// whatever the hook prints. So this is really "live raw stderr for the operation", a superset
 /// that happens to include the hook's lines, not an isolated hook transcript. `None` for
 /// `fetch`, which runs no hook worth showing this way.
-async fn run_git_streaming(
+pub(crate) async fn run_git_streaming(
     args: &[&str],
     cwd: Option<&Path>,
     progress: &Channel<RemoteProgress>,
@@ -298,13 +298,22 @@ pub async fn push(
     run_git_streaming(&args, Some(repo_path), progress, Some(hook_output), cancel).await
 }
 
-/// Clones `url` into `dest`, which must not already exist.
-pub async fn clone(url: &str, dest: &Path) -> PushGitResult<()> {
+/// Clones `url` into `dest`, which must not already exist. `needs_symlink_mitigation` gates
+/// the CVE-2021-21300 `core.symlinks=false` workaround: it corrupts committed symlinks into
+/// plain files (leaving the fresh clone dirty), so it's applied only on git old enough to
+/// still be vulnerable. Non-recursive clone is not a CVE-2024-32002 vector, so that CVE
+/// doesn't factor in here.
+pub async fn clone(url: &str, dest: &Path, needs_symlink_mitigation: bool) -> PushGitResult<()> {
     let dest_str = dest
         .to_str()
         .ok_or_else(|| PushGitError::Invalid("destination path is not valid UTF-8".to_string()))?;
 
-    run_git(&["-c", "core.symlinks=false", "clone", url, dest_str], None).await?;
+    let mut args = Vec::new();
+    if needs_symlink_mitigation {
+        args.extend(["-c", "core.symlinks=false"]);
+    }
+    args.extend(["clone", url, dest_str]);
+    run_git(&args, None).await?;
     Ok(())
 }
 
@@ -316,8 +325,20 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path as StdPath;
 
+    const MITIGATE_SYMLINKS: bool = true;
+    const ALLOW_SYMLINKS: bool = false;
+
     fn commit_file(repo: &git2::Repository, name: &str, content: &str) -> git2::Oid {
         fs::write(repo.workdir().unwrap().join(name), content).unwrap();
+        commit_indexed(repo, name)
+    }
+
+    fn commit_symlink(repo: &git2::Repository, name: &str, target: &str) -> git2::Oid {
+        std::os::unix::fs::symlink(target, repo.workdir().unwrap().join(name)).unwrap();
+        commit_indexed(repo, name)
+    }
+
+    fn commit_indexed(repo: &git2::Repository, name: &str) -> git2::Oid {
         let mut index = repo.index().unwrap();
         index.add_path(StdPath::new(name)).unwrap();
         index.write().unwrap();
@@ -354,12 +375,63 @@ mod tests {
         let dest = tempfile::TempDir::new().unwrap();
         let dest_path = dest.path().join("clone");
 
-        clone(origin_dir.path().to_str().unwrap(), &dest_path)
-            .await
-            .unwrap();
+        clone(
+            origin_dir.path().to_str().unwrap(),
+            &dest_path,
+            ALLOW_SYMLINKS,
+        )
+        .await
+        .unwrap();
 
         assert!(dest_path.join("a.txt").exists());
         assert!(dest_path.join(".git").exists());
+    }
+
+    #[tokio::test]
+    async fn clone_preserves_symlinks_and_stays_clean_when_mitigation_is_off() {
+        let (origin_dir, origin_repo) = repo_init();
+        commit_file(&origin_repo, "target.txt", "hi\n");
+        commit_symlink(&origin_repo, "link", "target.txt");
+
+        let dest = tempfile::TempDir::new().unwrap();
+        let dest_path = dest.path().join("clone");
+        clone(
+            origin_dir.path().to_str().unwrap(),
+            &dest_path,
+            ALLOW_SYMLINKS,
+        )
+        .await
+        .unwrap();
+
+        let link = fs::symlink_metadata(dest_path.join("link")).unwrap();
+        assert!(link.file_type().is_symlink());
+        let status = run_git(&["status", "--short"], Some(&dest_path))
+            .await
+            .unwrap();
+        assert!(
+            status.trim().is_empty(),
+            "expected a clean clone, got status: {status:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn clone_writes_symlinks_as_plain_files_when_mitigation_is_on() {
+        let (origin_dir, origin_repo) = repo_init();
+        commit_file(&origin_repo, "target.txt", "hi\n");
+        commit_symlink(&origin_repo, "link", "target.txt");
+
+        let dest = tempfile::TempDir::new().unwrap();
+        let dest_path = dest.path().join("clone");
+        clone(
+            origin_dir.path().to_str().unwrap(),
+            &dest_path,
+            MITIGATE_SYMLINKS,
+        )
+        .await
+        .unwrap();
+
+        let link = fs::symlink_metadata(dest_path.join("link")).unwrap();
+        assert!(link.file_type().is_file());
     }
 
     #[tokio::test]
@@ -368,7 +440,7 @@ mod tests {
         let remote_url = remote_dir.path().to_str().unwrap();
 
         let dest_a = tempfile::TempDir::new().unwrap().keep();
-        clone(remote_url, &dest_a).await.unwrap();
+        clone(remote_url, &dest_a, ALLOW_SYMLINKS).await.unwrap();
         let repo_a = crate::repo::open(&dest_a).unwrap();
         set_test_identity(&repo_a);
         // A fresh clone of an empty bare repo starts with an unborn HEAD; give it a first
@@ -398,7 +470,7 @@ mod tests {
         .unwrap();
 
         let dest_b = tempfile::TempDir::new().unwrap().keep();
-        clone(remote_url, &dest_b).await.unwrap();
+        clone(remote_url, &dest_b, ALLOW_SYMLINKS).await.unwrap();
         assert!(dest_b.join("seed.txt").exists());
 
         // dest_a pushes a new commit; dest_b should be able to fetch it.
@@ -460,7 +532,7 @@ mod tests {
         .unwrap();
 
         let dest_b = tempfile::TempDir::new().unwrap().keep();
-        clone(remote_url, &dest_b).await.unwrap();
+        clone(remote_url, &dest_b, ALLOW_SYMLINKS).await.unwrap();
         let repo_b = crate::repo::open(&dest_b).unwrap();
         let mut local_branch = repo_b.find_branch(&head_name, BranchType::Local).unwrap();
         local_branch
@@ -520,7 +592,7 @@ mod tests {
         .unwrap();
 
         let dest_b = tempfile::TempDir::new().unwrap().keep();
-        clone(remote_url, &dest_b).await.unwrap();
+        clone(remote_url, &dest_b, ALLOW_SYMLINKS).await.unwrap();
         let repo_b = crate::repo::open(&dest_b).unwrap();
         let mut local_branch = repo_b.find_branch(&head_name, BranchType::Local).unwrap();
         local_branch
@@ -723,7 +795,7 @@ mod tests {
         let remote_dir = bare_remote();
         let remote_url = remote_dir.path().to_str().unwrap();
         let dest = tempfile::TempDir::new().unwrap().keep();
-        clone(remote_url, &dest).await.unwrap();
+        clone(remote_url, &dest, ALLOW_SYMLINKS).await.unwrap();
 
         let (progress, _) = no_op_progress();
         let cancel = Arc::new(AtomicBool::new(true)); // already cancelled before starting

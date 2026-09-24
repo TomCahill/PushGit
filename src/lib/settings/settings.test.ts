@@ -20,6 +20,7 @@ import {
   setMaxCommitsRendered,
   setReduceMotion,
   setShowHookOutputAlways,
+  setTheme,
   settingsState,
 } from "./settings.svelte";
 import type { AiSettings, ExternalToolsSettings } from "$lib/git/types";
@@ -39,6 +40,7 @@ describe("settingsState", () => {
   beforeEach(() => {
     settingsState.maxCommitsRendered = DEFAULT_MAX_COMMITS_RENDERED;
     settingsState.reduceMotion = false;
+    settingsState.theme = "default";
     settingsState.ai = { ...DEFAULT_AI_SETTINGS };
     settingsState.autoFetchEnabled = false;
     settingsState.autoFetchIntervalMinutes = DEFAULT_AUTO_FETCH_INTERVAL_MINUTES;
@@ -60,6 +62,7 @@ describe("settingsState", () => {
         return {
           maxCommitsRendered: 1000,
           reduceMotion: true,
+          theme: "solarized",
           ai,
           autoFetchEnabled: true,
           autoFetchIntervalMinutes: 15,
@@ -77,6 +80,7 @@ describe("settingsState", () => {
 
     expect(settingsState.maxCommitsRendered).toBe(1000);
     expect(settingsState.reduceMotion).toBe(true);
+    expect(settingsState.theme).toBe("solarized");
     expect(settingsState.ai).toEqual(ai);
     expect(settingsState.autoFetchEnabled).toBe(true);
     expect(settingsState.autoFetchIntervalMinutes).toBe(15);
@@ -116,6 +120,20 @@ describe("settingsState", () => {
     await setReduceMotion(true);
 
     expect(settingsState.reduceMotion).toBe(true);
+  });
+
+  it("setTheme persists through the backend and updates settingsState from its (normalized) response", async () => {
+    mockIPC((cmd, args) => {
+      if (cmd === "set_theme") {
+        expect(args).toEqual({ value: "github" });
+        return { maxCommitsRendered: DEFAULT_MAX_COMMITS_RENDERED, reduceMotion: false, theme: "github" };
+      }
+      throw new Error(`unexpected command ${cmd}`);
+    });
+
+    await setTheme("github");
+
+    expect(settingsState.theme).toBe("github");
   });
 
   it("setAutoFetchEnabled persists through the backend and updates settingsState from its response", async () => {

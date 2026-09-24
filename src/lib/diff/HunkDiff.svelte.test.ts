@@ -100,6 +100,46 @@ describe("HunkDiff", () => {
     expect(onHunkAction).toHaveBeenCalledWith(hunk);
   });
 
+  it("renders a submodule's synthetic subproject-commit hunk as plain text, not a placeholder", async () => {
+    const hunk = makeHunk({
+      header: "@@ -1 +1 @@",
+      lines: [
+        {
+          origin: "deletion",
+          content: "Subproject commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          oldLineno: 1,
+          newLineno: null,
+        },
+        {
+          origin: "addition",
+          content: "Subproject commit bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          oldLineno: null,
+          newLineno: 1,
+        },
+      ],
+    });
+    const file = makeFileDiff({ isSubmodule: true, isBinary: false, hunks: [hunk] });
+
+    const { findByText, queryByText } = render(HunkDiff, { props: { file } });
+
+    expect(await findByText(/Subproject commit a{40}/)).toBeTruthy();
+    expect(await findByText(/Subproject commit b{40}/)).toBeTruthy();
+    expect(queryByText("Binary file — no diff to show.")).toBeNull();
+  });
+
+  it("hides the hunk action button for a submodule row even when onHunkAction is given", async () => {
+    const hunk = makeHunk();
+    const file = makeFileDiff({ isSubmodule: true, hunks: [hunk] });
+    const onHunkAction = vi.fn();
+
+    const { findByText, queryByText } = render(HunkDiff, {
+      props: { file, hunkActionLabel: "Stage hunk", onHunkAction },
+    });
+
+    await findByText("hello", { exact: false });
+    expect(queryByText("Stage hunk")).toBeNull();
+  });
+
   it("switches between inline and side-by-side rendering when the toggle is clicked", async () => {
     const hunk = makeHunk({
       lines: [
@@ -159,6 +199,19 @@ describe("HunkDiff", () => {
     const file = makeFileDiff();
 
     const { container, findByText } = render(HunkDiff, { props: { file } });
+
+    await findByText("hello", { exact: false });
+    expect(container.querySelectorAll('input[type="checkbox"]')).toHaveLength(0);
+  });
+
+  it("renders no line checkboxes for a submodule row even when onLineAction is given", async () => {
+    const hunk = makeHunk();
+    const file = makeFileDiff({ isSubmodule: true, hunks: [hunk] });
+    const onLineAction = vi.fn(() => Promise.resolve());
+
+    const { container, findByText } = render(HunkDiff, {
+      props: { file, lineActionLabel: "Stage", onLineAction },
+    });
 
     await findByText("hello", { exact: false });
     expect(container.querySelectorAll('input[type="checkbox"]')).toHaveLength(0);

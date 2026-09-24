@@ -11,6 +11,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     cancelAiGeneration,
     commitChanges,
     commitMessageTemplate,
+    commitSigningEnabledByDefault,
     createStashForPaths,
     diffStaged,
     diffUnstaged,
@@ -86,6 +87,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   // for the commit-template prefill below.
   let skipHooksDefault = false;
   let skipHooksTouched = false;
+  // Same shape as `skipHooks`/`skipHooksDefault`/`skipHooksTouched` above, but sourced from
+  // this repo's real `commit.gpgsign` git config (`signing::should_sign`) rather than
+  // PushGit's own `RepoConfig` store — there's no separate app-owned default for this one.
+  let sign = $state(false);
+  let signDefault = false;
+  let signTouched = false;
   let committing = $state(false);
   let commitError = $state<string | null>(null);
 
@@ -200,6 +207,22 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     skipHooksTouched = true;
   }
 
+  async function loadSignDefault(path: string) {
+    if (!path) return;
+    try {
+      const enabled = await commitSigningEnabledByDefault(path);
+      if (signTouched) return;
+      signDefault = enabled;
+      sign = signDefault;
+    } catch {
+      // Leave sign/signDefault at their current values.
+    }
+  }
+
+  function handleSignChange() {
+    signTouched = true;
+  }
+
   // A half-configured transport (provider picked but base URL/model left blank) stays
   // disabled rather than lighting up and failing at request time — pure frontend check
   // against the already-loaded `AiSettings`, no extra backend call.
@@ -217,7 +240,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   });
 
   const generateAiTooltip = $derived(
-    generating ? "Stop generating" : (aiDisabledReason ?? "Generate a commit message from the staged diff"),
+    generating
+      ? "Stop generating"
+      : (aiDisabledReason ?? "Generate a commit message from the staged diff"),
   );
 
   function isLocalTransport(transport: AiTransport): boolean {
@@ -322,6 +347,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   $effect(() => {
     skipHooksTouched = false;
     void loadSkipHooksDefault(repoPath);
+  });
+
+  $effect(() => {
+    signTouched = false;
+    void loadSignDefault(repoPath);
   });
 
   // Cancels any in-flight AI generation the moment `repoPath` changes (or this panel
@@ -466,23 +496,38 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     return { old, new: newer };
   }
 
+  const SUBMODULE_DISCARD_HINT =
+    "Use Update in the toolbar's Submodules menu to restore the recorded commit, or Open to discard changes inside it";
+
   function buildUnstagedMenu(file: FileDiff): ContextMenuItem[] {
     const path = fileKey(file);
     const items: ContextMenuItem[] = [
       { label: "Copy file path", onSelect: () => void copyText(path) },
-      {
+    ];
+    // A gitlink has no blob on either side to diff or blame.
+    if (!file.isSubmodule) {
+      items.push({
         label: "Open in external diff tool",
         onSelect: () => {
           const { oldSide, newSide } = diffSidesFor(false);
           openExternalDiff(oldSide, newSide, file);
         },
-      },
-    ];
-    if (onBlame) items.push({ label: "Blame", onSelect: () => onBlame?.(path) });
+      });
+      if (onBlame) items.push({ label: "Blame", onSelect: () => onBlame?.(path) });
+    }
     if (file.status === "conflicted") return items;
     items.push({ separator: true });
-    items.push({ label: "Stash", onSelect: () => void handleStashFile(file) });
-    items.push({ label: "Discard changes", danger: true, onSelect: () => void handleDiscardFile(file) });
+    // Stash runs a discard too, and discarding a gitlink never moves the submodule's checkout.
+    if (!file.isSubmodule) {
+      items.push({ label: "Stash", onSelect: () => void handleStashFile(file) });
+    }
+    items.push({
+      label: "Discard changes",
+      danger: true,
+      disabled: file.isSubmodule,
+      title: file.isSubmodule ? SUBMODULE_DISCARD_HINT : undefined,
+      onSelect: () => void handleDiscardFile(file),
+    });
     return items;
   }
 
@@ -493,16 +538,19 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   }
 
   function buildStagedMenu(file: FileDiff): ContextMenuItem[] {
-    return [
+    const items: ContextMenuItem[] = [
       { label: "Copy file path", onSelect: () => void copyText(fileKey(file)) },
-      {
+    ];
+    if (!file.isSubmodule) {
+      items.push({
         label: "Open in external diff tool",
         onSelect: () => {
           const { oldSide, newSide } = diffSidesFor(true);
           openExternalDiff(oldSide, newSide, file);
         },
-      },
-    ];
+      });
+    }
+    return items;
   }
 
   function handleStagedContextMenu(event: MouseEvent, file: FileDiff) {
@@ -665,6 +713,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         buildMessage(title, description),
         amend,
         skipHooks,
+        sign,
         pushHookOutputLine,
       );
       title = "";
@@ -672,6 +721,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       amend = false;
       skipHooks = skipHooksDefault;
       skipHooksTouched = false;
+      sign = signDefault;
+      signTouched = false;
       selectedFile = null;
       void prefillFromTemplate(repoPath);
       await reload(repoPath, refreshKey);
@@ -850,6 +901,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       <label class="skip-hooks" class:active={skipHooks}>
         <input type="checkbox" bind:checked={skipHooks} onchange={handleSkipHooksChange} />
         Skip hooks
+      </label>
+      <label class="sign-commit" class:active={sign}>
+        <input type="checkbox" bind:checked={sign} onchange={handleSignChange} />
+        Sign commit
       </label>
       <div class="commit-submit">
         <Button
@@ -1156,7 +1211,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   }
 
   .amend,
-  .skip-hooks {
+  .skip-hooks,
+  .sign-commit {
     display: flex;
     align-items: center;
     gap: 0.25rem;
@@ -1164,12 +1220,17 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     color: var(--text-secondary);
   }
 
-  .skip-hooks {
+  .skip-hooks,
+  .sign-commit {
     color: var(--text-muted);
   }
 
   .skip-hooks.active {
     color: var(--danger);
+  }
+
+  .sign-commit.active {
+    color: var(--accent);
   }
 
   .commit-submit {

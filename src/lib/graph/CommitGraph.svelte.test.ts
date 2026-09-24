@@ -85,6 +85,117 @@ describe("CommitGraph", () => {
     expect(localRow?.hasAttribute("title")).toBe(false);
   });
 
+  it("shows no signature badge for an unsigned commit, and never calls verify_commits", async () => {
+    mockIPC((cmd) => {
+      switch (cmd) {
+        case "graph_open":
+          return "session-1";
+        case "graph_page":
+          return {
+            rows: [makeCommitRow({ oid: "a", summary: "Plain commit", hasSignature: false })],
+            hasMore: false,
+          };
+        case "graph_close":
+          return null;
+        case "verify_commits":
+          throw new Error("verify_commits should not be called for an unsigned commit");
+        default:
+          throw new Error(`unexpected command ${cmd}`);
+      }
+    });
+
+    const { container, findByText } = render(CommitGraph, {
+      props: { repoPath: "/repo-sig-none" },
+    });
+
+    await findByText("Plain commit");
+    expect(container.querySelector(".signature-badge")).toBeNull();
+  });
+
+  it("badges a signed commit once verify_commits resolves it as good", async () => {
+    mockIPC((cmd, args) => {
+      switch (cmd) {
+        case "graph_open":
+          return "session-1";
+        case "graph_page":
+          return {
+            rows: [makeCommitRow({ oid: "a", summary: "Signed commit", hasSignature: true })],
+            hasMore: false,
+          };
+        case "graph_close":
+          return null;
+        case "verify_commits": {
+          const { oids } = args as { oids: string[] };
+          expect(oids).toEqual(["a"]);
+          return { a: { status: "good", signer: "Ada Lovelace <ada@example.com>" } };
+        }
+        default:
+          throw new Error(`unexpected command ${cmd}`);
+      }
+    });
+
+    const { container, findByText } = render(CommitGraph, {
+      props: { repoPath: "/repo-sig-good" },
+    });
+
+    await findByText("Signed commit");
+    const badge = await waitFor(() => {
+      const el = container.querySelector(".signature-badge");
+      if (!el || el.getAttribute("data-state") !== "good") throw new Error("not yet good");
+      return el;
+    });
+    expect(badge.getAttribute("title")).toBe("Verified signature (Ada Lovelace <ada@example.com>)");
+  });
+
+  it("badges a signed commit as bad, and as unsure for an unknown-key/error result", async () => {
+    mockIPC((cmd, args) => {
+      switch (cmd) {
+        case "graph_open":
+          return "session-1";
+        case "graph_page":
+          return {
+            rows: [
+              makeCommitRow({ oid: "bad", summary: "Tampered commit", hasSignature: true }),
+              makeCommitRow({
+                oid: "unknown",
+                summary: "Unknown key commit",
+                row: 1,
+                hasSignature: true,
+              }),
+            ],
+            hasMore: false,
+          };
+        case "graph_close":
+          return null;
+        case "verify_commits": {
+          const { oids } = args as { oids: string[] };
+          expect(oids.sort()).toEqual(["bad", "unknown"]);
+          return { bad: { status: "bad" }, unknown: { status: "unknownKey" } };
+        }
+        default:
+          throw new Error(`unexpected command ${cmd}`);
+      }
+    });
+
+    const { container, findByText } = render(CommitGraph, {
+      props: { repoPath: "/repo-sig-bad-unknown" },
+    });
+
+    await findByText("Tampered commit");
+    const badBadge = await waitFor(() => {
+      const el = container.querySelector('[data-oid="bad"] .signature-badge');
+      if (!el || el.getAttribute("data-state") !== "bad") throw new Error("not yet bad");
+      return el;
+    });
+    const unsureBadge = await waitFor(() => {
+      const el = container.querySelector('[data-oid="unknown"] .signature-badge');
+      if (!el || el.getAttribute("data-state") !== "unsure") throw new Error("not yet unsure");
+      return el;
+    });
+    expect(badBadge.getAttribute("title")).toBe("Signature does not match this commit's content");
+    expect(unsureBadge.getAttribute("title")).toBe("Signed with a key PushGit doesn't recognize");
+  });
+
   it("selects a commit on click and reports it via onSelect", async () => {
     mockIPC((cmd) => {
       switch (cmd) {

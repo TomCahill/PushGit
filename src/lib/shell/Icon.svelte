@@ -34,7 +34,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     | "sparkles"
     | "square"
     | "download"
-    | "more-vertical";
+    | "more-vertical"
+    | "lock";
 
   let { name, size = 14 }: { name: IconName; size?: number } = $props();
 </script>
@@ -142,6 +143,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     <circle cx="12" cy="5" r="1.5" fill="currentColor" stroke="none" />
     <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
     <circle cx="12" cy="19" r="1.5" fill="currentColor" stroke="none" />
+  {:else if name === "lock"}
+    <rect x="4.5" y="11" width="15" height="10" rx="1.5" />
+    <path d="M8 11V7a4 4 0 0 1 8 0v4" />
   {/if}
 </svg>
 

@@ -15,10 +15,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     getCommitTemplatePath,
     getRepoConfig,
     initWorkflow,
+    listGpgSecretKeys,
+    pickSshKeyFile,
     resolvedExternalDiffCommand,
     resolvedExternalMergeCommand,
     setCommitTemplatePath,
     setRepoDefaultSkipHooks,
+    setSigningConfig,
+    signingConfig,
   } from "$lib/git/api";
   import {
     cancelLocalAiDownload,
@@ -36,6 +40,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     setMaxCommitsRendered,
     setReduceMotion,
     setShowHookOutputAlways,
+    setTheme,
     settingsState,
   } from "./settings.svelte";
   import { notifyError } from "$lib/shell/toast.svelte";
@@ -44,7 +49,15 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import Select from "$lib/shell/Select.svelte";
   import Switch from "$lib/shell/Switch.svelte";
   import TextField from "$lib/shell/TextField.svelte";
-  import type { AiTransport, EngineVariant, LocalAiStatus, WorkflowConfig } from "$lib/git/types";
+  import { THEMES } from "$lib/shell/themes";
+  import type {
+    AiTransport,
+    EngineVariant,
+    GpgSecretKey,
+    LocalAiStatus,
+    SignFormat,
+    WorkflowConfig,
+  } from "$lib/git/types";
 
   const ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com";
 
@@ -56,6 +69,16 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   let defaultSkipHooks = $state(false);
   let commitTemplatePath = $state("");
   let repoSaved = $state(false);
+
+  let signFormat = $state<SignFormat>("openpgp");
+  let signKey = $state("");
+  let signGpgProgram = $state("");
+  let signSshProgram = $state("");
+  let signByDefault = $state(false);
+  let signSaved = $state(false);
+  let showAdvancedSigning = $state(false);
+  let gpgSecretKeys = $state<GpgSecretKey[]>([]);
+  let detectingGpgKeys = $state(false);
 
   let workflowConfig = $state<WorkflowConfig | null>(null);
   let workflowMain = $state("main");
@@ -101,13 +124,26 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       // Leave the defaults; this is a convenience prefill only.
     }
 
-    // Fetched independently of the settings above: a GitFlow-detection failure shouldn't
-    // block the rest of this section from showing its own (unrelated) prefilled values.
+    // Fetched independently of the settings above and of each other: a failure in any one
+    // of these (GitFlow detection, or a `gpg`-less machine's `signing_config` read) shouldn't
+    // block the rest of this section from showing its own unrelated prefilled values.
     try {
       const workflow = await detectWorkflow(path);
       if (!repoSettingsDirty) workflowConfig = workflow;
     } catch {
       // Leave the "not configured" state; this is a convenience prefill only.
+    }
+
+    try {
+      const signing = await signingConfig(path);
+      if (repoSettingsDirty) return;
+      signFormat = signing.format;
+      signKey = signing.key ?? "";
+      signGpgProgram = signing.gpgProgram ?? "";
+      signSshProgram = signing.sshProgram ?? "";
+      signByDefault = signing.signByDefault;
+    } catch {
+      // Leave the defaults; this is a convenience prefill only.
     }
   }
 
@@ -145,6 +181,59 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     repoSettingsDirty = true;
   }
 
+  async function handleSigningSubmit(event: SubmitEvent) {
+    event.preventDefault();
+    if (!repoPath) return;
+    try {
+      const result = await setSigningConfig(
+        repoPath,
+        signFormat,
+        signKey.trim() || null,
+        signGpgProgram.trim() || null,
+        signSshProgram.trim() || null,
+        signByDefault,
+      );
+      signFormat = result.format;
+      signKey = result.key ?? "";
+      signGpgProgram = result.gpgProgram ?? "";
+      signSshProgram = result.sshProgram ?? "";
+      signByDefault = result.signByDefault;
+      signSaved = true;
+    } catch (err) {
+      notifyError(String(err));
+    }
+  }
+
+  function handleSigningInput() {
+    signSaved = false;
+    repoSettingsDirty = true;
+  }
+
+  async function handleDetectGpgKeys() {
+    detectingGpgKeys = true;
+    try {
+      gpgSecretKeys = await listGpgSecretKeys();
+      if (gpgSecretKeys.length === 0) notifyError("No GPG secret keys found.");
+    } catch (err) {
+      notifyError(String(err));
+    } finally {
+      detectingGpgKeys = false;
+    }
+  }
+
+  function handleSelectGpgKey(keyId: string) {
+    signKey = keyId;
+    handleSigningInput();
+  }
+
+  async function handleBrowseSshKey() {
+    const path = await pickSshKeyFile();
+    if (path) {
+      signKey = path;
+      handleSigningInput();
+    }
+  }
+
   async function handleWorkflowSubmit(event: SubmitEvent) {
     event.preventDefault();
     if (!repoPath) return;
@@ -172,6 +261,22 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     } catch (err) {
       settingsState.reduceMotion = !value; // revert the optimistic checkbox toggle
       notifyError(String(err));
+    }
+  }
+
+  // Draft, not bound straight to `settingsState`, same "local draft, save on change, resync
+  // from the (possibly unchanged) authoritative value afterward" shape as
+  // `autoFetchIntervalDraft` — a multi-option select can't revert by simply inverting, unlike
+  // the boolean toggles above.
+  let themeDraft = $state(settingsState.theme);
+
+  async function handleThemeChange() {
+    try {
+      await setTheme(themeDraft);
+    } catch (err) {
+      notifyError(String(err));
+    } finally {
+      themeDraft = settingsState.theme;
     }
   }
 
@@ -228,8 +333,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   type AiProviderKind = "none" | AiTransport["kind"];
   const initialTransport = settingsState.ai.transport;
   let aiProviderKind = $state<AiProviderKind>(initialTransport?.kind ?? "none");
-  let aiBaseUrl = $state(initialTransport && "baseUrl" in initialTransport ? initialTransport.baseUrl : "");
-  let aiModel = $state(initialTransport && "model" in initialTransport ? initialTransport.model : "");
+  let aiBaseUrl = $state(
+    initialTransport && "baseUrl" in initialTransport ? initialTransport.baseUrl : "",
+  );
+  let aiModel = $state(
+    initialTransport && "model" in initialTransport ? initialTransport.model : "",
+  );
   // Defaults to "cpu" the first time a user selects "Local AI" — guaranteed to work everywhere,
   // never auto-picked into Vulkan on their behalf.
   let aiEngineVariant = $state<EngineVariant>(
@@ -455,6 +564,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         <Switch bind:checked={settingsState.reduceMotion} onchange={handleReduceMotionChange} />
       </label>
 
+      <Select id="theme" label="Theme" bind:value={themeDraft} onchange={handleThemeChange}>
+        {#each THEMES as theme (theme.id)}
+          <option value={theme.id}>{theme.label}</option>
+        {/each}
+      </Select>
+
       <label class="switch-row">
         <div class="switch-row-text">
           <span>Always show hook output</span>
@@ -465,9 +580,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         />
       </label>
       <p class="hint">
-        Opens the commit/push hook output transcript as soon as a hook starts running. Off
-        keeps it hidden — still recording in the background — until the operation actually
-        fails.
+        Opens the commit/push hook output transcript as soon as a hook starts running. Off keeps it
+        hidden — still recording in the background — until the operation actually fails.
       </p>
 
       <label class="switch-row">
@@ -509,9 +623,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         />
       </label>
       <p class="hint">
-        Checks GitHub's public releases page for a newer PushGit release each time the app
-        starts. Only queries GitHub — no identifying data is sent, and nothing downloads or
-        installs automatically.
+        Checks GitHub's public releases page for a newer PushGit release each time the app starts.
+        Only queries GitHub — no identifying data is sent, and nothing downloads or installs
+        automatically.
       </p>
     </section>
 
@@ -630,7 +744,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
           id="ai-api-key"
           label="API key (optional for local servers)"
           type="password"
-          placeholder={settingsState.hasAiApiKey ? "Key saved — enter a new value to replace it" : "No key saved"}
+          placeholder={settingsState.hasAiApiKey
+            ? "Key saved — enter a new value to replace it"
+            : "No key saved"}
           bind:value={aiApiKeyDraft}
           oninput={handleAiApiKeyInput}
         />
@@ -641,7 +757,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
           {/if}
         </div>
         <p class="hint">
-          {aiApiKeySaved ? "Saved." : "Stored in your OS keyring, never in this app's plain-text config file."}
+          {aiApiKeySaved
+            ? "Saved."
+            : "Stored in your OS keyring, never in this app's plain-text config file."}
         </p>
       </form>
 
@@ -692,7 +810,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         </p>
         {#if repoPath && (resolvedDiffCommand || resolvedMergeCommand)}
           <p class="hint">
-            {#if resolvedDiffCommand}Diff tool that will run: <code>{resolvedDiffCommand}</code>{/if}
+            {#if resolvedDiffCommand}Diff tool that will run: <code>{resolvedDiffCommand}</code
+              >{/if}
             {#if resolvedDiffCommand && resolvedMergeCommand}<br />{/if}
             {#if resolvedMergeCommand}Merge tool that will run: <code>{resolvedMergeCommand}</code
               >{/if}
@@ -731,6 +850,107 @@ SPDX-License-Identifier: AGPL-3.0-or-later
           </div>
         </form>
 
+        <div class="signing-section">
+          <span class="workflow-label">Commit signing</span>
+          <form onsubmit={handleSigningSubmit}>
+            <Select
+              id="signing-format"
+              label="Format"
+              bind:value={signFormat}
+              onchange={handleSigningInput}
+            >
+              <option value="openpgp">OpenPGP (GPG)</option>
+              <option value="ssh">SSH</option>
+            </Select>
+
+            {#if signFormat === "openpgp"}
+              <TextField
+                id="signing-key"
+                label="Signing key ID"
+                placeholder="Uses gpg's own default key if left blank"
+                bind:value={signKey}
+                oninput={handleSigningInput}
+              />
+              <div class="row">
+                <Button
+                  variant="tonal"
+                  type="button"
+                  onclick={handleDetectGpgKeys}
+                  disabled={detectingGpgKeys}
+                >
+                  {detectingGpgKeys ? "Detecting…" : "Detect GPG keys"}
+                </Button>
+              </div>
+              {#if gpgSecretKeys.length > 0}
+                <ul class="gpg-key-list">
+                  {#each gpgSecretKeys as key (key.keyId)}
+                    <li>
+                      <button
+                        type="button"
+                        class="gpg-key-option"
+                        onclick={() => handleSelectGpgKey(key.keyId)}
+                      >
+                        {key.userId} <code>{key.keyId.slice(-16)}</code>
+                      </button>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+            {:else}
+              <TextField
+                id="signing-key"
+                label="Signing key file"
+                placeholder="Path to a private or public SSH key"
+                bind:value={signKey}
+                oninput={handleSigningInput}
+              />
+              <div class="row">
+                <Button variant="tonal" type="button" onclick={handleBrowseSshKey}>Browse…</Button>
+              </div>
+            {/if}
+
+            <label class="switch-row">
+              <div class="switch-row-text">
+                <span>Sign commits by default</span>
+              </div>
+              <Switch bind:checked={signByDefault} onchange={handleSigningInput} />
+            </label>
+
+            <button
+              type="button"
+              class="advanced-toggle"
+              onclick={() => (showAdvancedSigning = !showAdvancedSigning)}
+            >
+              {showAdvancedSigning ? "Hide advanced" : "Advanced"}
+            </button>
+            {#if showAdvancedSigning}
+              <TextField
+                id="signing-gpg-program"
+                label="GPG program"
+                placeholder="gpg"
+                bind:value={signGpgProgram}
+                oninput={handleSigningInput}
+              />
+              <TextField
+                id="signing-ssh-program"
+                label="SSH signing program"
+                placeholder="ssh-keygen"
+                bind:value={signSshProgram}
+                oninput={handleSigningInput}
+              />
+            {/if}
+
+            <div class="row">
+              <Button variant="tonal" type="submit">Save</Button>
+            </div>
+            <p class="hint">
+              {signSaved
+                ? "Saved."
+                : "Sets this repo's real gpg.format/user.signingkey/commit.gpgsign git config."}
+            </p>
+          </form>
+        </div>
+
         {#if workflowConfig}
           <div class="workflow-status">
             <span class="workflow-label">GitFlow</span>
@@ -743,7 +963,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
           <form class="workflow-setup" onsubmit={handleWorkflowSubmit}>
             <span class="workflow-label">Set up GitFlow</span>
             <div class="row">
-              <TextField bind:value={workflowMain} placeholder="main" ariaLabel="Main branch name" />
+              <TextField
+                bind:value={workflowMain}
+                placeholder="main"
+                ariaLabel="Main branch name"
+              />
               <TextField
                 bind:value={workflowDevelop}
                 placeholder="develop"
@@ -874,12 +1098,49 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   }
 
   .workflow-status,
-  .workflow-setup {
+  .workflow-setup,
+  .signing-section {
     display: flex;
     flex-direction: column;
     gap: 0.4rem;
     padding-top: var(--space-3);
     border-top: 1px solid var(--border);
+  }
+
+  .advanced-toggle {
+    align-self: flex-start;
+    background: none;
+    border: none;
+    padding: 0;
+    margin-bottom: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--accent);
+    cursor: pointer;
+  }
+
+  .gpg-key-list {
+    list-style: none;
+    margin: 0 0 0.5rem;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .gpg-key-option {
+    width: 100%;
+    text-align: left;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm, 4px);
+    padding: 0.3rem 0.5rem;
+    font-size: 0.8rem;
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+
+  .gpg-key-option:hover {
+    background: var(--surface-2);
   }
 
   .workflow-label {

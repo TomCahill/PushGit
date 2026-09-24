@@ -84,6 +84,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
             class="item"
             class:danger={item.danger}
             disabled={item.disabled}
+            title={item.title}
             onclick={() => handleItemClick(item)}
           >
             {item.label}
@@ -137,7 +138,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     cursor: default;
   }
 
-  .item.danger {
+  .item.danger:not(:disabled) {
     color: var(--danger);
   }
 

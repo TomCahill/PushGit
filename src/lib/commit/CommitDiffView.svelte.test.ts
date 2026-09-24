@@ -89,4 +89,20 @@ describe("CommitDiffView", () => {
     expect(onOpenExternalDiff).toHaveBeenCalledWith(files[0]);
     expect(container.querySelector("li.selected")).toBeNull();
   });
+
+  it("omits the external-diff button on a submodule row", async () => {
+    const files = [
+      makeFileDiff({ newPath: "a.txt" }),
+      makeFileDiff({ newPath: "vendor/lib", isSubmodule: true }),
+    ];
+
+    const { findByText, getAllByText } = render(CommitDiffView, {
+      props: { files, onOpenExternalDiff: vi.fn() },
+    });
+    await findByText("vendor/lib");
+
+    const buttons = getAllByText("External diff");
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].closest("li")?.textContent).toContain("a.txt");
+  });
 });
