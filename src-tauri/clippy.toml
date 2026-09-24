@@ -1,0 +1,7 @@
+# Copyright (C) 2026 Tom Cahill
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+disallowed-methods = [
+  { path = "std::process::Command::new", reason = "use shell_env::command so children get the user's shell environment" },
+  { path = "tokio::process::Command::new", reason = "use shell_env::async_command so children get the user's shell environment" },
+]

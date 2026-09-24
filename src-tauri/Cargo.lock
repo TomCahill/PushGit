@@ -3691,6 +3691,7 @@ dependencies = [
  "git2",
  "insta",
  "keyring",
+ "libc",
  "notify",
  "proptest",
  "reqwest",

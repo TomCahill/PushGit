@@ -13,10 +13,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader, Lines};
-use tokio::process::{Child, Command};
+use tokio::process::Child;
 use tokio::time::Instant;
 
 use crate::error::{PushGitError, PushGitResult};
+use crate::shell_env;
 
 use super::{engine_binary_path, model_path, resolve_dir, EngineVariant};
 
@@ -110,7 +111,7 @@ async fn spawn_and_wait_healthy(
     variant: EngineVariant,
     cancel: &Arc<AtomicBool>,
 ) -> PushGitResult<LocalEngineHandle> {
-    let mut child = Command::new(engine_binary_path(dir, variant))
+    let mut child = shell_env::async_command(engine_binary_path(dir, variant))
         .arg("--model")
         .arg(model_path(dir))
         .arg("--ctx-size")
@@ -219,7 +220,7 @@ fn recent_lines_suffix(recent: &VecDeque<String>) -> String {
 /// meaningful for the Vulkan variant (the CPU build has no Vulkan backend compiled in and
 /// always reports `(none)`); callers gate on that themselves.
 pub async fn detect_gpu_device(dir: &std::path::Path, variant: EngineVariant) -> Option<String> {
-    let output = Command::new(engine_binary_path(dir, variant))
+    let output = shell_env::async_command(engine_binary_path(dir, variant))
         .arg("--list-devices")
         .output()
         .await
@@ -423,7 +424,7 @@ mod tests {
     }
 
     fn spawn_dummy_process() -> Child {
-        Command::new("sleep")
+        shell_env::async_command("sleep")
             .arg("30")
             .kill_on_drop(true)
             .spawn()

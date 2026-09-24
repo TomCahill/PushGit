@@ -6,9 +6,9 @@
 //! whether that binary is patched against CVE-2024-32002 unless it checks.
 
 use serde::Serialize;
-use tokio::process::Command;
 
 use crate::error::{PushGitError, PushGitResult};
+use crate::shell_env;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,7 +37,7 @@ pub async fn clone_needs_symlink_mitigation() -> bool {
 }
 
 async fn installed_version() -> PushGitResult<(u32, u32, u32)> {
-    let output = Command::new("git")
+    let output = shell_env::async_command("git")
         .arg("--version")
         .output()
         .await
