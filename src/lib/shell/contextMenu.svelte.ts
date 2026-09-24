@@ -11,6 +11,7 @@ export type ContextMenuAction = {
   onSelect: () => void;
   disabled?: boolean;
   danger?: boolean;
+  title?: string;
 };
 export type ContextMenuSeparator = { separator: true };
 export type ContextMenuItem = ContextMenuAction | ContextMenuSeparator;

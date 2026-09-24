@@ -68,7 +68,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
           <DiffStat insertions={file.insertions} deletions={file.deletions} />
         </button>
         <CopyButton text={fileKey(file)} label={`Copy path ${fileKey(file)}`} />
-        {#if onOpenExternalDiff}
+        {#if onOpenExternalDiff && !file.isSubmodule}
           <button
             type="button"
             class="external-diff-button"

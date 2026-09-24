@@ -1165,6 +1165,96 @@ describe("StagingPanel", () => {
     expect(alert.textContent).toContain("not a repository");
   });
 
+  describe("submodule rows", () => {
+    it("drops diff, blame and stash from an unstaged submodule's menu, and disables discard", async () => {
+      mockIPC((cmd) => {
+        switch (cmd) {
+          case "diff_unstaged":
+            return [makeFileDiff({ newPath: "vendor/lib", isSubmodule: true })];
+          case "diff_staged":
+            return [];
+          default:
+            throw new Error(`unexpected command ${cmd}`);
+        }
+      });
+
+      render(ConfirmDialog);
+      render(ContextMenu);
+      const { findByRole, findByText, queryByRole } = render(StagingPanel, {
+        props: { repoPath: "/repo", refreshKey: 0, onBlame: vi.fn() },
+      });
+
+      await fireEvent.contextMenu(await findByText("vendor/lib"));
+
+      expect(await findByRole("menuitem", { name: "Copy file path" })).toBeTruthy();
+      expect(queryByRole("menuitem", { name: "Open in external diff tool" })).toBeNull();
+      expect(queryByRole("menuitem", { name: "Blame" })).toBeNull();
+      expect(queryByRole("menuitem", { name: "Stash" })).toBeNull();
+      const discard = (await findByRole("menuitem", {
+        name: "Discard changes",
+      })) as HTMLButtonElement;
+      expect(discard.disabled).toBe(true);
+      expect(discard.title).toBe(
+        "Use Update in the toolbar's Submodules menu to restore the recorded commit, or Open to discard changes inside it",
+      );
+
+      await fireEvent.click(discard);
+      expect(queryByRole("alertdialog")).toBeNull();
+    });
+
+    it("drops the external diff tool from a staged submodule's menu", async () => {
+      mockIPC((cmd) => {
+        switch (cmd) {
+          case "diff_unstaged":
+            return [];
+          case "diff_staged":
+            return [makeFileDiff({ newPath: "vendor/lib", isSubmodule: true })];
+          default:
+            throw new Error(`unexpected command ${cmd}`);
+        }
+      });
+
+      render(ContextMenu);
+      const { findByRole, findByText, queryByRole } = render(StagingPanel, {
+        props: { repoPath: "/repo", refreshKey: 0 },
+      });
+
+      await fireEvent.contextMenu(await findByText("vendor/lib"));
+
+      expect(await findByRole("menuitem", { name: "Copy file path" })).toBeTruthy();
+      expect(queryByRole("menuitem", { name: "Open in external diff tool" })).toBeNull();
+    });
+
+    it("still stages and unstages a submodule row as a whole file", async () => {
+      const calls: [string, unknown][] = [];
+      mockIPC((cmd, args) => {
+        switch (cmd) {
+          case "diff_unstaged":
+          case "diff_staged":
+            return [makeFileDiff({ newPath: "vendor/lib", isSubmodule: true })];
+          case "stage_file":
+          case "unstage_file":
+            calls.push([cmd, args]);
+            return null;
+          default:
+            throw new Error(`unexpected command ${cmd}`);
+        }
+      });
+
+      const { findByTitle } = render(StagingPanel, { props: { repoPath: "/repo", refreshKey: 0 } });
+
+      await fireEvent.click(await findByTitle("Stage"));
+      await fireEvent.click(await findByTitle("Unstage"));
+
+      await waitFor(() =>
+        expect(calls).toEqual([
+          ["stage_file", { repoPath: "/repo", path: "vendor/lib" }],
+          ["unstage_file", { repoPath: "/repo", path: "vendor/lib" }],
+        ]),
+      );
+    });
+  });
+
   describe("Generate with AI", () => {
     const LOCAL_TRANSPORT = {
       kind: "openAiCompatible" as const,

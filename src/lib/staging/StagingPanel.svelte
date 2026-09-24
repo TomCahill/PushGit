@@ -496,25 +496,36 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     return { old, new: newer };
   }
 
+  const SUBMODULE_DISCARD_HINT =
+    "Use Update in the toolbar's Submodules menu to restore the recorded commit, or Open to discard changes inside it";
+
   function buildUnstagedMenu(file: FileDiff): ContextMenuItem[] {
     const path = fileKey(file);
     const items: ContextMenuItem[] = [
       { label: "Copy file path", onSelect: () => void copyText(path) },
-      {
+    ];
+    // A gitlink has no blob on either side to diff or blame.
+    if (!file.isSubmodule) {
+      items.push({
         label: "Open in external diff tool",
         onSelect: () => {
           const { oldSide, newSide } = diffSidesFor(false);
           openExternalDiff(oldSide, newSide, file);
         },
-      },
-    ];
-    if (onBlame) items.push({ label: "Blame", onSelect: () => onBlame?.(path) });
+      });
+      if (onBlame) items.push({ label: "Blame", onSelect: () => onBlame?.(path) });
+    }
     if (file.status === "conflicted") return items;
     items.push({ separator: true });
-    items.push({ label: "Stash", onSelect: () => void handleStashFile(file) });
+    // Stash runs a discard too, and discarding a gitlink never moves the submodule's checkout.
+    if (!file.isSubmodule) {
+      items.push({ label: "Stash", onSelect: () => void handleStashFile(file) });
+    }
     items.push({
       label: "Discard changes",
       danger: true,
+      disabled: file.isSubmodule,
+      title: file.isSubmodule ? SUBMODULE_DISCARD_HINT : undefined,
       onSelect: () => void handleDiscardFile(file),
     });
     return items;
@@ -527,16 +538,19 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   }
 
   function buildStagedMenu(file: FileDiff): ContextMenuItem[] {
-    return [
+    const items: ContextMenuItem[] = [
       { label: "Copy file path", onSelect: () => void copyText(fileKey(file)) },
-      {
+    ];
+    if (!file.isSubmodule) {
+      items.push({
         label: "Open in external diff tool",
         onSelect: () => {
           const { oldSide, newSide } = diffSidesFor(true);
           openExternalDiff(oldSide, newSide, file);
         },
-      },
-    ];
+      });
+    }
+    return items;
   }
 
   function handleStagedContextMenu(event: MouseEvent, file: FileDiff) {
