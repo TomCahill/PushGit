@@ -974,7 +974,8 @@ pub async fn cancel_remote_operation(
 
 #[tauri::command]
 pub async fn clone_repository(url: String, dest: String) -> PushGitResult<()> {
-    remote::clone(&url, Path::new(&dest)).await
+    let needs_symlink_mitigation = remote::clone_needs_symlink_mitigation().await;
+    remote::clone(&url, Path::new(&dest), needs_symlink_mitigation).await
 }
 
 #[tauri::command]

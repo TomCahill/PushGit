@@ -20,6 +20,23 @@ pub struct GitVersionCheck {
 }
 
 pub async fn check_git_version() -> PushGitResult<GitVersionCheck> {
+    let parsed = installed_version().await?;
+    Ok(GitVersionCheck {
+        version: format!("{}.{}.{}", parsed.0, parsed.1, parsed.2),
+        is_patched: is_patched(parsed),
+    })
+}
+
+/// Whether `clone` must set `core.symlinks=false`. Fail-safe: an undeterminable git version
+/// counts as needing the mitigation.
+pub async fn clone_needs_symlink_mitigation() -> bool {
+    installed_version()
+        .await
+        .map(needs_clone_symlink_mitigation)
+        .unwrap_or(true)
+}
+
+async fn installed_version() -> PushGitResult<(u32, u32, u32)> {
     let output = Command::new("git")
         .arg("--version")
         .output()
@@ -30,14 +47,17 @@ pub async fn check_git_version() -> PushGitResult<GitVersionCheck> {
         })?;
 
     let text = String::from_utf8_lossy(&output.stdout);
-    let parsed = parse_version(&text).ok_or_else(|| {
+    parse_version(&text).ok_or_else(|| {
         PushGitError::Invalid(format!("could not parse `git --version` output: {text:?}"))
-    })?;
-
-    Ok(GitVersionCheck {
-        version: format!("{}.{}.{}", parsed.0, parsed.1, parsed.2),
-        is_patched: is_patched(parsed),
     })
+}
+
+/// CVE-2021-21300 (symlink-checkout RCE mitigated by `core.symlinks=false`) is fixed in
+/// 2.30.1; older git still needs symlinks disabled at clone. Unlike CVE-2024-32002's
+/// per-branch list, every 2021-21300 backport branch is long EOL, so a single cutoff suffices
+/// — over-mitigating pre-2.30.1 git is the safe direction.
+fn needs_clone_symlink_mitigation(version: (u32, u32, u32)) -> bool {
+    version < (2, 30, 1)
 }
 
 fn parse_version(text: &str) -> Option<(u32, u32, u32)> {
@@ -111,6 +131,14 @@ mod tests {
     #[test]
     fn versions_older_than_any_patched_branch_are_unpatched() {
         assert!(!is_patched((2, 38, 5)));
+    }
+
+    #[test]
+    fn clone_symlink_mitigation_tracks_the_cve_2021_21300_boundary() {
+        assert!(needs_clone_symlink_mitigation((2, 30, 0)));
+        assert!(needs_clone_symlink_mitigation((2, 17, 0)));
+        assert!(!needs_clone_symlink_mitigation((2, 30, 1)));
+        assert!(!needs_clone_symlink_mitigation((2, 49, 0)));
     }
 
     #[tokio::test]
