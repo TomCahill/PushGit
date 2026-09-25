@@ -1,6 +1,6 @@
 [package]
 name = "pushgit"
-version = "1.6.0"
+version = "1.6.1"
 description = "A fast, lightweight git GUI with a proper visual commit graph."
 authors = ["Tom Cahill"]
 license = "AGPL-3.0-or-later"
@@ -44,6 +44,7 @@ flate2 = "1"
 tar = "0.4"
 semver = "1"
 tempfile = "3"
+libc = "0.2"
 
 [features]
 # E2E-testing-only plugins — never enabled in a normal `tauri dev`/

@@ -19,6 +19,7 @@ mod interactive_rebase;
 mod maintenance;
 mod remote;
 pub mod repo;
+mod shell_env;
 mod signing;
 mod stage;
 mod stash;
@@ -131,6 +132,7 @@ pub fn run() {
         }
     })
     .setup(|app| {
+        shell_env::resolve_in_background();
         if let Some(path) = read_startup_repo_path(app) {
             *app.state::<state::AppState>()
                 .startup_repo_path

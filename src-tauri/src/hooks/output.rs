@@ -118,7 +118,7 @@ mod tests {
         // Two lines per stream, not one, so ordering *within* a stream is meaningfully
         // exercised — cross-stream order between independently-scheduled reader threads is
         // best-effort (see `stream_command`'s doc comment) and deliberately not asserted here.
-        let mut command = Command::new("sh");
+        let mut command = crate::shell_env::command("sh");
         command
             .arg("-c")
             .arg("echo out-one; echo err-one >&2; echo out-two; echo err-two >&2");
@@ -147,7 +147,7 @@ mod tests {
 
     #[test]
     fn reports_a_non_zero_exit_status() {
-        let mut command = Command::new("sh");
+        let mut command = crate::shell_env::command("sh");
         command.arg("-c").arg("exit 1");
 
         let (status, _) = stream_command(command, "test-hook", &mut |_| {}).unwrap();

@@ -10,11 +10,12 @@
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use git2::Repository;
 
 use crate::error::{PushGitError, PushGitResult};
+use crate::shell_env;
 
 pub mod output;
 pub use output::{HookOutputLine, OutputStream};
@@ -92,7 +93,7 @@ fn run(
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
 
-    let mut command = Command::new(path);
+    let mut command = shell_env::command(path);
     command
         .args(args)
         .current_dir(workdir)

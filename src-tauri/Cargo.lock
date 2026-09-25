@@ -3680,7 +3680,7 @@ dependencies = [
 
 [[package]]
 name = "pushgit"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -3691,6 +3691,7 @@ dependencies = [
  "git2",
  "insta",
  "keyring",
+ "libc",
  "notify",
  "proptest",
  "reqwest",

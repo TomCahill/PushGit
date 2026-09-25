@@ -7,7 +7,6 @@
 //! `.private/feature/external-diff-merge-tools/PLAN.md` for the full design.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use git2::Repository;
 use serde::{Deserialize, Serialize};
@@ -15,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::branch;
 use crate::config::AppConfig;
 use crate::error::{PushGitError, PushGitResult};
+use crate::shell_env;
 
 fn invalid(message: impl Into<String>) -> PushGitError {
     PushGitError::Invalid(message.into())
@@ -161,7 +161,7 @@ fn write_side(
 /// blocking-thread-pool escape hatch `ARCHITECTURE.md` §5 describes is simpler here than
 /// juggling the repo handle across separate async boundaries.
 fn launch(repo: &Repository, cmd: &str, env: &[(&str, &Path)]) -> PushGitResult<()> {
-    let mut command = Command::new("sh");
+    let mut command = shell_env::command("sh");
     command.arg("-c").arg(cmd);
     if let Some(workdir) = repo.workdir() {
         command.current_dir(workdir);

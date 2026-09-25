@@ -5,9 +5,9 @@
 //! Test-only — not compiled into the shipped binary.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Mutex;
 
+use crate::shell_env;
 use git2::{Repository, RepositoryInitOptions};
 use tempfile::TempDir;
 
@@ -79,7 +79,7 @@ pub fn gen_gpg_key(gnupghome: &Path) -> String {
         "Key-Type: eddsa\nKey-Curve: ed25519\nName-Real: PushGit Test\nName-Email: test@pushgit.invalid\nExpire-Date: 0\n%no-protection\n%commit\n",
     )
     .unwrap();
-    let status = Command::new("gpg")
+    let status = shell_env::command("gpg")
         .env("GNUPGHOME", gnupghome)
         .args(["--batch", "--gen-key"])
         .arg(&batch)
@@ -87,7 +87,7 @@ pub fn gen_gpg_key(gnupghome: &Path) -> String {
         .unwrap();
     assert!(status.success(), "gpg --gen-key failed");
 
-    let output = Command::new("gpg")
+    let output = shell_env::command("gpg")
         .env("GNUPGHOME", gnupghome)
         .args(["--list-secret-keys", "--with-colons"])
         .output()
@@ -121,7 +121,7 @@ pub fn with_gnupg_home<T>(gnupghome: &Path, f: impl FnOnce() -> T) -> T {
 /// path (also usable as `user.signingkey`, matching real git's own convention).
 pub fn gen_ssh_keypair(dir: &Path) -> PathBuf {
     let key_path = dir.join("id_test");
-    let status = Command::new("ssh-keygen")
+    let status = shell_env::command("ssh-keygen")
         .args(["-t", "ed25519", "-N", "", "-f"])
         .arg(&key_path)
         .status()

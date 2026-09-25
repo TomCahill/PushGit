@@ -25,11 +25,11 @@ use std::time::{Duration, Instant};
 use git2::BranchType;
 use tauri::ipc::Channel;
 use tokio::io::{AsyncReadExt, BufReader};
-use tokio::process::Command;
 
 use crate::branch::{self, MergeOutcome};
 use crate::error::{PushGitError, PushGitResult};
 use crate::hooks::{HookOutputLine, OutputStream};
+use crate::shell_env;
 
 /// Forwards at most one update per ~60ms.
 const PROGRESS_THROTTLE: Duration = Duration::from_millis(60);
@@ -39,7 +39,7 @@ const PROGRESS_THROTTLE: Duration = Duration::from_millis(60);
 /// commit-graph write`, another capability `git2`/libgit2-rs doesn't expose at all, rather
 /// than duplicating this subprocess wrapper.
 pub(crate) async fn run_git(args: &[&str], cwd: Option<&Path>) -> PushGitResult<String> {
-    let mut command = Command::new("git");
+    let mut command = shell_env::async_command("git");
     command
         .args(args)
         .stdout(Stdio::piped())
@@ -79,7 +79,7 @@ pub(crate) async fn run_git_capturing_output(
     cwd: &Path,
     extra_env: &[(&str, &str)],
 ) -> PushGitResult<std::process::Output> {
-    let mut command = Command::new("git");
+    let mut command = shell_env::async_command("git");
     command.args(args).current_dir(cwd);
     for (key, value) in extra_env {
         command.env(key, value);
@@ -113,7 +113,7 @@ pub(crate) async fn run_git_streaming(
     hook_output: Option<&Channel<HookOutputLine>>,
     cancel: &Arc<AtomicBool>,
 ) -> PushGitResult<()> {
-    let mut command = Command::new("git");
+    let mut command = shell_env::async_command("git");
     command
         .args(args)
         .stdout(Stdio::null())

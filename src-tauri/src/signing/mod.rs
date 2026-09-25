@@ -9,12 +9,13 @@
 
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use git2::{Commit, Oid, Repository, Signature, Tree};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{PushGitError, PushGitResult};
+use crate::shell_env;
 
 fn invalid(message: impl Into<String>) -> PushGitError {
     PushGitError::Invalid(message.into())
@@ -264,7 +265,7 @@ fn sign_buffer(content: &str, config: &SigningConfig) -> PushGitResult<String> {
 /// sequential write-then-read (no separate reader thread) can't deadlock on pipe buffers
 /// the way it could for arbitrary large data.
 fn sign_openpgp(content: &str, config: &SigningConfig) -> PushGitResult<String> {
-    let mut command = Command::new(&config.program);
+    let mut command = shell_env::command(&config.program);
     command
         .arg("--status-fd=2")
         .arg("-bsa")
@@ -311,7 +312,7 @@ fn sign_ssh(content: &str, config: &SigningConfig) -> PushGitResult<String> {
         .tempfile()?;
     std::fs::write(temp.path(), content)?;
 
-    let output = Command::new(&config.program)
+    let output = shell_env::command(&config.program)
         .args(["-Y", "sign", "-n", "git", "-f", key])
         .arg(temp.path())
         .output()
@@ -365,7 +366,7 @@ pub fn verify_commit(repo: &Repository, oid: &str) -> PushGitResult<Verification
     let workdir = repo
         .workdir()
         .ok_or_else(|| invalid("repository has no working directory"))?;
-    let output = Command::new("git")
+    let output = shell_env::command("git")
         .args(["verify-commit", "--raw", oid])
         .current_dir(workdir)
         .output()?;
@@ -421,7 +422,7 @@ pub struct GpgSecretKey {
 /// keys to help the user *fill in* `user.signingkey`, before any repo-specific program
 /// override necessarily applies.
 pub fn list_gpg_secret_keys() -> PushGitResult<Vec<GpgSecretKey>> {
-    let output = Command::new(DEFAULT_GPG_PROGRAM)
+    let output = shell_env::command(DEFAULT_GPG_PROGRAM)
         .args(["--list-secret-keys", "--with-colons"])
         .output()
         .map_err(|e| PushGitError::Subprocess {
@@ -727,7 +728,7 @@ mod tests {
         let fpr = with_gnupg_home(gnupghome.path(), || gen_gpg_key(gnupghome.path()));
 
         let output = with_gnupg_home(gnupghome.path(), || {
-            Command::new("gpg")
+            shell_env::command("gpg")
                 .args(["--list-secret-keys", "--with-colons"])
                 .output()
                 .unwrap()
