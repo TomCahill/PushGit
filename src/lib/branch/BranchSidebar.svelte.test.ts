@@ -221,7 +221,7 @@ describe("BranchSidebar", () => {
     await fireEvent.click(await findByTitle("Actions for feature"));
     await fireEvent.click(await findByRole("menuitem", { name: "Delete" }));
     await fireEvent.click(
-      within(await findByRole("alertdialog")).getByRole("button", { name: "OK" }),
+      within(await findByRole("alertdialog")).getByRole("button", { name: "Delete branch" }),
     );
 
     await waitFor(() => expect(calls).toEqual([{ repoPath: "/repo", name: "feature" }]));

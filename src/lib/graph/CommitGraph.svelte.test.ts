@@ -639,7 +639,7 @@ describe("CommitGraph", () => {
       await fireEvent.contextMenu(await findByText("feature"));
       await fireEvent.click(await findByRole("menuitem", { name: "Delete branch" }));
       await fireEvent.click(
-        within(await findByRole("alertdialog")).getByRole("button", { name: "OK" }),
+        within(await findByRole("alertdialog")).getByRole("button", { name: "Delete branch" }),
       );
 
       await waitFor(() => expect(calls).toEqual([{ repoPath: "/repo", name: "feature" }]));
@@ -882,7 +882,7 @@ describe("CommitGraph", () => {
       await fireEvent.contextMenu(await findByText("v1.0.0"));
       await fireEvent.click(await findByRole("menuitem", { name: "Delete tag" }));
       await fireEvent.click(
-        within(await findByRole("alertdialog")).getByRole("button", { name: "OK" }),
+        within(await findByRole("alertdialog")).getByRole("button", { name: "Delete tag" }),
       );
 
       await waitFor(() => expect(calls).toEqual([{ repoPath: "/repo", name: "v1.0.0" }]));
@@ -1109,7 +1109,7 @@ describe("CommitGraph", () => {
       await fireEvent.contextMenu(await findByText("WIP on develop"));
       await fireEvent.click(await findByRole("menuitem", { name: "Drop stash" }));
       await fireEvent.click(
-        within(await findByRole("alertdialog")).getByRole("button", { name: "OK" }),
+        within(await findByRole("alertdialog")).getByRole("button", { name: "Drop stash" }),
       );
 
       await waitFor(() => expect(calls).toEqual([{ repoPath: "/repo", index: 0 }]));

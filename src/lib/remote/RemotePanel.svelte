@@ -224,7 +224,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
           if (
             !REJECTED_PUSH_PATTERN.test(message) ||
             !(await confirmAsync(
-              `Push rejected: ${REMOTE_NAME} has changes you don't have locally. Force push "${branchName}" anyway? This can overwrite remote history.`,
+              `Push rejected: ${REMOTE_NAME} has changes you don't have locally. Force pushing "${branchName}" can overwrite remote history.`,
+              { title: "Force push?", confirmLabel: "Force push", danger: true },
             ))
           ) {
             throw err;

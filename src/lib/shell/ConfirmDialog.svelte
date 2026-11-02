@@ -16,6 +16,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   let inputValue = $state("");
   let inputEl: HTMLInputElement | undefined = $state();
   let confirmButtonEl: HTMLButtonElement | null = $state(null);
+  let cancelButtonEl: HTMLButtonElement | null = $state(null);
 
   $effect(() => {
     const request = dialogState.request;
@@ -23,6 +24,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     if (request.kind === "prompt") {
       inputValue = request.defaultValue;
       inputEl?.select();
+    } else if (request.danger) {
+      cancelButtonEl?.focus();
     } else {
       confirmButtonEl?.focus();
     }
@@ -53,7 +56,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     if (event.key === "Escape") {
       event.preventDefault();
       cancelCurrent();
-    } else if (event.key === "Enter" && request.kind === "confirm") {
+    } else if (event.key === "Enter" && request.kind === "confirm" && !request.danger) {
       event.preventDefault();
       respondConfirm(true);
     }
@@ -83,10 +86,15 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       class="dialog"
       role="alertdialog"
       aria-modal="true"
-      aria-label={request.message}
+      aria-label={request.kind === "confirm" && request.title ? request.title : request.message}
       transition:scale={{ duration: motionBase(), start: 0.96 }}
     >
-      <p class="message">{request.message}</p>
+      {#if request.kind === "confirm" && request.title}
+        <h2 class="title">{request.title}</h2>
+      {/if}
+      <p class="message" class:secondary={request.kind === "confirm" && request.title}>
+        {request.message}
+      </p>
       {#if request.kind === "prompt"}
         <form onsubmit={handleSubmit}>
           <input type="text" bind:value={inputValue} bind:this={inputEl} />
@@ -97,9 +105,19 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         </form>
       {:else}
         <div class="actions">
-          <Button variant="outlined" onclick={() => respondConfirm(false)}>Cancel</Button>
-          <Button variant="filled" bind:ref={confirmButtonEl} onclick={() => respondConfirm(true)}>
-            OK
+          <Button
+            variant="outlined"
+            bind:ref={cancelButtonEl}
+            onclick={() => respondConfirm(false)}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant={request.danger ? "danger" : "filled"}
+            bind:ref={confirmButtonEl}
+            onclick={() => respondConfirm(true)}
+          >
+            {request.confirmLabel ?? "OK"}
           </Button>
         </div>
       {/if}
@@ -125,6 +143,17 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-md);
+  }
+
+  .title {
+    margin: 0 0 0.4rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .message.secondary {
+    color: var(--text-secondary);
   }
 
   .message {

@@ -352,6 +352,12 @@ pub fn list_branches(repo_path: String) -> PushGitResult<Vec<BranchInfo>> {
     branch::list_branches(&repo::open(Path::new(&repo_path))?)
 }
 
+/// How many commits deleting local branch `name` would leave on no other branch.
+#[tauri::command]
+pub fn branch_unmerged_count(repo_path: String, name: String) -> PushGitResult<usize> {
+    branch::unmerged_commit_count(&repo::open(Path::new(&repo_path))?, &name)
+}
+
 /// Remote-tracking branch shorthand names (e.g. `"origin/feature"`), for a ref picker.
 #[tauri::command]
 pub fn list_remote_branches(repo_path: String) -> PushGitResult<Vec<String>> {

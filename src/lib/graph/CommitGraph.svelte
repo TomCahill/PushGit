@@ -60,6 +60,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   } from "./commitVerification.svelte";
   import { settingsState } from "$lib/settings/settings.svelte";
   import { confirmAsync, promptAsync } from "$lib/shell/confirmDialog.svelte";
+  import { confirmDeleteBranch } from "$lib/branch/confirmDeleteBranch";
   import { notifySuccess } from "$lib/shell/toast.svelte";
   import {
     closeContextMenu,
@@ -438,7 +439,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
   function handleDeleteTag(name: string) {
     void (async () => {
-      if (!(await confirmAsync(`Delete tag "${name}"?`))) return;
+      if (
+        !(await confirmAsync(`Tag "${name}" will be deleted.`, {
+          title: "Delete tag?",
+          confirmLabel: "Delete tag",
+          danger: true,
+        }))
+      )
+        return;
       await runAction(() => deleteTag(repoPath, name));
     })();
   }
@@ -461,7 +469,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
   function handleDeleteBranch(name: string) {
     void (async () => {
-      if (!(await confirmAsync(`Delete branch "${name}"?`))) return;
+      if (!(await confirmDeleteBranch(repoPath, name))) return;
       await runAction(() => deleteBranch(repoPath, name));
     })();
   }
@@ -529,7 +537,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         if (
           !REJECTED_PUSH_PATTERN.test(message) ||
           !(await confirmAsync(
-            `Push rejected: ${REMOTE_NAME} has changes you don't have locally. Force push "${branchName}" anyway? This can overwrite remote history.`,
+            `Push rejected: ${REMOTE_NAME} has changes you don't have locally. Force pushing "${branchName}" can overwrite remote history.`,
+            { title: "Force push?", confirmLabel: "Force push", danger: true },
           ))
         ) {
           throw err;
@@ -571,7 +580,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
   function handleDropStash(index: number, message: string) {
     void (async () => {
-      if (!(await confirmAsync(`Drop stash "${message}"? This can't be undone.`))) return;
+      if (
+        !(await confirmAsync(`"${message}" will be deleted. This can't be undone.`, {
+          title: "Drop stash?",
+          confirmLabel: "Drop stash",
+          danger: true,
+        }))
+      )
+        return;
       await runAction(() => dropStash(repoPath, index));
     })();
   }

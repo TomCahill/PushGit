@@ -34,7 +34,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     repositoryState,
   } from "$lib/git/api";
   import { describeMergeOutcome, describeRebaseOutcome } from "$lib/git/describeOutcome";
-  import { confirmAsync, promptAsync } from "$lib/shell/confirmDialog.svelte";
+  import { promptAsync } from "$lib/shell/confirmDialog.svelte";
+  import { confirmDeleteBranch } from "./confirmDeleteBranch";
   import { openContextMenu, type ContextMenuItem } from "$lib/shell/contextMenu.svelte";
   import CopyButton from "$lib/shell/CopyButton.svelte";
   import Icon from "$lib/shell/Icon.svelte";
@@ -143,7 +144,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   }
 
   async function handleDelete(branch: BranchInfo) {
-    if (!(await confirmAsync(`Delete branch "${branch.name}"?`))) return;
+    if (!(await confirmDeleteBranch(repoPath, branch.name))) return;
     void runAction(async () => {
       await deleteBranch(repoPath, branch.name);
       notifySuccess(`Deleted branch "${branch.name}".`);

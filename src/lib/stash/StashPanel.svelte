@@ -98,7 +98,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   }
 
   async function handleDrop(entry: StashEntry) {
-    if (!(await confirmAsync(`Drop stash "${entry.message}"? This can't be undone.`))) return;
+    if (
+      !(await confirmAsync(`"${entry.message}" will be deleted. This can't be undone.`, {
+        title: "Drop stash?",
+        confirmLabel: "Drop stash",
+        danger: true,
+      }))
+    )
+      return;
     void runAction(async () => {
       await dropStash(repoPath, entry.index);
       notifySuccess(`Dropped stash "${entry.message}".`);

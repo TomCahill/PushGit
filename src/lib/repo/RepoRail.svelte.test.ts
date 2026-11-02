@@ -365,7 +365,7 @@ describe("RepoRail", () => {
       await fireEvent.click(await findByRole("menuitem", { name: "Delete Folder" }));
       const dialog = within(await findByRole("alertdialog"));
       expect(dialog.getByText(/1 repo will move back to Unsorted/)).toBeTruthy();
-      await fireEvent.click(dialog.getByRole("button", { name: "OK" }));
+      await fireEvent.click(dialog.getByRole("button", { name: "Delete folder" }));
 
       await waitFor(() => expect(onDeleteFolder).toHaveBeenCalledWith("f1"));
     });

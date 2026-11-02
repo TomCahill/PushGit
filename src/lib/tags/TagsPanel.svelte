@@ -83,7 +83,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   }
 
   async function handleDelete(name: string) {
-    if (!(await confirmAsync(`Delete tag "${name}"?`))) return;
+    if (
+      !(await confirmAsync(`Tag "${name}" will be deleted.`, {
+        title: "Delete tag?",
+        confirmLabel: "Delete tag",
+        danger: true,
+      }))
+    )
+      return;
     void runAction(async () => {
       await deleteTag(repoPath, name);
       notifySuccess(`Deleted tag "${name}".`);

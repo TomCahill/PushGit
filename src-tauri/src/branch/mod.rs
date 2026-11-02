@@ -177,6 +177,28 @@ pub fn rename_branch(repo: &Repository, old_name: &str, new_name: &str) -> PushG
 /// Deletes a local branch. Deleting its remote-tracking counterpart too (the
 /// companion-checkbox UX) is a separate call — that's a push/delete
 /// operation belonging to `remote/`, not this function.
+/// Commits on local branch `name` that no other local or remote-tracking branch contains —
+/// what deleting it would orphan.
+pub fn unmerged_commit_count(repo: &Repository, name: &str) -> PushGitResult<usize> {
+    let tip = repo
+        .find_branch(name, BranchType::Local)?
+        .get()
+        .peel_to_commit()?
+        .id();
+    let mut walk = repo.revwalk()?;
+    walk.push(tip)?;
+    for entry in repo.branches(None)? {
+        let (other, kind) = entry?;
+        if kind == BranchType::Local && other.name()? == Some(name) {
+            continue;
+        }
+        if let Some(oid) = other.get().target() {
+            walk.hide(oid)?;
+        }
+    }
+    Ok(walk.count())
+}
+
 pub fn delete_branch(repo: &Repository, name: &str) -> PushGitResult<()> {
     let mut branch = repo.find_branch(name, BranchType::Local)?;
     branch.delete()?;
@@ -255,6 +277,22 @@ mod tests {
         assert!(repo
             .find_branch("feature-renamed", BranchType::Local)
             .is_err());
+    }
+
+    #[test]
+    fn unmerged_commit_count_counts_only_commits_no_other_branch_has() {
+        let (_dir, repo) = repo_init();
+        create_branch(&repo, "merged", None).unwrap();
+        assert_eq!(unmerged_commit_count(&repo, "merged").unwrap(), 0);
+
+        create_branch(&repo, "spike", None).unwrap();
+        checkout_branch(&repo, "spike").unwrap();
+        commit_file(&repo, "a.txt", "a\n");
+        commit_file(&repo, "b.txt", "b\n");
+        assert_eq!(unmerged_commit_count(&repo, "spike").unwrap(), 2);
+
+        create_branch(&repo, "spike-copy", None).unwrap();
+        assert_eq!(unmerged_commit_count(&repo, "spike").unwrap(), 0);
     }
 
     #[test]

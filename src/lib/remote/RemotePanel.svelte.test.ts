@@ -321,7 +321,7 @@ describe("RemotePanel", () => {
     await fireEvent.click(pushButton);
 
     await fireEvent.click(
-      within(await findByRole("alertdialog")).getByRole("button", { name: "OK" }),
+      within(await findByRole("alertdialog")).getByRole("button", { name: "Force push" }),
     );
 
     await waitFor(() => expect(toastMessages()).toContain("Force-pushed main to origin."));
