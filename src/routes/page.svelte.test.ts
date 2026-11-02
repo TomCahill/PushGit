@@ -42,13 +42,41 @@ describe("app shell", () => {
     localStorage.clear();
   });
 
-  it("renders the sidebar, commit graph, and diff panes", () => {
+  it("shows the welcome view instead of an empty graph when no repo is open", async () => {
     mockIPC(() => null);
-    const { getByLabelText } = render(Page);
+    const { getByLabelText, findByRole, getAllByTitle, queryByLabelText } = render(Page);
 
     expect(getByLabelText("Branches, tags, and stashes")).toBeTruthy();
-    expect(getByLabelText("Commit graph")).toBeTruthy();
     expect(getByLabelText("Diff viewer")).toBeTruthy();
+    expect(await findByRole("heading", { name: "Open a repository" })).toBeTruthy();
+    expect(queryByLabelText("Commit graph")).toBeNull();
+    // e2e specs and other tests find the rail's button by this title, so it must stay unique.
+    expect(getAllByTitle("Open a repository")).toHaveLength(1);
+  });
+
+  it("never shows the welcome view while the last repo reopens on startup", async () => {
+    localStorage.setItem("pushgit.lastRepoPath", "/repo");
+    let welcomeSeen = false;
+    mockIPC((cmd) => {
+      welcomeSeen ||= document.body.textContent?.includes("Pick a folder that contains") ?? false;
+      switch (cmd) {
+        case "open_repository":
+          return "/repo";
+        case "graph_page":
+          return { rows: [], hasMore: false };
+        case "plugin:event|listen":
+          return 1;
+        default:
+          return cmd.startsWith("list_") || cmd.startsWith("diff_") ? [] : null;
+      }
+    });
+
+    const { findByLabelText, queryByText } = render(Page);
+
+    expect(await findByLabelText("Commit graph")).toBeTruthy();
+    expect(welcomeSeen).toBe(false);
+    expect(queryByText(/Pick a folder that contains/)).toBeNull();
+    localStorage.clear();
   });
 
   it("opens a repository, lists its commits, and shows the selected commit's files", async () => {

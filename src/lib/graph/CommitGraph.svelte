@@ -845,8 +845,6 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 >
   {#if error}
     <p class="graph-error" role="alert">{error}</p>
-  {:else if !repoPath}
-    <p class="graph-empty">Open a repository to see its commit graph.</p>
   {/if}
   {#if actionError}
     <p class="action-banner error" role="alert">{actionError}</p>
@@ -978,7 +976,6 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   }
 
   .graph-error,
-  .graph-empty,
   .graph-loading {
     padding: 0.5rem 1rem;
     color: var(--text-muted);

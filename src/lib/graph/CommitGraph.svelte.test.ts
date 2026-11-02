@@ -17,14 +17,16 @@ function toastMessages(): string[] {
 }
 
 describe("CommitGraph", () => {
-  it("shows a prompt instead of opening a session when no repo is given", () => {
-    mockIPC(() => {
-      throw new Error("should not be called");
+  it("doesn't open a session or render rows when no repo is given", () => {
+    const calls: string[] = [];
+    mockIPC((cmd) => {
+      calls.push(cmd);
     });
 
-    const { getByText } = render(CommitGraph, { props: { repoPath: "" } });
+    const { container } = render(CommitGraph, { props: { repoPath: "" } });
 
-    expect(getByText("Open a repository to see its commit graph.")).toBeTruthy();
+    expect(calls).not.toContain("graph_open");
+    expect(container.querySelectorAll(".row")).toHaveLength(0);
   });
 
   it("opens a graph session and renders the returned rows", async () => {
