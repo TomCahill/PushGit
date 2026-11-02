@@ -32,6 +32,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     renameFolder,
     deleteFolder,
     toggleFolderCollapsed,
+    expandFolder,
+    collapseAllFolders,
     moveFolder,
     type RepoFolder,
   } from "$lib/repo/repoFolders";
@@ -438,6 +440,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       repoPath = workdir;
       localStorage.setItem(LAST_REPO_KEY, workdir);
       recentRepos = recordRepoOpened(workdir);
+      const folderId = recentRepos.find((entry) => entry.path === workdir)?.folderId;
+      if (folderId) folders = expandFolder(folderId);
       refreshKey += 1;
 
       unlisten?.();
@@ -716,6 +720,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       onRenameFolder={handleRenameFolder}
       onDeleteFolder={handleDeleteFolder}
       onToggleFolderCollapsed={handleToggleFolderCollapsed}
+      onCollapseAllFolders={() => (folders = collapseAllFolders())}
       onMoveRepo={handleMoveRepo}
       onMoveFolder={handleMoveFolder}
       onOpenSettings={() => (showSettings = true)}
@@ -914,6 +919,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 <CommandPalette
   {repoPath}
   commands={paletteCommands}
+  repos={recentRepos}
+  onOpenRepo={openRepo}
   onChanged={() => (refreshKey += 1)}
   onSelectFile={showWorkingDirectory}
 />

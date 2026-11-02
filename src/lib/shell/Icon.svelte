@@ -35,7 +35,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     | "square"
     | "download"
     | "more-vertical"
-    | "lock";
+    | "lock"
+    | "search"
+    | "folder-plus"
+    | "folder-open"
+    | "fold";
 
   let { name, size = 14 }: { name: IconName; size?: number } = $props();
 </script>
@@ -105,6 +109,20 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     <circle cx="12" cy="12" r="9" />
     <path d="M9.5 9a2.5 2.5 0 0 1 4.9.8c0 1.7-2.4 2-2.4 3.7" />
     <path d="M12 17h.01" />
+  {:else if name === "folder-plus"}
+    <path
+      d="M3 6a1.5 1.5 0 0 1 1.5-1.5h4.4a1.5 1.5 0 0 1 1.2.6l1.2 1.6a1.5 1.5 0 0 0 1.2.6H19.5A1.5 1.5 0 0 1 21 8.8V18a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18z"
+    />
+    <path d="M12 10.5v6M9 13.5h6" />
+  {:else if name === "folder-open"}
+    <path
+      d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+    />
+  {:else if name === "fold"}
+    <path d="m7 20 5-5 5 5M7 4l5 5 5-5" />
+  {:else if name === "search"}
+    <circle cx="11" cy="11" r="7" />
+    <path d="m20 20-4-4" />
   {:else if name === "clock"}
     <circle cx="12" cy="12" r="9" />
     <path d="M12 7v5l3.5 2" />

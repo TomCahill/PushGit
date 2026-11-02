@@ -64,6 +64,16 @@ export function toggleFolderCollapsed(id: string): RepoFolder[] {
   );
 }
 
+export function expandFolder(id: string): RepoFolder[] {
+  return save(
+    loadRepoFolders().map((folder) => (folder.id === id ? { ...folder, collapsed: false } : folder)),
+  );
+}
+
+export function collapseAllFolders(): RepoFolder[] {
+  return save(loadRepoFolders().map((folder) => ({ ...folder, collapsed: true })));
+}
+
 /** Repositions folder `id` immediately before `beforeId` if given and present, otherwise at the
  *  end — same splice-before-target approach as `recentRepos.ts`'s `moveRepo`. */
 export function moveFolder(id: string, beforeId: string | null): RepoFolder[] {

@@ -3,6 +3,8 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  collapseAllFolders,
+  expandFolder,
   createFolder,
   deleteFolder,
   loadRepoFolders,
@@ -63,6 +65,17 @@ describe("repoFolders", () => {
 
     toggleFolderCollapsed(folder.id);
     expect(loadRepoFolders()[0].collapsed).toBe(false);
+  });
+
+  it("expands one folder and collapses every folder", () => {
+    const { folder: work } = createFolder("Work");
+    createFolder("Personal");
+
+    collapseAllFolders();
+    expect(loadRepoFolders().map((f) => f.collapsed)).toEqual([true, true]);
+
+    expandFolder(work.id);
+    expect(loadRepoFolders().map((f) => f.collapsed)).toEqual([false, true]);
   });
 
   it("reorders a folder before another", () => {

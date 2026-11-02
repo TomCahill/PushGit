@@ -56,8 +56,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
   function handleItemClick(item: ContextMenuAction) {
     if (item.disabled) return;
-    item.onSelect();
+    // Close first so an item can open a follow-up menu (e.g. "Move to Folder…").
     closeContextMenu();
+    item.onSelect();
   }
 </script>
 

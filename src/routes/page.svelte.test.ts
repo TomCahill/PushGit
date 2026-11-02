@@ -2,12 +2,46 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { describe, expect, it } from "vitest";
-import { fireEvent, render, within } from "@testing-library/svelte";
+import { fireEvent, render, waitFor, within } from "@testing-library/svelte";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import Page from "./+page.svelte";
 import { makeCommitRow, makeFileDiff } from "$lib/git/testFixtures";
 
 describe("app shell", () => {
+  it("expands a repo's collapsed folder when that repo is opened", async () => {
+    localStorage.setItem(
+      "pushgit.repoFolders",
+      JSON.stringify([{ id: "f1", name: "Work", collapsed: true }]),
+    );
+    localStorage.setItem(
+      "pushgit.recentRepos",
+      JSON.stringify([{ path: "/repo", lastOpenedAt: 1, folderId: "f1" }]),
+    );
+    mockIPC((cmd) => {
+      switch (cmd) {
+        case "plugin:dialog|open":
+        case "open_repository":
+          return "/repo";
+        case "graph_page":
+          return { rows: [], hasMore: false };
+        case "plugin:event|listen":
+          return 1;
+        default:
+          return cmd.startsWith("list_") || cmd.startsWith("diff_") ? [] : null;
+      }
+    });
+
+    const { getByTitle } = render(Page);
+    await fireEvent.click(getByTitle("Open a repository"));
+
+    await waitFor(() =>
+      expect(JSON.parse(localStorage.getItem("pushgit.repoFolders") ?? "[]")[0].collapsed).toBe(
+        false,
+      ),
+    );
+    localStorage.clear();
+  });
+
   it("renders the sidebar, commit graph, and diff panes", () => {
     mockIPC(() => null);
     const { getByLabelText } = render(Page);
