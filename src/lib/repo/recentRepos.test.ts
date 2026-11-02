@@ -8,6 +8,7 @@ import {
   recordRepoOpened,
   removeRecentRepo,
   repoDisplayName,
+  repoParentName,
   unassignReposFromFolder,
 } from "./recentRepos";
 
@@ -178,6 +179,17 @@ describe("recentRepos", () => {
       expect(loaded.find((e) => e.path === "/repo/one")?.folderId).toBeUndefined();
       expect(loaded.find((e) => e.path === "/repo/two")?.folderId).toBe("folder-2");
     });
+  });
+});
+
+describe("repoParentName", () => {
+  it("returns the directory holding the repo", () => {
+    expect(repoParentName("/home/tom/Projects/Lighten/api/")).toBe("Lighten");
+    expect(repoParentName("C:\\Users\\tom\\api")).toBe("tom");
+  });
+
+  it("is empty when there's no parent segment", () => {
+    expect(repoParentName("api")).toBe("");
   });
 });
 

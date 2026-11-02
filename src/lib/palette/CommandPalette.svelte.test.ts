@@ -230,4 +230,65 @@ describe("CommandPalette", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("deadbeef"));
     await waitFor(() => expect(queryByLabelText("Command palette search")).toBeNull());
   });
+
+  describe("repositories", () => {
+    const repos = [
+      { path: "/p/Lighten/project-q", lastOpenedAt: 1 },
+      { path: "/p/Buttress/api", lastOpenedAt: 3 },
+      { path: "/p/Lighten/nginx-config", lastOpenedAt: 2 },
+    ];
+
+    function mockEmptyRepo() {
+      mockIPC((cmd) => {
+        if (cmd === "list_branches" || cmd.startsWith("diff_")) return [];
+        throw new Error(`unexpected command ${cmd}`);
+      });
+    }
+
+    function optionLabels(container: HTMLElement): string[] {
+      return [...container.querySelectorAll("[role=option]")].map((el) => el.textContent!.trim());
+    }
+
+    it("lists recent repos newest first, matching on the parent directory too", async () => {
+      mockEmptyRepo();
+      const { container, findByLabelText } = render(CommandPalette, {
+        props: { repoPath: "/p/Lighten/project-q", commands: [], repos },
+      });
+
+      await fireEvent.keyDown(window, { key: "p", ctrlKey: true });
+      await findByLabelText("Command palette search");
+      expect(optionLabels(container)).toEqual([
+        "api · Buttress",
+        "nginx-config · Lighten",
+        "project-q · Lighten (current)",
+      ]);
+
+      await fireEvent.input(await findByLabelText("Command palette search"), {
+        target: { value: "lighten" },
+      });
+      expect(optionLabels(container)).toEqual([
+        "nginx-config · Lighten",
+        "project-q · Lighten (current)",
+      ]);
+    });
+
+    it("opens the chosen repo and closes, but doesn't reopen the current one", async () => {
+      mockEmptyRepo();
+      const onOpenRepo = vi.fn();
+      const { findByLabelText, getByText } = render(CommandPalette, {
+        props: { repoPath: "/p/Lighten/project-q", commands: [], repos, onOpenRepo },
+      });
+
+      await fireEvent.keyDown(window, { key: "p", ctrlKey: true });
+      const dialog = (await findByLabelText("Command palette search")).closest("[role=dialog]")!;
+      await fireEvent.keyDown(dialog, { key: "Enter" });
+      expect(onOpenRepo).toHaveBeenCalledWith("/p/Buttress/api");
+      expect(paletteState.open).toBe(false);
+
+      await fireEvent.keyDown(window, { key: "p", ctrlKey: true });
+      await fireEvent.click(getByText("project-q · Lighten (current)"));
+      expect(onOpenRepo).toHaveBeenCalledTimes(1);
+      expect(paletteState.open).toBe(false);
+    });
+  });
 });

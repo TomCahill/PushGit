@@ -17,7 +17,6 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import { pickRepositoryFolder } from "$lib/git/api";
   import { confirmAsync, promptAsync } from "$lib/shell/confirmDialog.svelte";
   import { openContextMenu, type ContextMenuItem } from "$lib/shell/contextMenu.svelte";
-  import Button from "$lib/shell/Button.svelte";
   import Icon from "$lib/shell/Icon.svelte";
   import Logo from "$lib/shell/Logo.svelte";
   import NotificationsPanel from "$lib/shell/NotificationsPanel.svelte";
@@ -25,7 +24,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import Popover from "$lib/shell/Popover.svelte";
   import { unreadNotificationCount } from "$lib/shell/toast.svelte";
   import { dismiss as dismissUpdateBanner, updateCheckState } from "$lib/shell/updateCheck.svelte";
-  import { repoDisplayName, type RecentRepo } from "./recentRepos";
+  import { repoDisplayName, repoParentName, type RecentRepo } from "./recentRepos";
   import type { RepoFolder } from "./repoFolders";
 
   // A plain `<a target="_blank">` doesn't open the system browser from inside a Tauri
@@ -53,6 +52,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     onRenameFolder,
     onDeleteFolder,
     onToggleFolderCollapsed,
+    onCollapseAllFolders,
     onMoveRepo,
     onMoveFolder,
     onOpenSettings,
@@ -68,14 +68,62 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     onRenameFolder: (id: string, name: string) => void;
     onDeleteFolder: (id: string) => void;
     onToggleFolderCollapsed: (id: string) => void;
+    onCollapseAllFolders: () => void;
     onMoveRepo: (path: string, folderId: string | undefined, beforePath: string | null) => void;
     onMoveFolder: (id: string, beforeId: string | null) => void;
     onOpenSettings: () => void;
   } = $props();
 
+  const RECENT_COUNT = 3;
+
   const ungroupedRepos = $derived(recentRepos.filter((entry) => !entry.folderId));
+  // Ungrouped repos are already MRU-ordered in "Unsorted", so Recent only surfaces foldered ones.
+  const recentFolderedRepos = $derived(
+    recentRepos
+      .filter((entry) => entry.folderId)
+      .sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)
+      .slice(0, RECENT_COUNT),
+  );
   function reposInFolder(folderId: string): RecentRepo[] {
     return recentRepos.filter((entry) => entry.folderId === folderId);
+  }
+
+  const clashingNames = $derived.by(() => {
+    const counts = new Map<string, number>();
+    for (const entry of recentRepos) {
+      const name = repoDisplayName(entry.path);
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    return new Set([...counts].filter(([, count]) => count > 1).map(([name]) => name));
+  });
+
+  let filter = $state("");
+  let activeMatchIndex = $state(0);
+  const filtering = $derived(filter.trim() !== "");
+  const filterMatches = $derived(
+    recentRepos.filter((entry) =>
+      repoDisplayName(entry.path).toLowerCase().includes(filter.trim().toLowerCase()),
+    ),
+  );
+
+  function folderName(folderId: string | undefined): string | undefined {
+    return folders.find((folder) => folder.id === folderId)?.name;
+  }
+
+  function handleFilterKeydown(event: KeyboardEvent) {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      activeMatchIndex = Math.max(0, Math.min(filterMatches.length - 1, activeMatchIndex + step));
+    } else if (event.key === "Enter") {
+      const match = filterMatches[activeMatchIndex];
+      if (match) {
+        onSelectRecent(match.path);
+        filter = "";
+      }
+    } else if (event.key === "Escape") {
+      filter = "";
+    }
   }
 
   async function handleOpenClick() {
@@ -106,22 +154,20 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     const count = reposInFolder(folder.id).length;
     const message =
       count > 0
-        ? `Delete "${folder.name}"? ${count} repo${count === 1 ? "" : "s"} will move back to Recent.`
+        ? `Delete "${folder.name}"? ${count} repo${count === 1 ? "" : "s"} will move back to Unsorted.`
         : `Delete "${folder.name}"?`;
     if (await confirmAsync(message)) onDeleteFolder(folder.id);
   }
 
   function handleRepoContextMenu(event: MouseEvent, entry: RecentRepo) {
     event.preventDefault();
-    const items: ContextMenuItem[] = [];
-    for (const folder of folders) {
-      if (folder.id === entry.folderId) continue;
-      items.push({
-        label: `Move to "${folder.name}"`,
-        onSelect: () => onMoveRepo(entry.path, folder.id, null),
-      });
-    }
-    items.push({ label: "New Folder…", onSelect: () => void handleNewFolderFromRepo(entry.path) });
+    const { clientX, clientY } = event;
+    const items: ContextMenuItem[] = [
+      {
+        label: "Move to Folder…",
+        onSelect: () => openContextMenu(clientX, clientY, moveToFolderItems(entry)),
+      },
+    ];
     if (entry.folderId) {
       items.push({ separator: true });
       items.push({
@@ -131,11 +177,23 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     }
     items.push({ separator: true });
     items.push({
-      label: "Remove from Recent",
+      label: "Remove from list",
       danger: true,
       onSelect: () => onRemoveRecent(entry.path),
     });
     openContextMenu(event.clientX, event.clientY, items);
+  }
+
+  function moveToFolderItems(entry: RecentRepo): ContextMenuItem[] {
+    const items: ContextMenuItem[] = folders
+      .filter((folder) => folder.id !== entry.folderId)
+      .map((folder) => ({
+        label: folder.name,
+        onSelect: () => onMoveRepo(entry.path, folder.id, null),
+      }));
+    if (items.length > 0) items.push({ separator: true });
+    items.push({ label: "New Folder…", onSelect: () => void handleNewFolderFromRepo(entry.path) });
+    return items;
   }
 
   function handleFolderContextMenu(event: MouseEvent, folder: RepoFolder) {
@@ -169,7 +227,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
   function dropTargetOf(clientX: number, clientY: number): DropTarget | null {
     const hit = document.elementFromPoint(clientX, clientY);
-    if (!hit) return null;
+    if (!hit || hit.closest("[data-recent-list]")) return null;
     const repoEl = hit.closest<HTMLElement>("[data-repo-path]");
     if (repoEl?.dataset.repoPath) {
       return {
@@ -216,6 +274,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     captureOn: "move",
     resolveSource: (event) => {
       const target = event.target as HTMLElement;
+      if (target.closest("[data-recent-list]")) return null;
       const repoEl = target.closest<HTMLElement>("[data-repo-path]");
       const folderEl = !repoEl ? target.closest<HTMLElement>("[data-folder-id]") : null;
       if (repoEl?.dataset.repoPath) return { type: "repo", path: repoEl.dataset.repoPath };
@@ -250,6 +309,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     const repoEl = target.closest<HTMLElement>("[data-repo-path]");
     if (repoEl?.dataset.repoPath) {
       onSelectRecent(repoEl.dataset.repoPath);
+      filter = "";
       return;
     }
 
@@ -260,9 +320,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   }
 </script>
 
-{#snippet repoRow(entry: RecentRepo)}
+{#snippet repoRow(entry: RecentRepo, folderLabel?: string, active?: boolean)}
   <li
     class:current={entry.path === currentPath}
+    class:active
     class:drag-over={pointerDrag.target?.kind === "repo" && pointerDrag.target.path === entry.path}
     class:dragged={pointerDrag.source?.type === "repo" && pointerDrag.source.path === entry.path}
     data-repo-path={entry.path}
@@ -270,13 +331,19 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     oncontextmenu={(event) => handleRepoContextMenu(event, entry)}
   >
     <button type="button" class="recent-row" title={entry.path}>
-      <Icon name="folder" size={13} />
+      <Icon name="branch" size={13} />
       <span class="recent-name">{repoDisplayName(entry.path)}</span>
+      {#if clashingNames.has(repoDisplayName(entry.path)) && repoParentName(entry.path) !== folderLabel}
+        <span class="repo-parent">{repoParentName(entry.path)}</span>
+      {/if}
+      {#if folderLabel}
+        <span class="repo-folder">{folderLabel}</span>
+      {/if}
     </button>
     <button
       type="button"
       class="remove"
-      title={`Remove ${entry.path} from recent`}
+      title={`Remove ${entry.path} from list`}
       data-remove-path={entry.path}
     >
       <Icon name="x" size={12} />
@@ -312,9 +379,53 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     </div>
   {/if}
 
-  <Button variant="tonal" title="Open a repository" onclick={handleOpenClick}>
-    <Icon name="folder" size={14} /> Open
-  </Button>
+  <div class="toolbar">
+    {#if recentRepos.length > 0}
+      <div class="filter">
+        <span class="filter-icon"><Icon name="search" size={13} /></span>
+        <input
+          type="text"
+          class="search-box"
+          bind:value={filter}
+          oninput={() => (activeMatchIndex = 0)}
+          onkeydown={handleFilterKeydown}
+          placeholder="Filter repos"
+          aria-label="Filter repositories"
+        />
+      </div>
+    {/if}
+    <div class="toolbar-actions">
+      <!-- Labelled until the first repo is opened, so the starting action isn't a bare icon. -->
+      <button
+        type="button"
+        class="icon-button"
+        class:labelled={recentRepos.length === 0}
+        title="Open a repository"
+        onclick={handleOpenClick}
+      >
+        <Icon name="folder-open" size={14} />
+        {#if recentRepos.length === 0}<span>Open</span>{/if}
+      </button>
+      {#if folders.length > 0}
+        <button
+          type="button"
+          class="icon-button"
+          title="Collapse all folders"
+          onclick={onCollapseAllFolders}
+        >
+          <Icon name="fold" size={14} />
+        </button>
+      {/if}
+      <button
+        type="button"
+        class="icon-button"
+        title="Create a new folder"
+        onclick={handleNewFolder}
+      >
+        <Icon name="folder-plus" size={14} />
+      </button>
+    </div>
+  </div>
 
   {#if openError}
     <p class="error" role="alert">{openError}</p>
@@ -329,34 +440,56 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     role="group"
     aria-label="Repositories"
     class:dragging={pointerDrag.source !== null}
-    onpointerdown={pointerDrag.handlePointerDown}
+    onpointerdown={filtering ? undefined : pointerDrag.handlePointerDown}
     onpointermove={pointerDrag.handlePointerMove}
     onpointerup={pointerDrag.handlePointerUp}
     onclick={handleClick}
   >
     {#if folders.length === 0 && recentRepos.length === 0}
       <p class="placeholder">Repos you open will show up here.</p>
+    {:else if filtering}
+      {#if filterMatches.length === 0}
+        <p class="placeholder">No repos match "{filter.trim()}".</p>
+      {:else}
+        <ul class="recent-list" aria-label="Matching repositories">
+          {#each filterMatches as entry, index (entry.path)}
+            {@render repoRow(entry, folderName(entry.folderId), index === activeMatchIndex)}
+          {/each}
+        </ul>
+      {/if}
     {:else}
-      <div class="recent">
-        <div
-          class="recent-header"
-          role="group"
-          aria-label="Ungrouped repositories"
-          data-drop-zone="ungrouped"
-          class:drag-over={pointerDrag.target?.kind === "ungrouped"}
-        >
+      {#if recentFolderedRepos.length > 0}
+        <div class="recent">
           <h3><Icon name="clock" size={12} /> Recent</h3>
+          <ul class="recent-list" aria-label="Recently opened repositories" data-recent-list>
+            {#each recentFolderedRepos as entry (entry.path)}
+              {@render repoRow(entry, folderName(entry.folderId))}
+            {/each}
+          </ul>
         </div>
-        {#if ungroupedRepos.length === 0 && folders.length === 0}
-          <p class="placeholder">Repos you open will show up here.</p>
-        {:else if ungroupedRepos.length > 0}
+      {/if}
+
+      {#if ungroupedRepos.length > 0 || pointerDrag.source !== null}
+        <div class="recent">
+          <div
+            class="recent-header"
+            role="group"
+            aria-label="Ungrouped repositories"
+            data-drop-zone="ungrouped"
+            class:drag-over={pointerDrag.target?.kind === "ungrouped"}
+          >
+            <h3>
+              <Icon name="folder" size={12} />
+              {folders.length > 0 ? "Unsorted" : "Repositories"}
+            </h3>
+          </div>
           <ul class="recent-list">
             {#each ungroupedRepos as entry (entry.path)}
               {@render repoRow(entry)}
             {/each}
           </ul>
-        {/if}
-      </div>
+        </div>
+      {/if}
 
       {#each folders as folder (folder.id)}
         <div class="folder">
@@ -382,6 +515,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
             </span>
             <Icon name="folder" size={13} />
             <span class="folder-name">{folder.name}</span>
+            {#if folder.collapsed && reposInFolder(folder.id).some((entry) => entry.path === currentPath)}
+              <span class="here-dot" title="The open repository is in this folder"></span>
+            {/if}
             <span class="folder-count">{reposInFolder(folder.id).length}</span>
           </div>
           {#if !folder.collapsed}
@@ -396,20 +532,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     {/if}
   </div>
 
-  <button
-    type="button"
-    class="new-folder-button"
-    title="Create a new folder"
-    onclick={handleNewFolder}
-  >
-    <Icon name="plus" size={12} /> New Folder
-  </button>
-
   <div class="sidebar-footer">
     <Popover placement="top" portal class="notifications-trigger">
       {#snippet trigger()}
-        <Icon name="bell" size={13} />
-        <span>Notifications</span>
+        <Icon name="bell" size={14} />
+        <span class="visually-hidden">Notifications</span>
         {#if unreadNotificationCount() > 0}
           <span class="count-badge">{unreadNotificationCount()}</span>
         {/if}
@@ -418,10 +545,18 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         <NotificationsPanel />
       {/snippet}
     </Popover>
-    <button type="button" class="settings-button" onclick={onOpenSettings}>
-      <Icon name="settings" size={13} />
-      <span>Settings</span>
+    <button
+      type="button"
+      class="icon-button"
+      title="Settings"
+      aria-label="Settings"
+      onclick={onOpenSettings}
+    >
+      <Icon name="settings" size={14} />
     </button>
+    {#if currentPath}
+      <span class="current-repo" title={currentPath}>{repoDisplayName(currentPath)}</span>
+    {/if}
   </div>
 </div>
 
@@ -468,72 +603,134 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     color: var(--text-secondary);
   }
 
-  .new-folder-button {
+  .filter {
+    position: relative;
     display: flex;
+    flex: 1 1 5rem;
     align-items: center;
-    gap: 0.3rem;
-    padding: 0.2rem 0.3rem;
-    font: inherit;
-    font-size: 0.76rem;
-    color: var(--text-muted);
-    background: none;
-    border: none;
-    cursor: pointer;
-    align-self: flex-start;
-    border-radius: var(--radius-sm);
+    min-width: 0;
   }
 
-  .new-folder-button:hover {
-    color: var(--accent);
+  .filter-icon {
+    position: absolute;
+    left: 0.55rem;
+    display: flex;
+    color: var(--text-muted);
+    pointer-events: none;
+  }
+
+  .search-box {
+    flex: 1 1 auto;
+    min-width: 0;
+    font: inherit;
+    font-size: 0.8rem;
+    padding: 0.35rem 0.6rem 0.35rem 1.7rem;
+    color: var(--text-primary);
+    background: var(--surface-0);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .search-box:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+  }
+
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem;
+  }
+
+  .toolbar-actions {
+    display: flex;
+    gap: 0.25rem;
+    margin-left: auto;
+  }
+
+  .toolbar-actions:only-child {
+    flex: 1 1 auto;
+  }
+
+  .icon-button {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    min-width: 1.9rem;
+    height: 1.9rem;
+    padding: 0 0.4rem;
+    font: inherit;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    background: none;
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+  }
+
+  .icon-button:hover {
+    color: var(--text-primary);
+    background: var(--surface-2);
+  }
+
+  .icon-button.labelled {
+    flex: 1 1 auto;
+    color: var(--text-primary);
+    background: var(--surface-1);
+    border: 1px solid var(--border);
   }
 
   .sidebar-footer {
     display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
+    align-items: center;
+    gap: 0.25rem;
     margin-top: auto;
-    padding-top: var(--space-3);
+    padding-top: var(--space-2);
     border-top: 1px solid var(--border);
   }
 
-  :global(.notifications-trigger) {
-    display: flex;
-    width: 100%;
-  }
-
   :global(.notifications-trigger .trigger) {
-    width: 100%;
+    position: relative;
+    min-width: 1.9rem;
+    height: 1.9rem;
+    justify-content: center;
+    padding: 0 0.4rem;
+    color: var(--text-secondary);
+    background: none;
+    border: none;
   }
 
-  .settings-button {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    width: 100%;
-    padding: 0.35rem 0.6rem;
-    font: inherit;
-    font-size: 0.8rem;
-    color: var(--text-primary);
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    cursor: pointer;
-    transition:
-      background-color 0.1s ease,
-      border-color 0.1s ease;
+  .current-repo {
+    min-width: 0;
+    margin-left: auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.75rem;
+    color: var(--text-muted);
   }
 
-  .settings-button:hover {
-    background: var(--surface-2);
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   :global(.notifications-trigger) .count-badge {
+    position: absolute;
+    top: -0.2rem;
+    right: -0.3rem;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     min-width: 1.1rem;
     height: 1.1rem;
-    margin-left: auto;
     padding: 0 0.25rem;
     font-size: 0.68rem;
     font-weight: 600;
@@ -599,6 +796,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     gap: var(--space-3);
     min-height: 0;
     overflow: auto;
+    /* Keeps folder counts and remove buttons clear of the scrollbar. */
+    padding-right: 0.4rem;
   }
 
   .repos.dragging {
@@ -652,6 +851,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     white-space: nowrap;
   }
 
+  .here-dot {
+    flex-shrink: 0;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
   .folder-count {
     flex-shrink: 0;
     color: var(--text-muted);
@@ -659,8 +866,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     font-weight: 400;
   }
 
-  .folder-repos {
-    padding-left: 1.1rem;
+  /* Guide line sits under the chevron; repo icons line up with the folder icon. */
+  .recent-list.folder-repos {
+    margin-left: 0.85rem;
+    padding-left: 0.35rem;
+    border-left: 1px solid var(--border);
   }
 
   .recent {
@@ -716,6 +926,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     background: var(--accent-bg);
   }
 
+  .recent-list li.active {
+    background: var(--surface-2);
+  }
+
   .recent-list li.drag-over {
     outline: 2px dashed var(--accent);
     outline-offset: -2px;
@@ -759,6 +973,28 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .repo-parent {
+    min-width: 1.5rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.72rem;
+    font-weight: 400;
+    color: var(--text-muted);
+  }
+
+  .repo-folder {
+    flex-shrink: 3;
+    min-width: 2rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-left: auto;
+    font-size: 0.72rem;
+    font-weight: 400;
+    color: var(--text-muted);
   }
 
   .remove {
