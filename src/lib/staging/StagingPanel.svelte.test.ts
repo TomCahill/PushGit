@@ -313,7 +313,7 @@ describe("StagingPanel", () => {
     await fireEvent.contextMenu(await findByText("a.txt"));
     await fireEvent.click(await findByRole("menuitem", { name: "Discard changes" }));
     await fireEvent.click(
-      within(await findByRole("alertdialog")).getByRole("button", { name: "OK" }),
+      within(await findByRole("alertdialog")).getByRole("button", { name: "Discard" }),
     );
 
     await waitFor(() => expect(discardCalls).toEqual([{ repoPath: "/repo", path: "a.txt" }]));
@@ -1028,7 +1028,7 @@ describe("StagingPanel", () => {
 
     await fireEvent.click(getByRole("checkbox", { name: "Amend last commit" }));
     await fireEvent.click(
-      within(await findByRole("alertdialog")).getByRole("button", { name: "OK" }),
+      within(await findByRole("alertdialog")).getByRole("button", { name: "Replace" }),
     );
 
     await waitFor(() => expect(titleInput.value).toBe("previous commit message"));
@@ -1500,7 +1500,7 @@ describe("StagingPanel", () => {
       await fireEvent.click(await findByTitle("Generate a commit message from the staged diff"));
       const dialog = await findByRole("alertdialog");
       expect(dialog.textContent).toContain("https://api.anthropic.com");
-      await fireEvent.click(within(dialog).getByRole("button", { name: "OK" }));
+      await fireEvent.click(within(dialog).getByRole("button", { name: "Send" }));
 
       const titleInput = (await findByLabelText("Commit title")) as HTMLInputElement;
       await waitFor(() => expect(titleInput.value).toBe("feat: ok"));
@@ -1574,7 +1574,7 @@ describe("StagingPanel", () => {
 
       await fireEvent.click(await findByTitle("Generate a commit message from the staged diff"));
       await fireEvent.click(
-        within(await findByRole("alertdialog")).getByRole("button", { name: "OK" }),
+        within(await findByRole("alertdialog")).getByRole("button", { name: "Replace" }),
       );
 
       await waitFor(() => expect(titleInput.value).toBe("feat: replaced"));

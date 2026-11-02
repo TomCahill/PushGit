@@ -126,7 +126,7 @@ describe("TagsPanel", () => {
 
     await fireEvent.click(await findByTitle("Delete v1.0.0"));
     await fireEvent.click(
-      within(await findByRole("alertdialog")).getByRole("button", { name: "OK" }),
+      within(await findByRole("alertdialog")).getByRole("button", { name: "Delete tag" }),
     );
 
     await waitFor(() => expect(calls).toEqual([{ repoPath: "/repo", name: "v1.0.0" }]));

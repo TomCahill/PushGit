@@ -300,6 +300,10 @@ export function checkoutRemoteBranch(repoPath: string, remoteBranchName: string)
   return invoke("checkout_remote_branch", { repoPath, remoteBranchName });
 }
 
+export function branchUnmergedCount(repoPath: string, name: string): Promise<number> {
+  return invoke("branch_unmerged_count", { repoPath, name });
+}
+
 export function deleteBranch(repoPath: string, name: string): Promise<void> {
   return invoke("delete_branch", { repoPath, name });
 }

@@ -168,6 +168,7 @@ pub fn run() {
         commands::verify_commits,
         commands::list_gpg_secret_keys,
         commands::list_branches,
+        commands::branch_unmerged_count,
         commands::list_remote_branches,
         commands::create_branch,
         commands::checkout_branch,

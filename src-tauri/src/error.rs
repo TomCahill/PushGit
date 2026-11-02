@@ -27,16 +27,81 @@ pub enum PushGitError {
     Invalid(String),
 }
 
-/// Tauri serializes command `Err` values as JSON; `thiserror`'s `Display` output alone
-/// isn't structured enough for the frontend to branch on error kind, so this gives each
-/// variant a stable string tag instead of relying on message-text matching.
+// The UI gets the bare message; `Display` keeps the prefix and libgit2's class/code for debugging.
 impl Serialize for PushGitError {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.to_string())
+        serializer.serialize_str(&self.user_message())
+    }
+}
+
+impl PushGitError {
+    fn user_message(&self) -> String {
+        match self {
+            PushGitError::Git(err) => capitalize_first(err.message()),
+            PushGitError::Io(err) => err.to_string(),
+            other => other.to_string(),
+        }
+    }
+}
+
+fn capitalize_first(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
     }
 }
 
 pub type PushGitResult<T> = Result<T, PushGitError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use git2::{ErrorClass, ErrorCode};
+
+    fn serialized(err: &PushGitError) -> String {
+        serde_json::to_value(err)
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    fn not_found_ref() -> PushGitError {
+        PushGitError::Git(git2::Error::new(
+            ErrorCode::NotFound,
+            ErrorClass::Reference,
+            "cannot locate remote-tracking branch 'origin/x'",
+        ))
+    }
+
+    #[test]
+    fn git_errors_reach_the_ui_without_prefix_or_class_and_code() {
+        assert_eq!(
+            serialized(&not_found_ref()),
+            "Cannot locate remote-tracking branch 'origin/x'"
+        );
+    }
+
+    #[test]
+    fn git_display_keeps_debug_detail() {
+        let text = not_found_ref().to_string();
+        assert!(text.starts_with("git error: cannot locate"));
+        assert!(text.contains("class=Reference"));
+        assert!(text.contains("code=NotFound"));
+    }
+
+    #[test]
+    fn io_errors_drop_the_prefix() {
+        let err = PushGitError::Io(std::io::Error::other("disk full"));
+        assert_eq!(serialized(&err), "disk full");
+    }
+
+    #[test]
+    fn cancelled_text_is_unchanged_for_frontend_matching() {
+        assert_eq!(serialized(&PushGitError::Cancelled), "operation cancelled");
+    }
+}

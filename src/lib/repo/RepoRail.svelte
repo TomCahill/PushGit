@@ -154,9 +154,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     const count = reposInFolder(folder.id).length;
     const message =
       count > 0
-        ? `Delete "${folder.name}"? ${count} repo${count === 1 ? "" : "s"} will move back to Unsorted.`
-        : `Delete "${folder.name}"?`;
-    if (await confirmAsync(message)) onDeleteFolder(folder.id);
+        ? `"${folder.name}" will be deleted. ${count} repo${count === 1 ? "" : "s"} will move back to Unsorted.`
+        : `"${folder.name}" will be deleted.`;
+    const options = { title: "Delete folder?", confirmLabel: "Delete folder" };
+    if (await confirmAsync(message, options)) onDeleteFolder(folder.id);
   }
 
   function handleRepoContextMenu(event: MouseEvent, entry: RecentRepo) {

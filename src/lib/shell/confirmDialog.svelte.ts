@@ -7,7 +7,14 @@
 // next to everything else. Call confirmAsync()/promptAsync() exactly like the natives they
 // replace: await it, act on the result.
 
-type ConfirmRequest = {
+export type ConfirmOptions = {
+  title?: string;
+  confirmLabel?: string;
+  /** Danger dialogs focus Cancel and ignore a stray Enter, so only a deliberate click confirms. */
+  danger?: boolean;
+};
+
+type ConfirmRequest = ConfirmOptions & {
   kind: "confirm";
   message: string;
   resolve: (result: boolean) => void;
@@ -24,9 +31,9 @@ export const dialogState: { request: ConfirmRequest | PromptRequest | null } = $
   request: null,
 });
 
-export function confirmAsync(message: string): Promise<boolean> {
+export function confirmAsync(message: string, options: ConfirmOptions = {}): Promise<boolean> {
   return new Promise((resolve) => {
-    dialogState.request = { kind: "confirm", message, resolve };
+    dialogState.request = { kind: "confirm", message, ...options, resolve };
   });
 }
 
