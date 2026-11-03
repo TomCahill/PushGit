@@ -168,7 +168,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     const message = entry.isDirty
       ? `"${label}" has uncommitted changes that will be lost. Remove this worktree anyway?`
       : `Remove worktree "${label}"? The folder at ${entry.path} will be deleted.`;
-    if (!(await confirmAsync(message))) return;
+    const options = { title: "Remove worktree?", confirmLabel: "Remove worktree", danger: true };
+    if (!(await confirmAsync(message, options))) return;
     runAction(async () => {
       await removeWorktree(repoPath, entry.name);
       notifySuccess(`Removed worktree "${label}".`);

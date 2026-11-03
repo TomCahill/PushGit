@@ -225,7 +225,7 @@ describe("WorktreePanel", () => {
 
     await fireEvent.click(await findByText("Remove"));
     dialogEl = await findByRole("alertdialog");
-    await fireEvent.click(within(dialogEl).getByRole("button", { name: "OK" }));
+    await fireEvent.click(within(dialogEl).getByRole("button", { name: "Remove worktree" }));
 
     await waitFor(() => expect(calls).toEqual([{ repoPath: "/repo", name: "feature-wt" }]));
   });

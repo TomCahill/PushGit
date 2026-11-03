@@ -19,7 +19,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     children,
     ref = $bindable(null),
   }: {
-    variant?: "filled" | "tonal" | "outlined" | "text";
+    variant?: "filled" | "tonal" | "outlined" | "text" | "danger";
     type?: "button" | "submit";
     disabled?: boolean;
     title?: string;
@@ -95,6 +95,16 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
   .btn-outlined:not(:disabled):hover {
     background: var(--accent-bg);
+  }
+
+  .btn-danger {
+    color: var(--danger);
+    background: var(--danger-bg);
+    border: 1px solid var(--danger);
+  }
+
+  .btn-danger:not(:disabled):hover {
+    opacity: 0.85;
   }
 
   .btn-text {

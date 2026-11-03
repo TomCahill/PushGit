@@ -2,17 +2,31 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, waitFor, within } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { tick } from "svelte";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import ConfirmDialog from "$lib/shell/ConfirmDialog.svelte";
 import ContextMenu from "$lib/shell/ContextMenu.svelte";
 import { firePointer } from "$lib/shell/testPointerEvents";
-import { notificationHistory, notifyError, notifySuccess, toastState } from "$lib/shell/toast.svelte";
+import {
+  notificationHistory,
+  notifyError,
+  notifySuccess,
+  toastState,
+} from "$lib/shell/toast.svelte";
 import { updateCheckState } from "$lib/shell/updateCheck.svelte";
 import RepoRail from "./RepoRail.svelte";
 import type { RecentRepo } from "./recentRepos";
 import type { RepoFolder } from "./repoFolders";
+
+// Folder names also appear as labels on Recent rows, so target the header by its button role.
+function folderHeader(name: string): HTMLElement {
+  return screen.getByRole("button", { name: new RegExp(`^${name}\\b`) });
+}
+
+function inFolder(name: string) {
+  return within(folderHeader(name).closest(".folder") as HTMLElement);
+}
 
 function baseProps(overrides: Partial<Parameters<typeof RepoRail>[1]> = {}) {
   return {
@@ -27,6 +41,7 @@ function baseProps(overrides: Partial<Parameters<typeof RepoRail>[1]> = {}) {
     onRenameFolder: vi.fn(),
     onDeleteFolder: vi.fn(),
     onToggleFolderCollapsed: vi.fn(),
+    onCollapseAllFolders: vi.fn(),
     onMoveRepo: vi.fn(),
     onMoveFolder: vi.fn(),
     onOpenSettings: vi.fn(),
@@ -54,6 +69,38 @@ describe("RepoRail", () => {
     expect(getByText("other-repo")).toBeTruthy();
   });
 
+  it("shows the parent directory only for repos whose names clash", () => {
+    const { getByTitle } = render(RepoRail, {
+      props: baseProps({
+        recentRepos: [
+          { path: "/p/Lighten/api", lastOpenedAt: 3 },
+          { path: "/p/Buttress/api", lastOpenedAt: 2 },
+          { path: "/p/Buttress/infra", lastOpenedAt: 1 },
+        ],
+      }),
+    });
+
+    expect(getByTitle("/p/Lighten/api").textContent).toContain("Lighten");
+    expect(getByTitle("/p/Buttress/api").textContent).toContain("Buttress");
+    expect(getByTitle("/p/Buttress/infra").textContent).not.toContain("Buttress");
+  });
+
+  it("doesn't repeat the parent directory when it matches the row's folder label", async () => {
+    const { getByLabelText, getByTitle } = render(RepoRail, {
+      props: baseProps({
+        folders: [{ id: "f1", name: "Lighten" }],
+        recentRepos: [
+          { path: "/p/Lighten/api", lastOpenedAt: 2, folderId: "f1" },
+          { path: "/p/Buttress/api", lastOpenedAt: 1 },
+        ],
+      }),
+    });
+
+    await fireEvent.input(getByLabelText("Filter repositories"), { target: { value: "api" } });
+
+    expect(getByTitle("/p/Lighten/api").textContent?.match(/Lighten/g)).toHaveLength(1);
+  });
+
   it("calls onSelectRecent with the full path when a recent entry is clicked", async () => {
     const onSelectRecent = vi.fn();
     const { getByText } = render(RepoRail, {
@@ -79,10 +126,19 @@ describe("RepoRail", () => {
       }),
     });
 
-    await fireEvent.click(getByTitle("Remove /home/tom/Projects/pushgit from recent"));
+    await fireEvent.click(getByTitle("Remove /home/tom/Projects/pushgit from list"));
 
     expect(onRemoveRecent).toHaveBeenCalledWith("/home/tom/Projects/pushgit");
     expect(onSelectRecent).not.toHaveBeenCalled();
+  });
+
+  it("labels the Open button only until a repo has been opened", async () => {
+    const { getByTitle, rerender } = render(RepoRail, { props: baseProps() });
+    expect(getByTitle("Open a repository").textContent).toContain("Open");
+
+    await rerender(baseProps({ recentRepos: [{ path: "/repo/a", lastOpenedAt: 1 }] }));
+
+    expect(getByTitle("Open a repository").textContent?.trim()).toBe("");
   });
 
   it("calls onOpenPath with the picked folder when the dialog resolves", async () => {
@@ -129,7 +185,7 @@ describe("RepoRail", () => {
   });
 
   it("marks the currently-open repo in the recent list", () => {
-    const { getByText } = render(RepoRail, {
+    const { getByRole, getByText } = render(RepoRail, {
       props: baseProps({
         currentPath: "/home/tom/Projects/pushgit",
         recentRepos: [
@@ -139,10 +195,11 @@ describe("RepoRail", () => {
       }),
     });
 
-    const currentRow = getByText("pushgit").closest("li");
+    const currentRow = getByRole("button", { name: "pushgit" }).closest("li");
     const otherRow = getByText("other-repo").closest("li");
     expect(currentRow?.className).toContain("current");
     expect(otherRow?.className).not.toContain("current");
+    expect(document.querySelector(".sidebar-footer")?.textContent).toContain("pushgit");
   });
 
   describe("folders", () => {
@@ -155,10 +212,35 @@ describe("RepoRail", () => {
     it("groups repos under their folder, separate from the ungrouped Recent list", () => {
       const { getByText } = render(RepoRail, { props: baseProps({ folders, recentRepos }) });
 
-      expect(getByText("Work")).toBeTruthy();
-      expect(getByText("foldered")).toBeTruthy();
+      expect(folderHeader("Work")).toBeTruthy();
+      expect(inFolder("Work").getByText("foldered")).toBeTruthy();
       expect(getByText("ungrouped")).toBeTruthy();
       expect(getByText("1")).toBeTruthy(); // folder's repo count
+    });
+
+    it("collapses every folder from the toolbar", async () => {
+      const onCollapseAllFolders = vi.fn();
+      const { getByTitle } = render(RepoRail, {
+        props: baseProps({ folders, recentRepos, onCollapseAllFolders }),
+      });
+
+      await fireEvent.click(getByTitle("Collapse all folders"));
+
+      expect(onCollapseAllFolders).toHaveBeenCalled();
+    });
+
+    it("marks a collapsed folder that holds the open repo", () => {
+      const props = { folders: [{ id: "f1", name: "Work", collapsed: true }], recentRepos };
+      const { queryByTitle, unmount } = render(RepoRail, {
+        props: baseProps({ ...props, currentPath: "/repo/foldered" }),
+      });
+      expect(queryByTitle("The open repository is in this folder")).toBeTruthy();
+      unmount();
+
+      const other = render(RepoRail, {
+        props: baseProps({ ...props, currentPath: "/repo/ungrouped" }),
+      });
+      expect(other.queryByTitle("The open repository is in this folder")).toBeNull();
     });
 
     it("toggles a folder collapsed when its header is clicked", async () => {
@@ -167,7 +249,7 @@ describe("RepoRail", () => {
         props: baseProps({ folders, recentRepos, onToggleFolderCollapsed }),
       });
 
-      await fireEvent.click(getByText("Work"));
+      await fireEvent.click(folderHeader("Work"));
 
       expect(onToggleFolderCollapsed).toHaveBeenCalledWith("f1");
     });
@@ -177,8 +259,8 @@ describe("RepoRail", () => {
         props: baseProps({ folders: [{ id: "f1", name: "Work", collapsed: true }], recentRepos }),
       });
 
-      expect(getByText("Work")).toBeTruthy();
-      expect(queryByText("foldered")).toBeNull();
+      expect(folderHeader("Work")).toBeTruthy();
+      expect(inFolder("Work").queryByText("foldered")).toBeNull();
     });
 
     it("creates a folder from the New Folder button", async () => {
@@ -196,7 +278,7 @@ describe("RepoRail", () => {
       await waitFor(() => expect(onCreateFolder).toHaveBeenCalledWith("Personal"));
     });
 
-    it("offers Move to <folder> and Remove from Recent from a repo's context menu", async () => {
+    it("offers Move to Folder… and Remove from list from a repo's context menu", async () => {
       const onMoveRepo = vi.fn();
       const onRemoveRecent = vi.fn();
       render(ContextMenu);
@@ -205,29 +287,32 @@ describe("RepoRail", () => {
       });
 
       await fireEvent.contextMenu(getByText("ungrouped"));
-      await fireEvent.click(await findByRole("menuitem", { name: 'Move to "Work"' }));
+      await fireEvent.click(await findByRole("menuitem", { name: "Move to Folder…" }));
+      await fireEvent.click(await findByRole("menuitem", { name: "Work" }));
 
       expect(onMoveRepo).toHaveBeenCalledWith("/repo/ungrouped", "f1", null);
 
       await fireEvent.contextMenu(getByText("ungrouped"));
-      await fireEvent.click(await findByRole("menuitem", { name: "Remove from Recent" }));
+      await fireEvent.click(await findByRole("menuitem", { name: "Remove from list" }));
 
       expect(onRemoveRecent).toHaveBeenCalledWith("/repo/ungrouped");
     });
 
-    it("offers Remove from Folder only for a repo already in one", async () => {
+    it("offers Remove from Folder for a filed repo, and doesn't offer its own folder as a move target", async () => {
       const onMoveRepo = vi.fn();
       render(ContextMenu);
       const { getByText, findByRole, queryByRole } = render(RepoRail, {
         props: baseProps({ folders, recentRepos, onMoveRepo }),
       });
 
-      await fireEvent.contextMenu(getByText("foldered"));
-      expect(await findByRole("menuitem", { name: "Remove from Folder" })).toBeTruthy();
-      expect(queryByRole("menuitem", { name: 'Move to "Work"' })).toBeNull();
-
+      await fireEvent.contextMenu(inFolder("Work").getByText("foldered"));
       await fireEvent.click(await findByRole("menuitem", { name: "Remove from Folder" }));
       expect(onMoveRepo).toHaveBeenCalledWith("/repo/foldered", undefined, null);
+
+      await fireEvent.contextMenu(inFolder("Work").getByText("foldered"));
+      await fireEvent.click(await findByRole("menuitem", { name: "Move to Folder…" }));
+      expect(await findByRole("menuitem", { name: "New Folder…" })).toBeTruthy();
+      expect(queryByRole("menuitem", { name: "Work" })).toBeNull();
     });
 
     it("creates a folder and files the repo into it via New Folder… on a repo's menu", async () => {
@@ -240,6 +325,7 @@ describe("RepoRail", () => {
       });
 
       await fireEvent.contextMenu(getByText("ungrouped"));
+      await fireEvent.click(await findByRole("menuitem", { name: "Move to Folder…" }));
       await fireEvent.click(await findByRole("menuitem", { name: "New Folder…" }));
       const dialog = within(await findByRole("alertdialog"));
       await fireEvent.input(dialog.getByRole("textbox"), { target: { value: "Personal" } });
@@ -257,7 +343,7 @@ describe("RepoRail", () => {
         props: baseProps({ folders, recentRepos, onRenameFolder }),
       });
 
-      await fireEvent.contextMenu(getByText("Work"));
+      await fireEvent.contextMenu(folderHeader("Work"));
       await fireEvent.click(await findByRole("menuitem", { name: "Rename Folder…" }));
       const dialog = within(await findByRole("alertdialog"));
       expect((dialog.getByRole("textbox") as HTMLInputElement).value).toBe("Work");
@@ -275,11 +361,11 @@ describe("RepoRail", () => {
         props: baseProps({ folders, recentRepos, onDeleteFolder }),
       });
 
-      await fireEvent.contextMenu(getByText("Work"));
+      await fireEvent.contextMenu(folderHeader("Work"));
       await fireEvent.click(await findByRole("menuitem", { name: "Delete Folder" }));
       const dialog = within(await findByRole("alertdialog"));
-      expect(dialog.getByText(/1 repo will move back to Recent/)).toBeTruthy();
-      await fireEvent.click(dialog.getByRole("button", { name: "OK" }));
+      expect(dialog.getByText(/1 repo will move back to Unsorted/)).toBeTruthy();
+      await fireEvent.click(dialog.getByRole("button", { name: "Delete folder" }));
 
       await waitFor(() => expect(onDeleteFolder).toHaveBeenCalledWith("f1"));
     });
@@ -291,7 +377,7 @@ describe("RepoRail", () => {
       });
 
       const source = getByText("ungrouped").closest("li") as HTMLElement;
-      const target = getByText("Work").closest(".folder-header") as HTMLElement;
+      const target = folderHeader("Work").closest(".folder-header") as HTMLElement;
       vi.spyOn(document, "elementFromPoint").mockReturnValue(target);
 
       firePointer(source, "pointerdown", { clientX: 0, clientY: 0, pointerId: 1 });
@@ -307,7 +393,7 @@ describe("RepoRail", () => {
       });
 
       const source = getByText("ungrouped").closest("li") as HTMLElement;
-      const target = getByText("Work").closest(".folder-header") as HTMLElement;
+      const target = folderHeader("Work").closest(".folder-header") as HTMLElement;
       vi.spyOn(document, "elementFromPoint").mockReturnValue(target);
 
       firePointer(source, "pointerdown", { clientX: 0, clientY: 0, pointerId: 1 });
@@ -343,14 +429,14 @@ describe("RepoRail", () => {
       expect(onMoveRepo).toHaveBeenCalledWith("/repo/b", undefined, "/repo/a");
     });
 
-    it("un-files a repo when dropped on the Recent header", () => {
+    it("un-files a repo when dropped on the Unsorted header", () => {
       const onMoveRepo = vi.fn();
       const { getByText } = render(RepoRail, {
         props: baseProps({ folders, recentRepos, onMoveRepo }),
       });
 
-      const source = getByText("foldered").closest("li") as HTMLElement;
-      const target = getByText("Recent").closest(".recent-header") as HTMLElement;
+      const source = inFolder("Work").getByText("foldered").closest("li") as HTMLElement;
+      const target = getByText("Unsorted").closest(".recent-header") as HTMLElement;
       vi.spyOn(document, "elementFromPoint").mockReturnValue(target);
 
       firePointer(source, "pointerdown", { clientX: 0, clientY: 0, pointerId: 1 });
@@ -371,7 +457,7 @@ describe("RepoRail", () => {
       });
 
       const source = getByText("Personal").closest(".folder-header") as HTMLElement;
-      const target = getByText("Work").closest(".folder-header") as HTMLElement;
+      const target = folderHeader("Work").closest(".folder-header") as HTMLElement;
       vi.spyOn(document, "elementFromPoint").mockReturnValue(target);
 
       firePointer(source, "pointerdown", { clientX: 0, clientY: 0, pointerId: 1 });
@@ -389,7 +475,7 @@ describe("RepoRail", () => {
       });
 
       const source = getByText("ungrouped").closest("li") as HTMLElement;
-      const target = getByText("Work").closest(".folder-header") as HTMLElement;
+      const target = folderHeader("Work").closest(".folder-header") as HTMLElement;
       vi.spyOn(document, "elementFromPoint").mockReturnValue(target);
 
       firePointer(source, "pointerdown", { clientX: 0, clientY: 0, pointerId: 1 });
@@ -427,7 +513,7 @@ describe("RepoRail", () => {
       firePointer(row, "pointerdown", { clientX: 0, clientY: 0, pointerId: 1 });
       firePointer(row, "pointermove", { clientX: 0, clientY: 8, pointerId: 1 });
       firePointer(row, "pointerup", { clientX: 0, clientY: 8, pointerId: 1 });
-      await fireEvent.click(getByTitle("Remove /repo/ungrouped from recent"));
+      await fireEvent.click(getByTitle("Remove /repo/ungrouped from list"));
 
       expect(onRemoveRecent).toHaveBeenCalledWith("/repo/ungrouped");
     });
@@ -533,6 +619,152 @@ describe("RepoRail", () => {
       await tick();
 
       expect(queryByText("v1.3.0 available")).toBeNull();
+    });
+  });
+
+  describe("filter", () => {
+    const folders: RepoFolder[] = [{ id: "f1", name: "Work", collapsed: true }];
+    const recentRepos: RecentRepo[] = [
+      { path: "/repo/api-server", lastOpenedAt: 3, folderId: "f1" },
+      { path: "/repo/web-app", lastOpenedAt: 2 },
+      { path: "/repo/api-client", lastOpenedAt: 1 },
+    ];
+
+    async function typeFilter(input: HTMLElement, value: string) {
+      await fireEvent.input(input, { target: { value } });
+    }
+
+    it("matches repos inside collapsed folders and labels them with their folder", async () => {
+      const { getByLabelText, getByText, queryByText } = render(RepoRail, {
+        props: baseProps({ folders, recentRepos }),
+      });
+
+      await typeFilter(getByLabelText("Filter repositories"), "API");
+
+      expect(getByText("api-server")).toBeTruthy();
+      expect(getByText("api-client")).toBeTruthy();
+      expect(queryByText("web-app")).toBeNull();
+      expect(getByText("api-server").closest("button")?.textContent).toContain("Work");
+    });
+
+    it("opens the active match on Enter, moving it with the arrow keys, then clears", async () => {
+      const onSelectRecent = vi.fn();
+      const { getByLabelText } = render(RepoRail, {
+        props: baseProps({ folders, recentRepos, onSelectRecent }),
+      });
+      const input = getByLabelText("Filter repositories") as HTMLInputElement;
+
+      await typeFilter(input, "api");
+      await fireEvent.keyDown(input, { key: "ArrowDown" });
+      await fireEvent.keyDown(input, { key: "Enter" });
+
+      expect(onSelectRecent).toHaveBeenCalledWith("/repo/api-client");
+      expect(input.value).toBe("");
+    });
+
+    it("clears on Escape and restores the folder view", async () => {
+      const { getByLabelText, getByText } = render(RepoRail, {
+        props: baseProps({ folders, recentRepos }),
+      });
+      const input = getByLabelText("Filter repositories") as HTMLInputElement;
+
+      await typeFilter(input, "api");
+      await fireEvent.keyDown(input, { key: "Escape" });
+
+      expect(input.value).toBe("");
+      expect(folderHeader("Work")).toBeTruthy();
+      expect(getByText("web-app")).toBeTruthy();
+    });
+
+    it("says so when nothing matches", async () => {
+      const { getByLabelText, getByText } = render(RepoRail, {
+        props: baseProps({ folders, recentRepos }),
+      });
+
+      await typeFilter(getByLabelText("Filter repositories"), "nope");
+
+      expect(getByText('No repos match "nope".')).toBeTruthy();
+    });
+
+    it("doesn't start a drag from a filtered row", async () => {
+      const onMoveRepo = vi.fn();
+      const { getByLabelText, getByText } = render(RepoRail, {
+        props: baseProps({ folders, recentRepos, onMoveRepo }),
+      });
+      await typeFilter(getByLabelText("Filter repositories"), "api");
+
+      const source = getByText("api-client").closest("li") as HTMLElement;
+      const target = getByText("api-server").closest("li") as HTMLElement;
+      vi.spyOn(document, "elementFromPoint").mockReturnValue(target);
+      firePointer(source, "pointerdown", { clientX: 0, clientY: 0, pointerId: 1 });
+      firePointer(source, "pointermove", { clientX: 0, clientY: -20, pointerId: 1 });
+      firePointer(source, "pointerup", { clientX: 0, clientY: -20, pointerId: 1 });
+
+      expect(onMoveRepo).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("recent and unsorted", () => {
+    const folders: RepoFolder[] = [
+      { id: "f1", name: "Work", collapsed: true },
+      { id: "f2", name: "Home", collapsed: true },
+    ];
+    const recentRepos: RecentRepo[] = [
+      { path: "/repo/oldest", lastOpenedAt: 1, folderId: "f1" },
+      { path: "/repo/newest", lastOpenedAt: 5, folderId: "f2" },
+      { path: "/repo/middle", lastOpenedAt: 3, folderId: "f1" },
+      { path: "/repo/second", lastOpenedAt: 4, folderId: "f1" },
+      { path: "/repo/loose", lastOpenedAt: 9 },
+    ];
+
+    it("lists the three most recently opened foldered repos, with their folder", () => {
+      const { getByRole } = render(RepoRail, { props: baseProps({ folders, recentRepos }) });
+
+      const recent = getByRole("list", { name: "Recently opened repositories" });
+      const names = [...recent.querySelectorAll(".recent-name")].map((el) => el.textContent);
+      expect(names).toEqual(["newest", "second", "middle"]);
+      expect(within(recent).getByText("Home")).toBeTruthy();
+    });
+
+    it("doesn't drag Recent rows", () => {
+      const onMoveRepo = vi.fn();
+      const { getByRole } = render(RepoRail, {
+        props: baseProps({ folders, recentRepos, onMoveRepo }),
+      });
+
+      const recent = getByRole("list", { name: "Recently opened repositories" });
+      const source = within(recent).getByText("newest").closest("li") as HTMLElement;
+      vi.spyOn(document, "elementFromPoint").mockReturnValue(folderHeader("Work"));
+      firePointer(source, "pointerdown", { clientX: 0, clientY: 0, pointerId: 1 });
+      firePointer(source, "pointermove", { clientX: 0, clientY: 40, pointerId: 1 });
+      firePointer(source, "pointerup", { clientX: 0, clientY: 40, pointerId: 1 });
+
+      expect(onMoveRepo).not.toHaveBeenCalled();
+    });
+
+    it("hides an empty Unsorted header until a drag starts", async () => {
+      const filed = recentRepos.filter((entry) => entry.folderId);
+      const { queryByText } = render(RepoRail, {
+        props: baseProps({ folders: [{ id: "f1", name: "Work" }, folders[1]], recentRepos: filed }),
+      });
+      expect(queryByText("Unsorted")).toBeNull();
+
+      const source = inFolder("Work").getByText("oldest").closest("li") as HTMLElement;
+      vi.spyOn(document, "elementFromPoint").mockReturnValue(source);
+      firePointer(source, "pointerdown", { clientX: 0, clientY: 0, pointerId: 1 });
+      firePointer(source, "pointermove", { clientX: 0, clientY: 20, pointerId: 1 });
+      await tick();
+
+      expect(queryByText("Unsorted")).toBeTruthy();
+    });
+
+    it("labels ungrouped repos Repositories when there are no folders", () => {
+      const { getByText, queryByText } = render(RepoRail, {
+        props: baseProps({ recentRepos: [{ path: "/repo/loose", lastOpenedAt: 1 }] }),
+      });
+
+      expect(getByText("Repositories")).toBeTruthy();
+      expect(queryByText("Recent")).toBeNull();
     });
   });
 });

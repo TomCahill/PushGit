@@ -109,3 +109,8 @@ export function repoDisplayName(path: string): string {
   const segment = trimmed.split(/[/\\]/).pop();
   return segment || path;
 }
+
+export function repoParentName(path: string): string {
+  const segments = path.replace(/[/\\]+$/, "").split(/[/\\]/);
+  return segments.at(-2) ?? "";
+}

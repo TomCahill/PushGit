@@ -292,6 +292,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     ) {
       const confirmed = await confirmAsync(
         `This will send your staged diff to ${transport.baseUrl}. Staged changes can include secrets — review what's staged before continuing.`,
+        { confirmLabel: "Send" },
       );
       if (!confirmed) return;
       try {
@@ -305,6 +306,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     if (title !== "" || description !== "") {
       const confirmed = await confirmAsync(
         "Replace the current commit title/description with an AI-generated one?",
+        { confirmLabel: "Replace" },
       );
       if (!confirmed) return;
     }
@@ -612,7 +614,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     const path = fileKey(file);
     if (
       !(await confirmAsync(
-        `Discard changes to "${path}"? This can be undone from the toolbar's Undo button.`,
+        `Changes to "${path}" will be discarded. You can undo this with the toolbar's Undo button.`,
+        { title: "Discard changes?", confirmLabel: "Discard", danger: true },
       ))
     ) {
       return;
@@ -686,6 +689,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     if (turningOn && (title !== "" || description !== "")) {
       const confirmed = await confirmAsync(
         "Replace the current commit title/description with the last commit's message?",
+        { confirmLabel: "Replace" },
       );
       if (!confirmed) {
         // The click already flipped the native checkbox before this async confirm resolved —

@@ -17,14 +17,16 @@ function toastMessages(): string[] {
 }
 
 describe("CommitGraph", () => {
-  it("shows a prompt instead of opening a session when no repo is given", () => {
-    mockIPC(() => {
-      throw new Error("should not be called");
+  it("doesn't open a session or render rows when no repo is given", () => {
+    const calls: string[] = [];
+    mockIPC((cmd) => {
+      calls.push(cmd);
     });
 
-    const { getByText } = render(CommitGraph, { props: { repoPath: "" } });
+    const { container } = render(CommitGraph, { props: { repoPath: "" } });
 
-    expect(getByText("Open a repository to see its commit graph.")).toBeTruthy();
+    expect(calls).not.toContain("graph_open");
+    expect(container.querySelectorAll(".row")).toHaveLength(0);
   });
 
   it("opens a graph session and renders the returned rows", async () => {
@@ -639,7 +641,7 @@ describe("CommitGraph", () => {
       await fireEvent.contextMenu(await findByText("feature"));
       await fireEvent.click(await findByRole("menuitem", { name: "Delete branch" }));
       await fireEvent.click(
-        within(await findByRole("alertdialog")).getByRole("button", { name: "OK" }),
+        within(await findByRole("alertdialog")).getByRole("button", { name: "Delete branch" }),
       );
 
       await waitFor(() => expect(calls).toEqual([{ repoPath: "/repo", name: "feature" }]));
@@ -882,7 +884,7 @@ describe("CommitGraph", () => {
       await fireEvent.contextMenu(await findByText("v1.0.0"));
       await fireEvent.click(await findByRole("menuitem", { name: "Delete tag" }));
       await fireEvent.click(
-        within(await findByRole("alertdialog")).getByRole("button", { name: "OK" }),
+        within(await findByRole("alertdialog")).getByRole("button", { name: "Delete tag" }),
       );
 
       await waitFor(() => expect(calls).toEqual([{ repoPath: "/repo", name: "v1.0.0" }]));
@@ -1109,7 +1111,7 @@ describe("CommitGraph", () => {
       await fireEvent.contextMenu(await findByText("WIP on develop"));
       await fireEvent.click(await findByRole("menuitem", { name: "Drop stash" }));
       await fireEvent.click(
-        within(await findByRole("alertdialog")).getByRole("button", { name: "OK" }),
+        within(await findByRole("alertdialog")).getByRole("button", { name: "Drop stash" }),
       );
 
       await waitFor(() => expect(calls).toEqual([{ repoPath: "/repo", index: 0 }]));

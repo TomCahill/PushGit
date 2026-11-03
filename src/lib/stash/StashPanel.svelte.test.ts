@@ -141,7 +141,7 @@ describe("StashPanel", () => {
 
     await fireEvent.click(await findByTitle('Drop "On main: WIP"'));
     await fireEvent.click(
-      within(await findByRole("alertdialog")).getByRole("button", { name: "OK" }),
+      within(await findByRole("alertdialog")).getByRole("button", { name: "Drop stash" }),
     );
 
     await waitFor(() => expect(calls).toEqual([{ repoPath: "/repo", index: 0 }]));

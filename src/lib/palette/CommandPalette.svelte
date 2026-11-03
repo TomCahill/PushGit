@@ -4,8 +4,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 
 <script lang="ts">
-  // Ctrl+P / Cmd+P command palette: fuzzy (substring) search across quick commands, local
-  // branches, currently-changed files, and commits. Mounted once
+  // Ctrl+P / Cmd+P command palette: fuzzy (substring) search across quick commands, recent
+  // repos, local branches, currently-changed files, and commits. Mounted once
   // at the shell root, same imperative-singleton pattern as `ConfirmDialog`/`ContextMenu` —
   // this component owns the actual searchable data (it needs `repoPath` to fetch it), while
   // `commandPalette.svelte.ts` only tracks open/closed.
@@ -33,6 +33,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     listBranches,
   } from "$lib/git/api";
   import type { BranchInfo, CommitRow } from "$lib/git/types";
+  import { repoDisplayName, repoParentName, type RecentRepo } from "$lib/repo/recentRepos";
   import {
     closeCommandPalette,
     openCommandPalette,
@@ -47,11 +48,15 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   let {
     repoPath,
     commands,
+    repos = [],
+    onOpenRepo,
     onChanged,
     onSelectFile,
   }: {
     repoPath: string;
     commands: PaletteCommand[];
+    repos?: RecentRepo[];
+    onOpenRepo?: (path: string) => void;
     onChanged?: () => void;
     onSelectFile?: () => void;
   } = $props();
@@ -66,7 +71,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   let commitResults = $state<CommitRow[]>([]);
 
   type Entry = {
-    section: "Commands" | "Branches" | "Files" | "Commits";
+    section: "Commands" | "Repositories" | "Branches" | "Files" | "Commits";
     key: string;
     label: string;
     run: () => void | Promise<void>;
@@ -85,6 +90,27 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         label: c.label,
         run: async () => {
           await c.run();
+          closeCommandPalette();
+        },
+      })),
+  );
+
+  // The parent directory is part of the label so typing a project group name lists its repos.
+  const filteredRepos = $derived<Entry[]>(
+    repos
+      .map((repo) => ({
+        repo,
+        label: `${repoDisplayName(repo.path)} · ${repoParentName(repo.path)}`,
+      }))
+      .filter(({ label }) => !query.trim() || matches(label, query))
+      .sort((a, b) => b.repo.lastOpenedAt - a.repo.lastOpenedAt)
+      .slice(0, MAX_PER_SECTION)
+      .map(({ repo, label }) => ({
+        section: "Repositories",
+        key: `repo:${repo.path}`,
+        label: repo.path === repoPath ? `${label} (current)` : label,
+        run: () => {
+          if (repo.path !== repoPath) onOpenRepo?.(repo.path);
           closeCommandPalette();
         },
       })),
@@ -126,6 +152,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
   const entries = $derived<Entry[]>([
     ...filteredCommands,
+    ...filteredRepos,
     ...filteredBranches,
     ...filteredFiles,
     ...filteredCommits,
@@ -293,7 +320,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         bind:this={inputEl}
         type="text"
         bind:value={query}
-        placeholder="Search commands, branches, files, or commits…"
+        placeholder="Search commands, repos, branches, files, or commits…"
         aria-label="Command palette search"
       />
       {#if error}

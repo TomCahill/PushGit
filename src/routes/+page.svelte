@@ -18,6 +18,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import ConflictEditor from "$lib/conflict/ConflictEditor.svelte";
   import HunkDiff from "$lib/diff/HunkDiff.svelte";
   import RepoRail from "$lib/repo/RepoRail.svelte";
+  import WelcomeView from "$lib/repo/WelcomeView.svelte";
   import {
     recordRepoOpened,
     removeRecentRepo,
@@ -32,6 +33,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     renameFolder,
     deleteFolder,
     toggleFolderCollapsed,
+    expandFolder,
+    collapseAllFolders,
     moveFolder,
     type RepoFolder,
   } from "$lib/repo/repoFolders";
@@ -103,6 +106,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
   let repoPath = $state("");
   let openError = $state<string | null>(null);
+  // Holds back the welcome view until the startup reopen settles, so it doesn't flash first.
+  let startupResolved = $state(false);
   let refreshKey = $state(0);
   let recentRepos = $state<RecentRepo[]>([]);
   let folders = $state<RepoFolder[]>([]);
@@ -420,8 +425,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       // No CLI plugin support in this context (e.g. tests) — fall back below.
     }
     const path = cliPath ?? localStorage.getItem(LAST_REPO_KEY);
-    if (path) {
-      void openRepo(path);
+    try {
+      if (path) await openRepo(path);
+    } finally {
+      startupResolved = true;
     }
   }
 
@@ -438,6 +445,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       repoPath = workdir;
       localStorage.setItem(LAST_REPO_KEY, workdir);
       recentRepos = recordRepoOpened(workdir);
+      const folderId = recentRepos.find((entry) => entry.path === workdir)?.folderId;
+      if (folderId) folders = expandFolder(folderId);
       refreshKey += 1;
 
       unlisten?.();
@@ -708,7 +717,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       currentPath={repoPath}
       {recentRepos}
       {folders}
-      {openError}
+      openError={repoPath ? openError : null}
       onOpenPath={openRepo}
       onSelectRecent={openRepo}
       onRemoveRecent={handleRemoveRecent}
@@ -716,6 +725,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       onRenameFolder={handleRenameFolder}
       onDeleteFolder={handleDeleteFolder}
       onToggleFolderCollapsed={handleToggleFolderCollapsed}
+      onCollapseAllFolders={() => (folders = collapseAllFolders())}
       onMoveRepo={handleMoveRepo}
       onMoveFolder={handleMoveFolder}
       onOpenSettings={() => (showSettings = true)}
@@ -784,6 +794,16 @@ SPDX-License-Identifier: AGPL-3.0-or-later
           {/if}
         </div>
       </section>
+    {:else if !repoPath}
+      {#if startupResolved}
+        <WelcomeView
+          {recentRepos}
+          {folders}
+          {openError}
+          onOpen={handleMenuOpenRepository}
+          onSelectRecent={openRepo}
+        />
+      {/if}
     {:else}
       <section class="graph" aria-label="Commit graph">
         <CommitGraph
@@ -805,7 +825,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
   <section class="diff" aria-label="Diff viewer">
     {#if !repoPath}
-      <p class="placeholder">Open a repository to get started.</p>
+      <!-- The centre pane's welcome view covers the no-repo state. -->
     {:else if viewMode === "working"}
       <StagingPanel
         {repoPath}
@@ -914,6 +934,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 <CommandPalette
   {repoPath}
   commands={paletteCommands}
+  repos={recentRepos}
+  onOpenRepo={openRepo}
   onChanged={() => (refreshKey += 1)}
   onSelectFile={showWorkingDirectory}
 />
