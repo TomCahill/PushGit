@@ -5,10 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 <script lang="ts">
   // Blame + file history — secondary investigative tools, not
-  // part of the core commit/diff/merge loop. Blame is computed against HEAD only (not an
-  // arbitrary historical revision) and shown as plain text, not syntax-highlighted —
-  // `HunkDiff.svelte`'s per-hunk highlighting machinery is built around diff hunks, not a
-  // whole-file line list, and duplicating it here is more than this view needs. This
+  // part of the core commit/diff/merge loop. Blame starts from `rev` (HEAD when null). This
   // component owns only the sidebar's file-history list; the annotated blame lines
   // (`BlameFileView.svelte`) and a selected history entry's diff (`HunkDiff`) both render
   // in the shell's center panel instead, reported up via `onLinesChange`/`onDiffChange` —
@@ -20,12 +17,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   let {
     repoPath,
     path,
+    rev = null,
     onClose,
     onDiffChange,
     onLinesChange,
   }: {
     repoPath: string;
     path: string;
+    rev?: string | null;
     onClose: () => void;
     /** Fires whenever the selected history entry's diff changes, so the shell can render
      *  `HunkDiff` for it in the center panel — this view no longer renders the diff itself. */
@@ -44,10 +43,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   let historyDiffError = $state<string | null>(null);
 
   $effect(() => {
-    void load(repoPath, path);
+    void load(repoPath, path, rev);
   });
 
-  async function load(rp: string, p: string) {
+  async function load(rp: string, p: string, r: string | null) {
     lines = null;
     history = null;
     loadError = null;
@@ -55,8 +54,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     historyDiff = null;
     try {
       const [blameResult, historyResult] = await Promise.all([
-        blameFile(rp, p),
-        fileHistory(rp, p),
+        blameFile(rp, p, r ?? undefined),
+        fileHistory(rp, p, r ?? undefined),
       ]);
       lines = blameResult;
       history = historyResult;
@@ -92,7 +91,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 <div class="blame-view">
   <div class="header">
-    <h2>{path}</h2>
+    <h2>
+      {path}{#if rev}<span class="at"> at {rev.slice(0, 7)}</span>{/if}
+    </h2>
     <button type="button" onclick={onClose}>Close</button>
   </div>
 
@@ -136,6 +137,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 </div>
 
 <style>
+  .at {
+    font-weight: 400;
+    color: var(--text-secondary);
+  }
+
   .blame-view {
     display: flex;
     flex-direction: column;

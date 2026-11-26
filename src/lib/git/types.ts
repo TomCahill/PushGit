@@ -395,3 +395,40 @@ export interface SubmoduleInfo {
   headId: string | null;
   workdirId: string | null;
 }
+
+// Mirror of `src-tauri/src/tree/model.rs`.
+export type TreeSource = { kind: "revision"; oid: string } | { kind: "workingTree" };
+
+export type TreeEntryKind = "file" | "dir" | "symlink" | "submodule";
+
+export interface TreeEntry {
+  name: string;
+  path: string;
+  kind: TreeEntryKind;
+  size: number | null;
+  status: FileStatus | null;
+  containsChanges: boolean;
+}
+
+export interface PathEntry {
+  path: string;
+  status: FileStatus | null;
+}
+
+export interface TreePaths {
+  paths: PathEntry[];
+  truncated: boolean;
+}
+
+export type BlobView =
+  | { kind: "text"; content: string; truncated: boolean; byteLen: number }
+  | { kind: "image"; preview: BinaryPreview }
+  | { kind: "binary"; byteLen: number }
+  | { kind: "symlink"; target: string }
+  | { kind: "submodule"; commit: string }
+  | { kind: "deleted" };
+
+export type RefStatus =
+  | { kind: "unchanged" }
+  | { kind: "moved"; oid: string; newerCommits: number | null }
+  | { kind: "gone" };

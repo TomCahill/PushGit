@@ -21,7 +21,7 @@ describe("BlameView", () => {
     mockIPC((cmd, args) => {
       switch (cmd) {
         case "blame_file":
-          expect(args).toEqual({ repoPath: "/repo", path: "a.txt" });
+          expect(args).toEqual({ repoPath: "/repo", path: "a.txt", rev: null });
           return [line];
         case "file_history":
           return [

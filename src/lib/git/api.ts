@@ -15,6 +15,7 @@ import type {
   AppConfig,
   BinaryPreview,
   BlameLine,
+  BlobView,
   BranchInfo,
   CherryPickOutcome,
   CommitGraphPage,
@@ -36,6 +37,7 @@ import type {
   RebaseCommitSummary,
   RebaseOutcome,
   RebaseStep,
+  RefStatus,
   ReleaseInfo,
   RemoteProgress,
   RepoConfig,
@@ -46,6 +48,9 @@ import type {
   SigningConfigView,
   StashEntry,
   SubmoduleInfo,
+  TreeEntry,
+  TreePaths,
+  TreeSource,
   UndoRedoStatus,
   VerificationStatus,
   WatchStatus,
@@ -112,14 +117,48 @@ export function diffCommitToWorkdir(repoPath: string, commitOid: string): Promis
   return invoke("diff_commit_to_workdir", { repoPath, commitOid });
 }
 
-/** Per-line authorship for `path` as of HEAD. */
-export function blameFile(repoPath: string, path: string): Promise<BlameLine[]> {
-  return invoke("blame_file", { repoPath, path });
+/** Per-line authorship for `path` as of `rev` (HEAD when omitted). */
+export function blameFile(repoPath: string, path: string, rev?: string): Promise<BlameLine[]> {
+  return invoke("blame_file", { repoPath, path, rev: rev ?? null });
 }
 
-/** The commits that changed `path`, newest first. */
-export function fileHistory(repoPath: string, path: string): Promise<FileHistoryEntry[]> {
-  return invoke("file_history", { repoPath, path });
+/** The commits that changed `path`, newest first, walking back from `rev` (HEAD when omitted). */
+export function fileHistory(
+  repoPath: string,
+  path: string,
+  rev?: string,
+): Promise<FileHistoryEntry[]> {
+  return invoke("file_history", { repoPath, path, rev: rev ?? null });
+}
+
+/** The full commit OID a branch, tag, SHA or rev expression points at. */
+export function resolveRev(repoPath: string, rev: string): Promise<string> {
+  return invoke("resolve_rev", { repoPath, rev });
+}
+
+/** Whether `rev` still points at `pinnedOid`, and if not, how it moved. */
+export function refStatus(repoPath: string, rev: string, pinnedOid: string): Promise<RefStatus> {
+  return invoke("ref_status", { repoPath, rev, pinnedOid });
+}
+
+/** One folder level of a revision's tree or the working tree (`dir` "" is the root). */
+export function listTree(repoPath: string, source: TreeSource, dir: string): Promise<TreeEntry[]> {
+  return invoke("list_tree", { repoPath, source, dir });
+}
+
+/** Every file path in `source`, for go-to-file. */
+export function listTreePaths(repoPath: string, source: TreeSource): Promise<TreePaths> {
+  return invoke("list_tree_paths", { repoPath, source });
+}
+
+/** One file's content in `source`, read-only. `wantImage` returns an image preview instead. */
+export function readBlobAt(
+  repoPath: string,
+  source: TreeSource,
+  path: string,
+  wantImage: boolean,
+): Promise<BlobView> {
+  return invoke("read_blob_at", { repoPath, source, path, wantImage });
 }
 
 /** The diff between two arbitrary commits (e.g. a commit and `"HEAD"`). */

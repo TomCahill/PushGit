@@ -31,8 +31,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     graphOpen,
     graphPage,
     listBranches,
+    listTreePaths,
   } from "$lib/git/api";
-  import type { BranchInfo, CommitRow } from "$lib/git/types";
+  import type { BranchInfo, CommitRow, FileStatus, PathEntry, TreeSource } from "$lib/git/types";
+  import FileStatusIcon from "$lib/diff/FileStatusIcon.svelte";
+  import { segments, topMatches, type Segment } from "./fuzzyMatch";
   import { repoDisplayName, repoParentName, type RecentRepo } from "$lib/repo/recentRepos";
   import {
     closeCommandPalette,
@@ -44,6 +47,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
   const SEARCH_DEBOUNCE_MS = 200;
   const MAX_PER_SECTION = 6;
+  const MAX_BROWSE_FILES = 12;
+  const MAX_FILES_ONLY = 50;
 
   let {
     repoPath,
@@ -52,6 +57,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     onOpenRepo,
     onChanged,
     onSelectFile,
+    browseSource = null,
+    browseLabel = "",
+    onBrowseFile,
   }: {
     repoPath: string;
     commands: PaletteCommand[];
@@ -59,6 +67,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     onOpenRepo?: (path: string) => void;
     onChanged?: () => void;
     onSelectFile?: () => void;
+    /** Set while Browse files is open: the Files section then searches every path in it. */
+    browseSource?: TreeSource | null;
+    browseLabel?: string;
+    onBrowseFile?: (path: string, status: FileStatus | null) => void;
   } = $props();
 
   let query = $state("");
@@ -69,12 +81,15 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   let branches = $state<BranchInfo[]>([]);
   let filePaths = $state<string[]>([]);
   let commitResults = $state<CommitRow[]>([]);
+  let browsePaths = $state<PathEntry[] | null>(null);
+  let browseTruncated = $state(false);
 
   type Entry = {
-    section: "Commands" | "Repositories" | "Branches" | "Files" | "Commits";
+    section: string;
     key: string;
     label: string;
     run: () => void | Promise<void>;
+    file?: { name: Segment[]; dir: Segment[]; status: FileStatus | null };
   };
 
   function matches(label: string, q: string): boolean {
@@ -141,6 +156,33 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       })),
   );
 
+  const browsePathStrings = $derived(browsePaths?.map((p) => p.path) ?? []);
+  const browseStatuses = $derived(new Map(browsePaths?.map((p) => [p.path, p.status]) ?? []));
+
+  const browseFileEntries = $derived<Entry[]>(
+    topMatches(
+      query,
+      browsePathStrings,
+      paletteState.filesOnly ? MAX_FILES_ONLY : MAX_BROWSE_FILES,
+    ).map((match) => {
+      const status = browseStatuses.get(match.path) ?? null;
+      return {
+        section: `Files · ${browseLabel}`,
+        key: `browse:${match.path}`,
+        label: match.path,
+        file: {
+          name: segments(match.name, match.nameHits),
+          dir: segments(match.dir, match.dirHits),
+          status,
+        },
+        run: () => {
+          onBrowseFile?.(match.path, status);
+          closeCommandPalette();
+        },
+      };
+    }),
+  );
+
   const filteredCommits = $derived<Entry[]>(
     commitResults.slice(0, MAX_PER_SECTION).map((row) => ({
       section: "Commits",
@@ -150,13 +192,21 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     })),
   );
 
-  const entries = $derived<Entry[]>([
-    ...filteredCommands,
-    ...filteredRepos,
-    ...filteredBranches,
-    ...filteredFiles,
-    ...filteredCommits,
-  ]);
+  const entries = $derived<Entry[]>(
+    browseSource
+      ? paletteState.filesOnly
+        ? browseFileEntries
+        : [...browseFileEntries, ...filteredCommands, ...filteredBranches, ...filteredCommits]
+      : paletteState.filesOnly
+        ? filteredFiles
+        : [
+            ...filteredCommands,
+            ...filteredRepos,
+            ...filteredBranches,
+            ...filteredFiles,
+            ...filteredCommits,
+          ],
+  );
 
   $effect(() => {
     void entries;
@@ -170,7 +220,21 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     commitResults = [];
     queueMicrotask(() => inputEl?.focus());
     void loadStaticData(repoPath);
+    void loadBrowsePaths(repoPath, browseSource);
   });
+
+  async function loadBrowsePaths(path: string, source: TreeSource | null) {
+    browsePaths = null;
+    browseTruncated = false;
+    if (!path || !source) return;
+    try {
+      const result = await listTreePaths(path, source);
+      browsePaths = result.paths;
+      browseTruncated = result.truncated;
+    } catch (err) {
+      error = String(err);
+    }
+  }
 
   async function loadStaticData(path: string) {
     if (!path) {
@@ -199,7 +263,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   let searchGeneration = 0;
   $effect(() => {
     const q = query;
-    if (!paletteState.open || !repoPath || !q.trim()) {
+    if (!paletteState.open || paletteState.filesOnly || !repoPath || !q.trim()) {
       commitResults = [];
       return;
     }
@@ -320,13 +384,18 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         bind:this={inputEl}
         type="text"
         bind:value={query}
-        placeholder="Search commands, repos, branches, files, or commits…"
+        placeholder={paletteState.filesOnly
+          ? "Go to file…"
+          : "Search commands, repos, branches, files, or commits…"}
         aria-label="Command palette search"
       />
       {#if error}
         <p class="error" role="alert">{error}</p>
       {/if}
-      {#if rows.length === 0}
+      {#if browseSource && browsePaths === null && !error}
+        <p class="empty" role="status">Loading files…</p>
+      {/if}
+      {#if rows.length === 0 && !(browseSource && browsePaths === null)}
         <p class="empty">No matches.</p>
       {:else}
         <ul role="listbox">
@@ -344,11 +413,30 @@ SPDX-License-Identifier: AGPL-3.0-or-later
                 onmouseenter={() => (activeIndex = i)}
                 onclick={() => void runEntry(entry)}
               >
-                {entry.label}
+                {#if entry.file}
+                  <span class="file-entry">
+                    <span class="file-text">
+                      <span
+                        >{#each entry.file.name as seg, j (j)}{#if seg.hit}<mark>{seg.text}</mark
+                            >{:else}{seg.text}{/if}{/each}</span
+                      >
+                      <span class="file-dir"
+                        >{#each entry.file.dir as seg, j (j)}{#if seg.hit}<mark>{seg.text}</mark
+                            >{:else}{seg.text}{/if}{/each}</span
+                      >
+                    </span>
+                    {#if entry.file.status}<FileStatusIcon status={entry.file.status} />{/if}
+                  </span>
+                {:else}
+                  {entry.label}
+                {/if}
               </button>
             </li>
           {/each}
         </ul>
+      {/if}
+      {#if browseSource && browseTruncated}
+        <p class="empty">Showing the first 200,000 files.</p>
       {/if}
     </div>
   </div>
@@ -426,6 +514,35 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   .entry.active {
     background: var(--accent-bg);
     color: var(--accent);
+  }
+
+  .file-entry {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .file-text {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .file-dir {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  mark {
+    background: none;
+    color: inherit;
+    font-weight: 700;
+    text-decoration: underline;
+    text-underline-offset: 2px;
   }
 
   .empty {

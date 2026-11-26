@@ -33,6 +33,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     onInteractiveRebase,
     onOpenWorktree,
     onOpenSubmodule,
+    onBrowseFiles,
   }: {
     repoPath: string;
     refreshKey: number;
@@ -45,6 +46,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     onInteractiveRebase?: (onto: string, commits: RebaseCommitSummary[]) => void;
     onOpenWorktree: (path: string) => void;
     onOpenSubmodule: (path: string) => void;
+    onBrowseFiles?: (rev: string) => void;
   } = $props();
 
   let currentBranch = $state<string | null>(null);
@@ -77,6 +79,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         onCurrentBranchChange={(name) => (currentBranch = name)}
         {onInteractiveRebase}
         {onOpenWorktree}
+        {onBrowseFiles}
       />
     {/snippet}
   </Popover>
