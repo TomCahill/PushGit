@@ -52,6 +52,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     onCurrentBranchChange,
     onInteractiveRebase,
     onOpenWorktree,
+    onBrowseFiles,
   }: {
     repoPath: string;
     refreshKey: number;
@@ -63,6 +64,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     /** Called with the commits between `onto` and HEAD once fetched — the parent switches to
      *  the interactive rebase editor view with them. */
     onInteractiveRebase?: (onto: string, commits: RebaseCommitSummary[]) => void;
+    onBrowseFiles?: (branch: string) => void;
     /** Worktrees are branch-adjacent enough to live in this same popover rather than a
      *  separate top-level menu — omitted (as in every existing caller/test that doesn't pass
      *  it) means the worktree section simply doesn't render, matching this component's other
@@ -212,6 +214,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
           onSelect: () => void handleDelete(branch),
           disabled: busy,
         },
+      );
+    }
+    if (onBrowseFiles) {
+      items.push(
+        { separator: true },
+        { label: `Browse files at ${branch.name}`, onSelect: () => onBrowseFiles(branch.name) },
       );
     }
     openContextMenu(event.clientX, event.clientY, items);

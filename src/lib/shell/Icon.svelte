@@ -39,7 +39,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     | "search"
     | "folder-plus"
     | "folder-open"
-    | "fold";
+    | "fold"
+    | "chevron-right"
+    | "file"
+    | "monitor"
+    | "link"
+    | "eye-off";
 
   let { name, size = 14 }: { name: IconName; size?: number } = $props();
 </script>
@@ -164,6 +169,22 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   {:else if name === "lock"}
     <rect x="4.5" y="11" width="15" height="10" rx="1.5" />
     <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+  {:else if name === "chevron-right"}
+    <path d="M9 18l6-6-6-6" />
+  {:else if name === "file"}
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+    <path d="M14 2v6h6" />
+  {:else if name === "monitor"}
+    <rect x="2" y="3" width="20" height="14" rx="2" />
+    <path d="M8 21h8" />
+    <path d="M12 17v4" />
+  {:else if name === "link"}
+    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+  {:else if name === "eye-off"}
+    <path d="M17.94 17.94A10 10 0 0 1 12 20c-7 0-11-8-11-8a18.5 18.5 0 0 1 5.06-5.94" />
+    <path d="M9.9 4.24A9 9 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+    <path d="M1 1l22 22" />
   {/if}
 </svg>
 

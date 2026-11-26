@@ -95,6 +95,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     onChanged,
     onConflicts,
     onDiffRequest,
+    onBrowseFiles,
     onSelectWorkdir,
     onApplied,
   }: {
@@ -115,6 +116,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     /** Fired only by the commit-dot menu's "Diff against..." actions — deliberately separate
      *  from `onSelect`, which always means "vs first parent." */
     onDiffRequest?: (commit: CommitRow, mode: "head" | "workdir") => void;
+    /** "Browse files at …" from a commit or ref menu; receives the oid or ref name. */
+    onBrowseFiles?: (rev: string) => void;
     /** Fired instead of `onSelect` when the synthetic "uncommitted changes" row is clicked —
      *  it has no real oid to diff, so the parent should switch to the working-directory view
      *  instead, matching `ActionRail`'s "Working directory" toggle. */
@@ -654,6 +657,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       { separator: true },
       { label: "Diff against working tree", onSelect: () => onDiffRequest?.(commit, "workdir") },
       { label: "Diff against HEAD", onSelect: () => onDiffRequest?.(commit, "head") },
+      ...browseItem(commit.oid, "Browse files at this commit"),
     ];
   }
 
@@ -674,6 +678,15 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   // context menu entirely; reversed on explicit user request to expose delete/rename here
   // too, reusing the same `delete_tag`/`rename_tag` commands `TagsPanel.svelte` and the
   // drag-to-move-tag gesture already call.
+  function browseItem(rev: string, label: string): ContextMenuItem[] {
+    return onBrowseFiles ? [{ label, onSelect: () => onBrowseFiles(rev) }] : [];
+  }
+
+  function browseGroup(ref: RefMarker): ContextMenuItem[] {
+    const item = browseItem(ref.name, `Browse files at ${ref.name}`);
+    return item.length ? [{ separator: true }, ...item] : [];
+  }
+
   function buildRefMenu(ref: RefMarker): ContextMenuItem[] {
     if (ref.kind === "tag") {
       return [
@@ -681,6 +694,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         { label: "Delete tag", danger: true, onSelect: () => handleDeleteTag(ref.name) },
         { separator: true },
         { label: `Push tag to ${REMOTE_NAME}`, onSelect: () => handlePush(ref.name) },
+        ...browseGroup(ref),
       ];
     }
 
@@ -696,6 +710,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         { separator: true },
         { label: "Merge into current branch", onSelect: () => handleMerge(ref.name) },
         { label: `Rebase current branch onto ${ref.name}`, onSelect: () => handleRebase(ref.name) },
+        ...browseGroup(ref),
       ];
     }
 
@@ -713,6 +728,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
       );
     }
     items.push({ label: `Push to ${REMOTE_NAME}`, onSelect: () => handlePush(ref.name) });
+    items.push(...browseGroup(ref));
     return items;
   }
 

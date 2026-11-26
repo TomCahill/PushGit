@@ -27,6 +27,7 @@ mod state;
 mod submodule;
 #[cfg(test)]
 mod test_support;
+mod tree;
 mod undo;
 mod update_check;
 mod watcher;
@@ -97,9 +98,13 @@ fn build_menu<R: tauri::Runtime>(
         .build(handle)?;
     let toggle_diff_view =
         MenuItemBuilder::with_id("toggle-diff-view", "Toggle Diff View").build(handle)?;
+    let browse_files = MenuItemBuilder::with_id("browse-files", "Browse Files")
+        .accelerator("CmdOrCtrl+Shift+E")
+        .build(handle)?;
     let view_menu = SubmenuBuilder::new(handle, "View")
         .item(&command_palette)
         .item(&toggle_diff_view)
+        .item(&browse_files)
         .build()?;
 
     let about = MenuItemBuilder::with_id("about", "About").build(handle)?;
@@ -153,6 +158,11 @@ pub fn run() {
         commands::diff_commit_to_workdir,
         commands::blame_file,
         commands::file_history,
+        commands::resolve_rev,
+        commands::ref_status,
+        commands::list_tree,
+        commands::list_tree_paths,
+        commands::read_blob_at,
         commands::stage_file,
         commands::unstage_file,
         commands::stage_hunk,

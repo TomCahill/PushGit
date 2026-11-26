@@ -13,9 +13,13 @@ export type PaletteCommand = {
   run: () => void | Promise<void>;
 };
 
-export const paletteState: { open: boolean } = $state({ open: false });
+export const paletteState: { open: boolean; filesOnly: boolean } = $state({
+  open: false,
+  filesOnly: false,
+});
 
-export function openCommandPalette(): void {
+export function openCommandPalette(options: { filesOnly?: boolean } = {}): void {
+  paletteState.filesOnly = options.filesOnly ?? false;
   paletteState.open = true;
 }
 

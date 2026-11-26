@@ -82,3 +82,7 @@ export function cloneRepo(sourceDir: string): string {
   git(dir, "config", "user.name", "PushGit E2E");
   return dir;
 }
+
+export function tag(repoDir: string, name: string): void {
+  git(repoDir, "-c", "tag.gpgSign=false", "tag", name);
+}

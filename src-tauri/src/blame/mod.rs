@@ -2,10 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! Blame (per-line authorship) and file history — secondary
-//! investigative tools, not part of the core commit/diff/merge loop. Blame is computed
-//! against HEAD only; blaming an arbitrary historical revision isn't supported in this
-//! first version, the same "not an arbitrary rev" scope narrowing `diff::diff_commit_to_workdir`
-//! already applies elsewhere in this codebase.
+//! investigative tools, not part of the core commit/diff/merge loop. Both start from HEAD
+//! unless given a revision.
 
 mod model;
 
@@ -23,12 +21,25 @@ use crate::error::PushGitResult;
 const MAX_COMMITS_EXAMINED: usize = 5000;
 const MAX_HISTORY_ENTRIES: usize = 200;
 
-/// Per-line authorship for `path` as of HEAD.
-pub fn blame_file(repo: &Repository, path: &str) -> PushGitResult<Vec<BlameLine>> {
-    let blame = repo.blame_file(Path::new(path), None)?;
+fn start_commit<'r>(repo: &'r Repository, rev: Option<&str>) -> PushGitResult<git2::Commit<'r>> {
+    Ok(match rev {
+        Some(rev) => repo.revparse_single(rev)?.peel_to_commit()?,
+        None => repo.head()?.peel_to_commit()?,
+    })
+}
 
-    let head_commit = repo.head()?.peel_to_commit()?;
-    let blob = head_commit
+/// Per-line authorship for `path` as of `rev` (HEAD when `None`).
+pub fn blame_file(
+    repo: &Repository,
+    path: &str,
+    rev: Option<&str>,
+) -> PushGitResult<Vec<BlameLine>> {
+    let start = start_commit(repo, rev)?;
+    let mut options = git2::BlameOptions::new();
+    options.newest_commit(start.id());
+    let blame = repo.blame_file(Path::new(path), Some(&mut options))?;
+
+    let blob = start
         .tree()?
         .get_path(Path::new(path))?
         .to_object(repo)?
@@ -63,9 +74,13 @@ pub fn blame_file(repo: &Repository, path: &str) -> PushGitResult<Vec<BlameLine>
 /// commit if its tree differs from *any* parent's tree at that path (matching plain `git
 /// log -- path`'s usual heuristic for merge commits); a root commit changes it if the path
 /// exists in its tree at all. Rename-following (`git log --follow`) isn't implemented.
-pub fn file_history(repo: &Repository, path: &str) -> PushGitResult<Vec<FileHistoryEntry>> {
+pub fn file_history(
+    repo: &Repository,
+    path: &str,
+    rev: Option<&str>,
+) -> PushGitResult<Vec<FileHistoryEntry>> {
     let mut revwalk = repo.revwalk()?;
-    revwalk.push_head()?;
+    revwalk.push(start_commit(repo, rev)?.id())?;
     revwalk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)?;
 
     let mut entries = Vec::new();
@@ -134,7 +149,7 @@ mod tests {
         let first = commit_file(&repo, "a.txt", "line one\nline two\n");
         let second = commit_file(&repo, "a.txt", "line one\nline two changed\n");
 
-        let lines = blame_file(&repo, "a.txt").unwrap();
+        let lines = blame_file(&repo, "a.txt", None).unwrap();
 
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].line_no, 1);
@@ -152,10 +167,25 @@ mod tests {
         commit_file(&repo, "unrelated.txt", "unrelated\n");
         let third = commit_file(&repo, "a.txt", "a changed\n");
 
-        let history = file_history(&repo, "a.txt").unwrap();
+        let history = file_history(&repo, "a.txt", None).unwrap();
 
         let oids: Vec<String> = history.iter().map(|e| e.oid.clone()).collect();
         assert_eq!(oids, vec![third.to_string(), first.to_string()]);
+    }
+
+    #[test]
+    fn blame_and_history_start_from_the_given_revision() {
+        let (_dir, repo) = repo_init();
+        let first = commit_file(&repo, "a.txt", "line one\n");
+        commit_file(&repo, "a.txt", "line one changed\n");
+
+        let lines = blame_file(&repo, "a.txt", Some(&first.to_string())).unwrap();
+        assert_eq!(lines[0].content, "line one");
+        assert_eq!(lines[0].oid, first.to_string());
+
+        let history = file_history(&repo, "a.txt", Some(&first.to_string())).unwrap();
+        let oids: Vec<String> = history.iter().map(|e| e.oid.clone()).collect();
+        assert_eq!(oids, vec![first.to_string()]);
     }
 
     #[test]
@@ -163,7 +193,7 @@ mod tests {
         let (_dir, repo) = repo_init();
         commit_file(&repo, "a.txt", "a\n");
 
-        let history = file_history(&repo, "never-existed.txt").unwrap();
+        let history = file_history(&repo, "never-existed.txt", None).unwrap();
 
         assert!(history.is_empty());
     }

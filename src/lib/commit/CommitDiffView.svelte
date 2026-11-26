@@ -18,6 +18,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     files,
     selectedPath = $bindable(null),
     onOpenExternalDiff,
+    onViewFile,
   }: {
     files: FileDiff[];
     selectedPath?: string | null;
@@ -25,6 +26,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
      *  a pure, context-free renderer, the same "optional callback, parent supplies the data"
      *  shape `StagingPanel`'s `onBlame` prop already uses. Omit to hide the action entirely. */
     onOpenExternalDiff?: (file: FileDiff) => void;
+    /** Opens the file as it is in this commit, in Browse files. */
+    onViewFile?: (path: string) => void;
   } = $props();
 
   function fileKey(file: FileDiff): string {
@@ -78,6 +81,18 @@ SPDX-License-Identifier: AGPL-3.0-or-later
             }}
           >
             External diff
+          </button>
+        {/if}
+        {#if onViewFile && file.newPath && file.status !== "deleted" && !file.isSubmodule}
+          <button
+            type="button"
+            class="external-diff-button"
+            onclick={(event) => {
+              event.stopPropagation();
+              onViewFile?.(file.newPath!);
+            }}
+          >
+            View file
           </button>
         {/if}
       </li>
