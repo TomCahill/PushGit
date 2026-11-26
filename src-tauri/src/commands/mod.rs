@@ -32,6 +32,7 @@ use crate::stage;
 use crate::stash::{self, StashEntry};
 use crate::state::AppState;
 use crate::submodule::{self, SubmoduleInfo};
+use crate::tree::{self, BlobView, RefStatus, TreeEntry, TreePaths, TreeSource};
 use crate::undo::{OperationSummary, UndoRedoStatus};
 use crate::update_check;
 use crate::watcher;
@@ -152,16 +153,63 @@ pub fn diff_commit_to_workdir(
     diff::diff_commit_to_workdir(&repo::open(Path::new(&repo_path))?, &commit_oid)
 }
 
-/// Per-line authorship for `path` as of HEAD.
+/// Per-line authorship for `path` as of `rev` (HEAD when absent).
 #[tauri::command]
-pub fn blame_file(repo_path: String, path: String) -> PushGitResult<Vec<BlameLine>> {
-    blame::blame_file(&repo::open(Path::new(&repo_path))?, &path)
+pub fn blame_file(
+    repo_path: String,
+    path: String,
+    rev: Option<String>,
+) -> PushGitResult<Vec<BlameLine>> {
+    blame::blame_file(&repo::open(Path::new(&repo_path))?, &path, rev.as_deref())
 }
 
-/// The commits that changed `path`, newest first.
+/// The commits that changed `path`, newest first, walking back from `rev` (HEAD when absent).
 #[tauri::command]
-pub fn file_history(repo_path: String, path: String) -> PushGitResult<Vec<FileHistoryEntry>> {
-    blame::file_history(&repo::open(Path::new(&repo_path))?, &path)
+pub fn file_history(
+    repo_path: String,
+    path: String,
+    rev: Option<String>,
+) -> PushGitResult<Vec<FileHistoryEntry>> {
+    blame::file_history(&repo::open(Path::new(&repo_path))?, &path, rev.as_deref())
+}
+
+#[tauri::command]
+pub fn resolve_rev(repo_path: String, rev: String) -> PushGitResult<String> {
+    tree::resolve_rev(&repo::open(Path::new(&repo_path))?, &rev)
+}
+
+#[tauri::command]
+pub fn ref_status(repo_path: String, rev: String, pinned_oid: String) -> PushGitResult<RefStatus> {
+    tree::ref_status(&repo::open(Path::new(&repo_path))?, &rev, &pinned_oid)
+}
+
+#[tauri::command]
+pub fn list_tree(
+    repo_path: String,
+    source: TreeSource,
+    dir: String,
+) -> PushGitResult<Vec<TreeEntry>> {
+    tree::list_tree(&repo::open(Path::new(&repo_path))?, &source, &dir)
+}
+
+#[tauri::command]
+pub fn list_tree_paths(repo_path: String, source: TreeSource) -> PushGitResult<TreePaths> {
+    tree::list_tree_paths(&repo::open(Path::new(&repo_path))?, &source)
+}
+
+#[tauri::command]
+pub fn read_blob_at(
+    repo_path: String,
+    source: TreeSource,
+    path: String,
+    want_image: bool,
+) -> PushGitResult<BlobView> {
+    tree::read_blob_at(
+        &repo::open(Path::new(&repo_path))?,
+        &source,
+        &path,
+        want_image,
+    )
 }
 
 /// Stages a whole file (or its deletion, if it no longer exists on disk).

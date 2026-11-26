@@ -11,7 +11,7 @@ use serde::Serialize;
 
 /// A single side's oversize cutoff. Generous enough to cover any real image asset; beyond
 /// this, base64-inflating and shipping the bytes over IPC isn't worth it for a preview.
-const MAX_PREVIEW_BYTES: usize = 20 * 1024 * 1024;
+pub const MAX_PREVIEW_BYTES: usize = 20 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(

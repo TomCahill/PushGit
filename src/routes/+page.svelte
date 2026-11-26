@@ -12,7 +12,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import "@fontsource/roboto/400.css";
   import "@fontsource/roboto/500.css";
   import "@fontsource/roboto/700.css";
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import CommitDiffView from "$lib/commit/CommitDiffView.svelte";
   import CommitGraph from "$lib/graph/CommitGraph.svelte";
   import ConflictEditor from "$lib/conflict/ConflictEditor.svelte";
@@ -76,6 +76,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     pickRepositoryFolder,
     pullRemote,
     redoLastOperation,
+    resolveRev,
     startRepoWatcher,
     stopRepoWatcher,
     undoLastOperation,
@@ -86,6 +87,16 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   import CompareRefsPicker from "$lib/compare/CompareRefsPicker.svelte";
   import BlameView from "$lib/blame/BlameView.svelte";
   import BlameFileView from "$lib/blame/BlameFileView.svelte";
+  import FileTree from "$lib/explore/FileTree.svelte";
+  import FileView from "$lib/explore/FileView.svelte";
+  import {
+    WORKING_TREE,
+    browse,
+    exploreState,
+    openFile,
+    resetExplore,
+    shortOid,
+  } from "$lib/explore/explore.svelte";
   import { hasOldSide, hasNewSide } from "$lib/diff/binaryPreviewSides";
   import type {
     BinaryPreview,
@@ -120,10 +131,16 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     | "cherry-pick-range"
     | "compare"
     | "blame"
+    | "explore"
   >("working");
   let rebaseOnto = $state<string | null>(null);
   let rebaseCommits = $state<RebaseCommitSummary[]>([]);
   let blamePath = $state<string | null>(null);
+  let blameRev = $state<string | null>(null);
+  let blameFromExplore = $state(false);
+  let exploreCenterDiff = $state<FileDiffSelection | null>(null);
+  let explorePickerOpen = $state(false);
+  let watchActive = $state(false);
   let selectedCommit = $state<CommitRow | null>(null);
   let selectedFiles = $state<FileDiff[] | null>(null);
   let diffError = $state<string | null>(null);
@@ -175,7 +192,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
           ? { file: compareSelectedFile, resolveImagePreview: resolveImagePreviewForCompare }
           : viewMode === "blame"
             ? blameCenterDiff
-            : null,
+            : viewMode === "explore"
+              ? exploreCenterDiff
+              : null,
   );
 
   // Clears whichever selection is active whenever the view mode itself changes — both
@@ -188,6 +207,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     selectedCommitFilePath = null;
     blameCenterDiff = null;
     blameLines = null;
+    exploreCenterDiff = null;
     compareFiles = null;
     compareError = null;
     compareFilePath = null;
@@ -300,6 +320,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     workingSelectedFile = null;
     selectedCommitFilePath = null;
     blameCenterDiff = null;
+    exploreCenterDiff = null;
   }
 
   type DiffMode = "parent" | "head" | "workdir";
@@ -383,6 +404,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
           case "toggle-diff-view":
             toggleDiffView();
             break;
+          case "browse-files":
+            if (repoPath) browseWorkingTree();
+            break;
           case "about":
             showAbout = true;
             break;
@@ -443,6 +467,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     try {
       const workdir = await openRepository(path);
       repoPath = workdir;
+      resetExplore();
+      if (viewMode === "explore") viewMode = "working";
       localStorage.setItem(LAST_REPO_KEY, workdir);
       recentRepos = recordRepoOpened(workdir);
       const folderId = recentRepos.find((entry) => entry.path === workdir)?.folderId;
@@ -461,8 +487,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
   // The repo is open either way; a watcher problem only costs live refresh, so it's not an openError.
   async function watchRepo(workdir: string) {
+    watchActive = false;
     try {
       const status = await startRepoWatcher(workdir);
+      watchActive = true;
       if (status?.watchLimitReached) {
         notifyError(
           "Some folders in this repository aren't watched for changes: the system's file-watch limit (fs.inotify.max_user_watches) is used up.",
@@ -592,14 +620,48 @@ SPDX-License-Identifier: AGPL-3.0-or-later
     refreshKey += 1;
   }
 
-  function handleBlame(path: string) {
+  function handleBlame(path: string, rev: string | null = null) {
     blamePath = path;
+    blameRev = rev;
+    blameFromExplore = viewMode === "explore";
     viewMode = "blame";
   }
 
   function handleBlameClose() {
     blamePath = null;
-    viewMode = "working";
+    blameRev = null;
+    viewMode = blameFromExplore ? "explore" : "working";
+    blameFromExplore = false;
+  }
+
+  function browseWorkingTree() {
+    if (exploreState.source.kind !== "workingTree") browse(WORKING_TREE, null);
+    viewMode = "explore";
+  }
+
+  /** Opens Browse files at a branch, tag or commit, optionally with one file open. */
+  async function browseFilesAt(
+    rev: string,
+    path: string | null = null,
+    label: string | null = rev,
+  ) {
+    try {
+      const oid = await resolveRev(repoPath, rev);
+      browse({ kind: "revision", oid }, oid.startsWith(rev) ? null : label, path);
+      viewMode = "explore";
+    } catch (err) {
+      notifyError(String(err));
+    }
+  }
+
+  async function browseFilesAtRefPicker() {
+    viewMode = "explore";
+    await tick();
+    explorePickerOpen = true;
+  }
+
+  function openSubmodule(path: string) {
+    void openRepo(`${repoPath.replace(/\/+$/, "")}/${path}`);
   }
 
   function handleInteractiveRebaseCancel() {
@@ -703,6 +765,17 @@ SPDX-License-Identifier: AGPL-3.0-or-later
             label: "Compare Refs…",
             run: () => (viewMode = "compare"),
           },
+          { id: "browse-files", label: "Browse Files", run: browseWorkingTree },
+          { id: "browse-files-at-ref", label: "Browse Files at Ref…", run: browseFilesAtRefPicker },
+          ...(selectedCommit
+            ? [
+                {
+                  id: "browse-files-at-commit",
+                  label: "Browse Files at Selected Commit",
+                  run: () => browseFilesAt(selectedCommit!.oid, null, null),
+                },
+              ]
+            : []),
         ]
       : []),
   ]);
@@ -747,6 +820,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
           onInteractiveRebase={handleInteractiveRebase}
           onOpenWorktree={openRepo}
           onOpenSubmodule={openRepo}
+          onBrowseFiles={(rev) => void browseFilesAt(rev)}
         />
       {/if}
     </div>
@@ -767,7 +841,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         <div class="center-diff-header">
           <span class="center-diff-path">{fileKey(centerDiff.file)}</span>
           <Button variant="text" onclick={closeCenterDiff}>
-            ← Back to {viewMode === "blame" ? "blame" : "graph"}
+            ← Back to {viewMode === "blame" ? "blame" : viewMode === "explore" ? "file" : "graph"}
           </Button>
         </div>
         <div class="center-diff-body">
@@ -794,6 +868,19 @@ SPDX-License-Identifier: AGPL-3.0-or-later
           {/if}
         </div>
       </section>
+    {:else if viewMode === "explore" && repoPath}
+      <FileView
+        {repoPath}
+        {refreshKey}
+        {watchActive}
+        bind:pickerOpen={explorePickerOpen}
+        onBack={() => (viewMode = "working")}
+        onRefresh={() => (refreshKey += 1)}
+        onShowDiff={(diff) => (exploreCenterDiff = diff)}
+        onBlame={handleBlame}
+        onResolveConflict={handleResolveConflict}
+        onOpenSubmodule={openSubmodule}
+      />
     {:else if !repoPath}
       {#if startupResolved}
         <WelcomeView
@@ -814,6 +901,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
           onChanged={() => (refreshKey += 1)}
           onConflicts={showWorkingDirectory}
           onDiffRequest={handleDiffRequest}
+          onBrowseFiles={(rev) => void browseFilesAt(rev)}
           onSelectWorkdir={showWorkingDirectory}
           onApplied={showWorkingDirectory}
         />
@@ -880,12 +968,15 @@ SPDX-License-Identifier: AGPL-3.0-or-later
           />
         {/if}
       </div>
+    {:else if viewMode === "explore"}
+      <FileTree {repoPath} {refreshKey} />
     {:else if viewMode === "blame"}
       {#if blamePath}
-        {#key blamePath}
+        {#key `${blamePath}@${blameRev}`}
           <BlameView
             {repoPath}
             path={blamePath}
+            rev={blameRev}
             onClose={handleBlameClose}
             onDiffChange={(diff) => (blameCenterDiff = diff)}
             onLinesChange={(lines) => (blameLines = lines)}
@@ -918,6 +1009,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
             files={selectedFiles}
             bind:selectedPath={selectedCommitFilePath}
             onOpenExternalDiff={openExternalDiffForSelectedCommit}
+            onViewFile={(path) => void browseFilesAt(selectedCommit!.oid, path, null)}
           />
         {/key}
       {/if}
@@ -938,6 +1030,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   onOpenRepo={openRepo}
   onChanged={() => (refreshKey += 1)}
   onSelectFile={showWorkingDirectory}
+  browseSource={viewMode === "explore" ? exploreState.source : null}
+  browseLabel={exploreState.source.kind === "workingTree"
+    ? "Working tree"
+    : (exploreState.refLabel ?? shortOid(exploreState.source.oid))}
+  onBrowseFile={(path, status) => {
+    openFile(path, status);
+    exploreState.reveal = path;
+  }}
 />
 
 <style>

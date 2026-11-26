@@ -8,7 +8,7 @@ mod model;
 mod preview;
 
 pub use model::{ConflictSides, FileDiff, FileStatus, Hunk, Line, LineOrigin};
-pub use preview::{preview_from_bytes, BinaryPreview};
+pub use preview::{preview_from_bytes, BinaryPreview, MAX_PREVIEW_BYTES};
 
 use git2::{
     Blob, Delta, Diff, DiffDelta, DiffFindOptions, DiffLineType, DiffOptions, FileMode, Patch,
